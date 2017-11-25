@@ -1,0 +1,17 @@
+local workdir = './data/'
+local fio = require('fio')
+if not fio.stat('./data') then
+    fio.mkdir('./data')
+end
+
+default_cfg = {
+    pid_file   = workdir,
+    wal_dir    = workdir,
+    snap_dir   = workdir,
+    vinyl_dir  = workdir,
+    logger     = workdir,
+}
+
+instance_dir = "."
+
+-- vim: set ft=lua ts=4 sts=4 sw=4 et:

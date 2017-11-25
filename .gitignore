@@ -1,0 +1,7 @@
+*.retry
+*.xlog
+*.snap
+*~
+data/
+test/var/
+*.reject
