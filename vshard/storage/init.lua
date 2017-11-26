@@ -51,18 +51,18 @@ end
 
 local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
-    assert(mode == consts.MODE.READ or mode == consts.MODE.WRITE)
+    assert(mode == 'read' or mode == 'write')
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil then
         return consts.PROTO.WRONG_BUCKET
     end
 
     if bucket.status == consts.BUCKET.ACTIVE or
-       (bucket.status == consts.BUCKET.SENDING and mode == consts.MODE.READ) then
+       (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
         return consts.PROTO.OK
     end
 
-    if mode == consts.MODE.WRITE and box.info.ro then
+    if mode == 'write' and box.info.ro then
         -- Add redirect here
         return consts.PROTO.NON_MASTER
     end
@@ -238,11 +238,7 @@ end
 -- NOTE: may be a custom function call api without any checks is needed,
 -- for example for some monitoring functions.
 local function storage_call(bucket_id, mode, name, args)
-    if mode == 'write' then
-        mode = consts.MODE.WRITE
-    elseif mode == 'read' then
-        mode = consts.MODE.READ
-    else
+    if mode ~= 'write' and mode ~= 'read' then
         error('Unknown mode: '..tostring(mode))
     end
 

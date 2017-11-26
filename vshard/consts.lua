@@ -17,11 +17,6 @@ return {
         RECEIVING = 'receiving',
     },
 
-    MODE = {
-        READ = 0x01,
-        WRITE = 0x02,
-    },
-
     BUCKET_COUNT = 3000;
     BUCKET_SYNC_TIMEOUT = 0.1;
     CALL_TIMEOUT = 0.1;
