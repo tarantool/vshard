@@ -14,6 +14,7 @@ end
 
 return {
     bucket_id = bucket_id,
+    router = require('vshard.router'),
     storage = require('vshard.storage'),
     consts = require('vshard.consts'),
 }

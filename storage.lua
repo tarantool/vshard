@@ -42,7 +42,26 @@ box.once("testapp:schema:1", function()
 
     box.schema.func.create('customer_lookup')
     box.schema.role.grant('public', 'execute', 'function', 'customer_lookup')
+    box.schema.func.create('customer_add')
+    box.schema.role.grant('public', 'execute', 'function', 'customer_add')
 end)
+
+function customer_add(customer)
+    box.begin()
+    box.space.customer:insert({customer.customer_id, customer.bucket_id,
+                               customer.name})
+    for _, account in ipairs(customer.accounts) do
+        box.space.account:insert({
+            account.account_id,
+            customer.customer_id,
+            customer.bucket_id,
+            0,
+            account.name
+        })
+    end
+    box.commit()
+    return true
+end
 
 function customer_lookup(customer_id)
     if type(customer_id) ~= 'number' then

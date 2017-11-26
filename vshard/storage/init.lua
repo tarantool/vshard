@@ -34,6 +34,7 @@ local function storage_schema_v1(username, password)
         'vshard.storage.bucket_collect',
         'vshard.storage.bucket_send',
         'vshard.storage.bucket_recv',
+        'vshard.storage.bucket_stat',
     }
 
     for _, name in ipairs(storage_api) do
@@ -71,6 +72,26 @@ local function bucket_check_state(bucket_id, mode)
            bucket.status == consts.BUCKET_STATUS_RECEIVING)
 
     return consts.PROTO.WRONG_BUCKET, {bucket.id, bucket.destination}
+end
+
+--
+-- Return information about bucket
+--
+local function bucket_stat(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_force_create(bucket_id)')
+    end
+
+    local bucket = box.space._bucket:get({bucket_id})
+    if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
+        return consts.PROTO.WRONG_BUCKET, bucket_id
+    end
+
+    return consts.PROTO.OK, {
+        id = bucket.id;
+        status = bucket.status;
+        destination = bucket.destination;
+    }
 end
 
 --
@@ -406,6 +427,7 @@ return {
     bucket_collect = bucket_collect;
     bucket_recv = bucket_recv;
     bucket_send = bucket_send;
+    bucket_stat = bucket_stat;
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;

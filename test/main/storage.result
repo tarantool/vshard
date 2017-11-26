@@ -292,3 +292,7 @@ test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
 ---
 ...
+test_run:cmd('clear filter')
+---
+- true
+...

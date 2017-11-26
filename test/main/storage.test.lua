@@ -78,3 +78,4 @@ _ = test_run:cmd("switch default")
 
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
+test_run:cmd('clear filter')
