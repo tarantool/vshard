@@ -89,6 +89,27 @@ local function router_call(bucket_id, mode, func, args)
     return box.error(box.error.TIMEOUT)
 end
 
+--
+-- Fucking net.box doesn't reconnect automatically as it supposed to do.
+-- Use this background fiber to re-create buggy net.box instances.
+-- https://github.com/tarantool/tarantool/issues/2959
+--
+local function netbox_workaround_f()
+    lfiber.name("netbox_workaround")
+    lfiber.sleep(0)
+    while true do
+        for _, replicaset in pairs(self.replicasets) do
+            local conn = replicaset.master_conn
+            if not conn:ping() then
+                -- Re-create net.box
+                replicaset.master_conn = netbox.connect(replicaset.master_uri)
+                conn:close()
+            end
+        end
+        lfiber.sleep(0.1)
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
@@ -119,6 +140,7 @@ local function router_cfg(cfg)
     end
 
     self.replicasets = replicasets
+    lfiber.create(netbox_workaround_f)
 
     log.info("Calling box.cfg()...")
     cfg.sharding = nil
