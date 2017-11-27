@@ -280,7 +280,8 @@ local function replicaset_discovery_f()
     while true do
         local replicasets_to_discovery2 = {}
         for _, master_uri in pairs(self.replicasets_to_discovery) do
-            local conn = netbox.new(master_uri)
+            local conn = netbox.new(master_uri, {reconnect_after =
+                                                 consts.RECONNECT_TIMEOUT})
             local status, uuid = pcall(function()
                 return conn.space._schema:get('cluster')[2]
             end)

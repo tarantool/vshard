@@ -75,6 +75,11 @@ local function router_call(bucket_id, mode, func, args)
         if status == consts.PROTO.OK then
             replicaset = reason
             local conn = replicaset.master_conn
+            if not conn:is_connected() then
+                -- Skip this event loop iteration and allow netbox
+                -- to try to reconnect.
+                lfiber.yield()
+            end
             local status, info = conn:call('vshard.storage.call',
                                            {bucket_id, mode, func, args})
             if status == consts.PROTO.OK then
@@ -87,27 +92,6 @@ local function router_call(bucket_id, mode, func, args)
         end
     until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
     return box.error(box.error.TIMEOUT)
-end
-
---
--- Fucking net.box doesn't reconnect automatically as it supposed to do.
--- Use this background fiber to re-create buggy net.box instances.
--- https://github.com/tarantool/tarantool/issues/2959
---
-local function netbox_workaround_f()
-    lfiber.name("netbox_workaround")
-    lfiber.sleep(0)
-    while true do
-        for _, replicaset in pairs(self.replicasets) do
-            local conn = replicaset.master_conn
-            if not conn:ping() then
-                -- Re-create net.box
-                replicaset.master_conn = netbox.connect(replicaset.master_uri)
-                conn:close()
-            end
-        end
-        lfiber.sleep(0.1)
-    end
 end
 
 --------------------------------------------------------------------------------
@@ -131,16 +115,17 @@ local function router_cfg(cfg)
         -- Ignore replicaset without active master
         if cmaster then
             replicaset_count = replicaset_count + 1
+            local master_conn = netbox.connect(cmaster.uri,
+                {reconnect_after = consts.RECONNECT_TIMEOUT})
             replicasets[replicaset_count] = {
                 id = replicaset_count;
                 master_uri = cmaster.uri;
-                master_conn = netbox.connect(cmaster.uri)
+                master_conn = master_conn
             }
         end
     end
 
     self.replicasets = replicasets
-    lfiber.create(netbox_workaround_f)
 
     log.info("Calling box.cfg()...")
     cfg.sharding = nil
