@@ -314,27 +314,26 @@ end
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
-
-local function storage_cfg(cfg, name)
-    assert(self.replicasets == nil, "reconfiguration is not implemented yet")
-    log.info("Starting cluster for replica '%s'", name)
-
-    -- TODO: check configuration
-    assert(name ~= nil, "name is not empty")
-    assert(cfg.listen == nil, "cfg.listen should be empty")
-    assert(cfg.replication == nil, "cfg.replication should be empty")
-
-    self.replicasets = {}
-
+--
+-- Extract local replicaset, replica and replicasets to
+-- discovery from a shard config.
+-- @param cfg Shard config.
+-- @param local_name Name of the current storage.
+--
+-- @retval Local replicaset, replica and replicasets to discovery.
+--
+local function parse_config(cfg, local_name)
+    -- Replicaset to which belong the current storage.
     local local_creplicaset = nil
+    -- This storage.
     local local_creplica = nil
 
     local replicasets_to_discovery = {}
-    for _, creplicaset in ipairs(cfg.sharding) do
+    for _, creplicaset in ipairs(cfg) do
         local replicaset = {}
         local cmaster = nil
         for _, creplica in ipairs(creplicaset) do
-            if creplica.name == name then
+            if creplica.name == local_name then
                 assert(local_creplica == nil, "duplicate name")
                 local_creplicaset = creplicaset
                 local_creplica = creplica
@@ -349,27 +348,50 @@ local function storage_cfg(cfg, name)
         end
     end
     if local_creplicaset == nil then
-        error(string.format("Cannot find replica '%s' in configuration", name))
+        error(string.format("Cannot find replica '%s' in configuration",
+                            local_name))
     end
+    return local_creplicaset, local_creplica, replicasets_to_discovery
+end
+
+--
+-- Create a config for box using a shard config and a local
+-- replicaset settings.
+--
+local function turn_shard_into_box_cfg(shard_cfg, local_replica,
+                                       local_replicaset)
+    local box_cfg = table.deepcopy(shard_cfg)
+    box_cfg.sharding = nil
+    box_cfg.listen = local_replica.uri
+    box_cfg.replication = {}
+    for _, replica in ipairs(local_replicaset) do
+        assert(replica.uri ~= nil, "missing .uri key for replica")
+        table.insert(box_cfg.replication, replica.uri)
+    end
+    return box_cfg
+end
+
+local function storage_cfg(cfg, name)
+    assert(self.replicasets == nil, "reconfiguration is not implemented yet")
+    log.info("Starting cluster for replica '%s'", name)
+
+    -- TODO: check configuration
+    assert(name ~= nil, "name is not empty")
+    assert(cfg.listen == nil, "cfg.listen should be empty")
+    assert(cfg.replication == nil, "cfg.replication should be empty")
+
+    self.replicasets = {}
+
+    local local_replicaset, local_replica, replicasets_to_discovery =
+        parse_config(cfg.sharding, name)
+
     log.info("Successfully found myself in the configuration")
-    cfg.listen = local_creplica.uri
-    cfg.replication = {}
-    -- TODO: doesn't work
-    -- cfg.read_only = not local_creplica.master
-    for _, creplica in ipairs(local_creplicaset) do
-        assert(creplica.uri ~= nil, "missing .uri key for replica")
-        table.insert(cfg.replication, creplica.uri)
-    end
-    assert(#cfg.replication > 0, "empty replicaset")
+    cfg = turn_shard_into_box_cfg(cfg, local_replica, local_replicaset)
     log.info("Calling box.cfg()...")
-    cfg.sharding = nil
-    for k, v in pairs(cfg) do
-        log.info({[k] = v})
-    end
     box.cfg(cfg)
     log.info("box has been configured")
 
-    local uri = luri.parse(local_creplica.uri)
+    local uri = luri.parse(local_replica.uri)
     assert(uri.login ~= nil, "login is not empty")
     assert(uri.password ~= nil, "password is not empty")
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
@@ -383,6 +405,22 @@ end
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
+
+--
+-- Wait @a timeout seconds until all replicaset uuids are
+-- discovered.
+--
+local function wait_discovery(timeout)
+    if timeout == nil then
+        timeout = 1
+    end
+    local total_time = 0
+    while #self.replicasets_to_discovery > 0 and total_time < timeout do
+        lfiber.sleep(0.1)
+        total_time = total_time + 0.1
+    end
+    return #self.replicasets_to_discovery == 0
+end
 
 local function storage_info()
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
@@ -428,5 +466,6 @@ return {
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;
+    wait_discovery = wait_discovery,
     internal = self;
 }
