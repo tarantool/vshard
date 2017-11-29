@@ -3,17 +3,34 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box')
 local consts = require('vshard.consts')
+local util = require('vshard.util')
 
 -- Internal state
-local self = {}
+local self = {
+    --
+    -- All known replicasets used for bucket re-balancing
+    --
+    -- {
+    --     [uuid] = { -- replicaset #1
+    --         master_uri = <master_uri>
+    --         master_conn = <master net.box>
+    --         uuid = <uuid>,
+    --     },
+    --     ...
+    -- }
+    replicasets = nil,
+    -- Array of replicasets without known UUID
+    -- { <master_uri>, <master_uri>, <master_uri>,. .. }
+    replicasets_to_discovery = nil,
+    -- Fiber to discovery uuid of replicasets.
+    discovery_fiber = nil
+}
 
 --------------------------------------------------------------------------------
 -- Schema
 --------------------------------------------------------------------------------
 
 local function storage_schema_v1(username, password)
-    log.info("I'm master")
-
     log.info("Initializing schema")
     box.schema.user.create(username, {password = password})
     box.schema.user.grant(username, 'replication')
@@ -255,23 +272,6 @@ end
 --------------------------------------------------------------------------------
 
 --
--- All known replicasets used for bucket re-balancing
---
--- {
---     [uuid] = { -- replicaset #1
---         master_uri = <master_uri>
---         master_conn = <master net.box>
---         uuid = <uuid>,
---     },
---     ...
--- }
-self.replicasets = nil
-
--- Array of replicasets without known UUID
--- { <master_uri>, <master_uri>, <master_uri>,. .. }
-self.replicasets_to_discovery = nil
-
---
 -- A background fiber to discovery UUID of all configured replicasets
 --
 local function replicaset_discovery_f()
@@ -314,44 +314,81 @@ end
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
+
+--
+-- Try to find a new replicaset in existing ones by master uris.
+-- @param new_replicaset One replicaset from sharding config.
+-- @retval Not nil UUID of found replicaset.
+-- @retval Nil Not found.
+--
+local function find_in_existing_replicasets(existing_replicasets,
+                                            new_replicaset)
+    for uuid, replicaset in pairs(existing_replicasets) do
+        local master_uri = nil
+        for _, new_replica in ipairs(new_replicaset) do
+            if new_replica.master then
+                master_uri = new_replica.uri
+                break
+            end
+        end
+        if master_uri == replicaset.master_uri then
+            return uuid
+        end
+    end
+end
+
 --
 -- Extract local replicaset, replica and replicasets to
 -- discovery from a shard config.
 -- @param cfg Shard config.
 -- @param local_name Name of the current storage.
 --
--- @retval Local replicaset, replica and replicasets to discovery.
+-- @retval Local replicaset, replica, replicasets to discovery and
+--         already discovered replicasets.
 --
-local function parse_config(cfg, local_name)
+local function parse_config(existing_replicasets, cfg, local_name)
+    util.sanity_check_config(cfg)
     -- Replicaset to which belong the current storage.
-    local local_creplicaset = nil
+    local local_replicaset = nil
     -- This storage.
-    local local_creplica = nil
+    local local_replica = nil
+    local new_self_replicasets = {}
 
     local replicasets_to_discovery = {}
-    for _, creplicaset in ipairs(cfg) do
-        local replicaset = {}
-        local cmaster = nil
-        for _, creplica in ipairs(creplicaset) do
-            if creplica.name == local_name then
-                assert(local_creplica == nil, "duplicate name")
-                local_creplicaset = creplicaset
-                local_creplica = creplica
+    for _, new_replicaset in ipairs(cfg) do
+        local uuid = find_in_existing_replicasets(existing_replicasets,
+                                                  new_replicaset)
+        if uuid ~= nil then
+            log.info('Move old replicaset %s to a new config with no changes',
+                     uuid)
+            new_self_replicasets[uuid] = existing_replicasets[uuid]
+        end
+        -- Try to find self.
+        local master = nil
+        for _, new_replica in ipairs(new_replicaset) do
+            if new_replica.name == local_name then
+                -- Checked by sanity check.
+                assert(local_replica == nil)
+                local_replicaset = new_replicaset
+                local_replica = new_replica
             end
-            if creplica.master then
-                cmaster = creplica
+            if new_replica.master then
+                master = new_replica
             end
         end
-        -- Ignore replicaset without active master
-        if cmaster then
-            table.insert(replicasets_to_discovery, cmaster.uri)
+        -- Ignore replicaset with no active master and do not
+        -- rediscovery already discovered one.
+        if master and not uuid then
+            log.info('Schedule master %s to discovery later', master.uri)
+            table.insert(replicasets_to_discovery, master.uri)
         end
     end
-    if local_creplicaset == nil then
-        error(string.format("Cannot find replica '%s' in configuration",
+    if local_replicaset == nil then
+        error(string.format("Cannot find replica %s in configuration",
                             local_name))
     end
-    return local_creplicaset, local_creplica, replicasets_to_discovery
+    return local_replicaset, local_replica, replicasets_to_discovery,
+           new_self_replicasets
 end
 
 --
@@ -365,41 +402,75 @@ local function turn_shard_into_box_cfg(shard_cfg, local_replica,
     box_cfg.listen = local_replica.uri
     box_cfg.replication = {}
     for _, replica in ipairs(local_replicaset) do
-        assert(replica.uri ~= nil, "missing .uri key for replica")
+        assert(replica.uri ~= nil)
         table.insert(box_cfg.replication, replica.uri)
     end
     return box_cfg
 end
 
+--
+-- Close connections to masters, which are no masters anymore.
+-- Use a new list of replicasets.
+--
+local function reset_replicasets(new_replicasets)
+    if self.replicasets == nil then
+        self.replicasets = new_replicasets
+        return
+    end
+    for uuid, replicaset in pairs(self.replicasets) do
+        if new_replicasets[uuid] == nil then
+            log.info('Close connection to an old master %s',
+                     replicaset.master_uri)
+            replicaset.master_conn:close()
+        end
+    end
+    self.replicasets = new_replicasets
+end
+
 local function storage_cfg(cfg, name)
-    assert(self.replicasets == nil, "reconfiguration is not implemented yet")
-    log.info("Starting cluster for replica '%s'", name)
+    if self.replicasets ~= nil then
+        log.info("Starting reconfiguration of replica %s", name)
+    else
+        log.info("Staring configuration of replica %s", name)
+    end
 
-    -- TODO: check configuration
-    assert(name ~= nil, "name is not empty")
-    assert(cfg.listen == nil, "cfg.listen should be empty")
-    assert(cfg.replication == nil, "cfg.replication should be empty")
-
-    self.replicasets = {}
-
-    local local_replicaset, local_replica, replicasets_to_discovery =
-        parse_config(cfg.sharding, name)
-
-    log.info("Successfully found myself in the configuration")
+    if name == nil then
+        error('Name must be specified')
+    end
+    if cfg.listen ~= nil or cfg.replication ~= nil then
+        error('"listen" and "replication" can not be set manually')
+    end
+    local local_replicaset, local_replica, replicasets_to_discovery,
+          new_self_replicasets =
+            parse_config(self.replicasets or {}, cfg.sharding, name)
+    if local_replica.master then
+        log.info('I am master')
+    end
+    local uri = luri.parse(local_replica.uri)
+    if uri.login == nil or uri.password == nil then
+        error('URI must contain login and password')
+    end
+    log.info("Successfully found self in the configuration")
     cfg = turn_shard_into_box_cfg(cfg, local_replica, local_replicaset)
     log.info("Calling box.cfg()...")
-    box.cfg(cfg)
-    log.info("box has been configured")
-
-    local uri = luri.parse(local_replica.uri)
-    assert(uri.login ~= nil, "login is not empty")
-    assert(uri.password ~= nil, "password is not empty")
+    -- Stop discovering unti successfull cfg{} end.
+    local saved_replicasets_to_discovery = self.replicasets_to_discovery
+    self.replicasets_to_discovery = {}
+    local status = pcall(box.cfg, cfg)
+    if not status then
+        -- Continue working with old config.
+        self.replicasets_to_discovery = saved_replicasets_to_discovery
+        box.error()
+    end
+    log.info("Box has been configured")
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
-
     self.replicasets_to_discovery = replicasets_to_discovery
-
-    -- Start background process to discovery replicasets
-    lfiber.create(replicaset_discovery_f)
+    reset_replicasets(new_self_replicasets)
+    if #self.replicasets_to_discovery > 0 and (self.discovery_fiber == nil or
+       self.discovery_fiber:status() == 'dead') then
+        -- Start background process to discovery replicasets
+        self.discovery_fiber = lfiber.create(replicaset_discovery_f)
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -411,6 +482,9 @@ end
 -- discovered.
 --
 local function wait_discovery(timeout)
+    if self.replicasets_to_discovery == nil then
+        return true
+    end
     if timeout == nil then
         timeout = 1
     end
@@ -455,6 +529,8 @@ end
 --------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
+
+self.parse_config = parse_config
 
 return {
     bucket_force_create = bucket_force_create;

@@ -11,7 +11,7 @@ if os.getenv('ADMIN') then
 end
 
 -- Call a configuration provider
-local cfg = require('devcfg')
+cfg = require('devcfg')
 
 -- Start the database with sharding
 vshard = require('vshard')
