@@ -44,7 +44,7 @@ local function bucket_discovery(bucket_id)
         end
     end
 
-    return consts.PROTO.WRONG_BUCKET, result
+    return consts.PROTO.WRONG_BUCKET
 end
 
 -- Resolve bucket id to replicaset uuid
@@ -116,7 +116,7 @@ end
 
 local function router_cfg(cfg)
     assert(self.replicasets == nil, "reconfiguration is not implemented yet")
-    log.info("Starting cluster for replica '%s'", name)
+    log.info("Starting cluster for replica '%s'", cfg.name)
 
     local replicasets = {}
     local replicaset_count = 0

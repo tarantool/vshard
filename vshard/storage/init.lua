@@ -334,7 +334,7 @@ local function storage_cfg(cfg, name)
         local cmaster = nil
         for _, creplica in ipairs(creplicaset) do
             if creplica.name == name then
-                assert(local_replica == nil, "duplicate name")
+                assert(local_creplica == nil, "duplicate name")
                 local_creplicaset = creplicaset
                 local_creplica = creplica
             end

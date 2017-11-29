@@ -60,7 +60,6 @@ _ = test_run:cmd("switch router_1")
 vshard.router.bucket_discovery(1)
 ---
 - 2
-- null
 ...
 vshard.router.bootstrap()
 ---
