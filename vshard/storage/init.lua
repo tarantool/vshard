@@ -69,6 +69,11 @@ end
 local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
+    if not self.local_creplica.master then
+        -- Add redirect here
+        return consts.PROTO.NON_MASTER
+    end
+
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil then
         return consts.PROTO.WRONG_BUCKET
@@ -77,11 +82,6 @@ local function bucket_check_state(bucket_id, mode)
     if bucket.status == consts.BUCKET.ACTIVE or
        (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
         return consts.PROTO.OK
-    end
-
-    if mode == 'write' and box.info.ro then
-        -- Add redirect here
-        return consts.PROTO.NON_MASTER
     end
 
     assert(bucket.status == consts.BUCKET_SENDING or
@@ -443,6 +443,8 @@ local function storage_cfg(cfg, name)
     local local_replicaset, local_replica, replicasets_to_discovery,
           new_self_replicasets =
             parse_config(self.replicasets or {}, cfg.sharding, name)
+    self.local_creplicaset = local_replicaset
+    self.local_creplica = local_replica
     if local_replica.master then
         log.info('I am master')
     end
