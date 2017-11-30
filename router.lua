@@ -7,7 +7,7 @@ if os.getenv('ADMIN') then
 end
 
 -- Call a configuration provider
-local cfg = require('devcfg')
+cfg = require('devcfg')
 cfg.listen = 3300
 
 -- Start the database with sharding

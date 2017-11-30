@@ -26,9 +26,9 @@ _ = test_run:cmd("switch router_1")
 vshard.router.bucket_discovery(1)
 vshard.router.bootstrap()
 status, replicaset = vshard.router.bucket_discovery(1)
-status, replicaset.id
+status
 status, replicaset = vshard.router.bucket_discovery(2)
-status, replicaset.id
+status
 
 --
 -- Function call

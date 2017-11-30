@@ -3,6 +3,7 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box')
 local consts = require('vshard.consts')
+local util = require('vshard.util')
 
 -- Internal state
 local self = {}
@@ -99,32 +100,55 @@ end
 --------------------------------------------------------------------------------
 
 local function router_cfg(cfg)
-    assert(self.replicasets == nil, "reconfiguration is not implemented yet")
-    log.info("Starting cluster for replica '%s'", cfg.name)
-
-    local replicasets = {}
-    local replicaset_count = 0
-    for _, creplicaset in ipairs(cfg.sharding) do
-        local replicaset = {}
-        local cmaster = nil
-        for _, creplica in ipairs(creplicaset) do
-            if creplica.master then
-                cmaster = creplica
-            end
-        end
-        -- Ignore replicaset without active master
-        if cmaster then
-            replicaset_count = replicaset_count + 1
-            local master_conn = netbox.connect(cmaster.uri,
-                {reconnect_after = consts.RECONNECT_TIMEOUT})
-            replicasets[replicaset_count] = {
-                id = replicaset_count;
-                master_uri = cmaster.uri;
-                master_conn = master_conn
-            }
-        end
+    util.sanity_check_config(cfg.sharding)
+    cfg = table.deepcopy(cfg)
+    if self.replicasets == nil then
+        log.info('Starting router configuration')
+    else
+        log.info('Starting router reconfiguration')
     end
 
+    local replicasets = {}
+    local move_to_new_config = {}
+    for _, replicaset in ipairs(cfg.sharding) do
+        local master = nil
+        for _, replica in ipairs(replicaset) do
+            if replica.master then
+                master = replica
+            end
+        end
+        -- Ignore replicaset with no master.
+        if master then
+            -- Try to reuse existing connection.
+            local old_idx = nil
+            for idx, old_replicaset in pairs(self.replicasets or {}) do
+                if old_replicaset.master_uri == master.uri then
+                    old_idx = idx
+                    break
+                end
+            end
+            if old_idx ~= nil then
+                log.info('Move master %s to a new config', master.uri)
+                move_to_new_config[old_idx] = true
+                table.insert(replicasets, self.replicasets[old_idx])
+            else
+                log.info('Connect to a new replicaset master %s', master.uri)
+                local master_conn = netbox.connect(master.uri,
+                    {reconnect_after = consts.RECONNECT_TIMEOUT})
+                table.insert(replicasets, {
+                    master_uri = master.uri,
+                    master_conn = master_conn
+                })
+            end
+        end
+    end
+    for idx, replicaset in pairs(self.replicasets or {}) do
+        if not move_to_new_config[idx] then
+            log.info('Kill connection to an old master %s',
+                     replicaset.master_uri)
+            replicaset.master_conn:close()
+        end
+    end
     self.replicasets = replicasets
 
     log.info("Calling box.cfg()...")
@@ -133,7 +157,7 @@ local function router_cfg(cfg)
         log.info({[k] = v})
     end
     box.cfg(cfg)
-    log.info("box has been configured")
+    log.info("Box has been configured")
 end
 
 --------------------------------------------------------------------------------
@@ -164,15 +188,15 @@ end
 
 local function router_info()
     local ireplicaset = {}
-    for id, replicaset in pairs(self.replicasets) do
-        ireplicaset[id] = {
+    for _, replicaset in pairs(self.replicasets) do
+        table.insert(ireplicaset, {
             master = {
                 uri = replicaset.master_uri;
                 uuid = replicaset.master_conn and replicaset.master_conn.peer_uuid;
                 state = replicaset.master_conn and replicaset.master_conn.state;
                 error = replicaset.master_conn and replicaset.master_conn.error;
             };
-        };
+        });
     end
 
     return {

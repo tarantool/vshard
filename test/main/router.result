@@ -67,18 +67,16 @@ vshard.router.bootstrap()
 status, replicaset = vshard.router.bucket_discovery(1)
 ---
 ...
-status, replicaset.id
+status
 ---
 - 0
-- 1
 ...
 status, replicaset = vshard.router.bucket_discovery(2)
 ---
 ...
-status, replicaset.id
+status
 ---
 - 0
-- 2
 ...
 --
 -- Function call

@@ -19,6 +19,14 @@ test_run:wait_fullmesh(REPLICASET_1)
 test_run:wait_fullmesh(REPLICASET_2)
 ---
 ...
+test_run:cmd('create server router_1 with script="main/router_1.lua", wait=True, wait_load=True')
+---
+- true
+...
+test_run:cmd('start server router_1')
+---
+- true
+...
 test_run:switch('storage_1_a')
 ---
 - true
@@ -126,7 +134,26 @@ vshard.storage.wait_discovery()
 ---
 - true
 ...
-test_run:switch('default')
+test_run:switch('router_1')
+---
+- true
+...
+cfg.sharding[1][2] = nil
+---
+...
+cfg.sharding[2][1].master = nil
+---
+...
+cfg.sharding[2][2].master = true
+---
+...
+cfg.sharding[3] = {{uri = "storage:storage@127.0.0.1:3306", name = 'storage_3_a', master = true}}
+---
+...
+vshard.router.cfg(cfg)
+---
+...
+test_run:cmd('switch default')
 ---
 - true
 ...
@@ -264,6 +291,28 @@ uris
 box.cfg.replication
 ---
 - - storage:storage@127.0.0.1:3306
+...
+test_run:switch('router_1')
+---
+- true
+...
+info = vshard.router.info()
+---
+...
+uris = {}
+---
+...
+for k,v in pairs(info.replicasets) do table.insert(uris, v.master.uri) end
+---
+...
+table.sort(uris)
+---
+...
+uris
+---
+- - storage:storage@127.0.0.1:3301
+  - storage:storage@127.0.0.1:3304
+  - storage:storage@127.0.0.1:3306
 ...
 test_run:switch('default')
 ---
