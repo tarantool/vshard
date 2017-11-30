@@ -10,8 +10,9 @@
 --             conn = <netbox>
 --          }
 --      },
---      master = <master server from the array above>
+--      master = <master server from the array above>,
 --      uuid = <replicaset_uuid>,
+--      weight = number,
 --  }
 --
 -- replicasets = {
@@ -145,7 +146,8 @@ local function buildall(sharding_cfg, existing_replicasets)
     for replicaset_uuid, replicaset in pairs(sharding_cfg) do
         local new_replicaset = setmetatable({
             replicas = {},
-            uuid = replicaset_uuid
+            uuid = replicaset_uuid,
+            weight = replicaset.weight
         }, replicaset_mt)
         for replica_uuid, replica in pairs(replicaset.replicas) do
             local new_replica = {uri = replica.uri, name = replica.name,

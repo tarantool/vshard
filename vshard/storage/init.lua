@@ -17,6 +17,15 @@ local self = {
     replicasets = nil,
     -- Fiber to remove garbage buckets data.
     garbage_collect_fiber = nil,
+    -- Fiber to rebalance a cluster.
+    rebalancer_fiber = nil,
+    -- Internal flag to activate and deactivate rebalancer. Mostly
+    -- for tests.
+    is_rebalancer_active = true,
+    -- True, if now a routes from a rebalancer are beeing applied.
+    -- If it is set, then reject all rebalancer requests to avoid
+    -- multiple simultaneous rebalancing processes.
+    is_rebalancing_in_progress = false,
     errinj = {
         ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
     }
@@ -48,6 +57,8 @@ local function storage_schema_v1(username, password)
         'vshard.storage.bucket_send',
         'vshard.storage.bucket_recv',
         'vshard.storage.bucket_stat',
+        'vshard.storage.rebalancer_request_state',
+        'vshard.storage.rebalancer_apply_routes',
     }
 
     for _, name in ipairs(storage_api) do
@@ -645,6 +656,298 @@ local function bucket_delete_garbage(bucket_id, opts)
 end
 
 --------------------------------------------------------------------------------
+-- Rebalancer
+--------------------------------------------------------------------------------
+--
+-- Calculate a set of metrics:
+-- * bucket_count per weight unit;
+-- * maximal disbalance over all replicasets;
+-- * needed buckets for each replicaset.
+-- @param replicasets Map of type: {
+--     uuid = {bucket_count = number, weight = number},
+--     ...
+-- }
+-- @retval Maximal disbalance over all replicasets.
+--
+local function rebalancer_calculate_metrics(replicasets)
+    local weight_sum = 0
+    for _, replicaset in pairs(replicasets) do
+        weight_sum = weight_sum + replicaset.weight
+    end
+    assert(weight_sum ~= 0)
+    local bucket_per_weight = consts.BUCKET_COUNT / weight_sum
+    local max_disbalance = 0
+    for _, replicaset in pairs(replicasets) do
+        local ethalon_bucket_count = replicaset.weight * bucket_per_weight
+        local needed = ethalon_bucket_count - replicaset.bucket_count
+        needed = math.ceil(needed)
+        if ethalon_bucket_count ~= 0 then
+            local disbalance = math.abs(needed) / ethalon_bucket_count * 100
+            if disbalance > max_disbalance then
+                max_disbalance = disbalance
+            end
+        elseif replicaset.bucket_count ~= 0 then
+            max_disbalance = math.huge
+        end
+        assert(needed >= 0 or -needed <= replicaset.bucket_count)
+        replicaset.needed = math.min(consts.REBALANCER_MAX_RECEIVING, needed)
+    end
+    return max_disbalance
+end
+
+--
+-- Move @a needed bucket count from a pool to @a dst_uuid and
+-- remember the route in @a bucket_routes table.
+--
+local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
+                                                 dst_uuid, needed)
+    local to_remove_from_pool = {}
+    for src_uuid, bucket_count in pairs(bucket_pool) do
+        local count = math.min(bucket_count, needed)
+        local src = bucket_routes[src_uuid]
+        if src == nil then
+            bucket_routes[src_uuid] = {[dst_uuid] = count}
+        else
+            local dst = src[dst_uuid]
+            if dst == nil then
+                src[dst_uuid] = count
+            else
+                src[dst_uuid] = dst + count
+            end
+        end
+        local new_count = bucket_pool[src_uuid] - count
+        needed = needed - count
+        bucket_pool[src_uuid] = new_count
+        if new_count == 0 then
+            table.insert(to_remove_from_pool, src_uuid)
+        end
+        if needed == 0 then
+            break
+        end
+    end
+    for _, src_uuid in pairs(to_remove_from_pool) do
+        bucket_pool[src_uuid] = nil
+    end
+end
+
+--
+-- Build a table with routes defining from which node to which one
+-- how many buckets should be moved to reach the best balance in
+-- a cluster.
+-- @param replicasets Map of type: {
+--     uuid = {bucket_count = number, weight = number,
+--             needed = number},
+--     ...
+-- }      This parameter is a result of
+--        rebalancer_calculate_metrics().
+--
+-- @retval Bucket routes. It is a map of type: {
+--     src_uuid = {
+--         dst_uuid = number, -- Bucket count to move from
+--                               src to dst.
+--         ...
+--     },
+--     ...
+-- }
+--
+local function rebalancer_build_routes(replicasets)
+    -- Map of type: {
+    --     uuid = number, -- free buckets of uuid.
+    -- }
+    local bucket_pool = {}
+    for uuid, replicaset in pairs(replicasets) do
+        if replicaset.needed < 0 then
+            bucket_pool[uuid] = -replicaset.needed
+            replicaset.needed = 0
+        end
+    end
+    local bucket_routes = {}
+    for uuid, replicaset in pairs(replicasets) do
+        if replicaset.needed > 0 then
+            rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes, uuid,
+                                              replicaset.needed)
+        end
+    end
+    return bucket_routes
+end
+
+--
+-- Fiber function to apply routes as described below.
+--
+local function rebalancer_apply_routes_f(routes)
+    assert(not self.is_rebalancing_in_progress)
+    self.is_rebalancing_in_progress = true
+    log.info('Apply rebalancer routes')
+    local active_buckets =
+        box.space._bucket.index.status:select{consts.BUCKET.ACTIVE}
+    local i = 1
+    for dst_uuid, bucket_count in pairs(routes) do
+        assert(i + bucket_count - 1 <= #active_buckets)
+        log.info('Send %d buckets to "%s"', bucket_count, dst_uuid)
+        for j = i, i + bucket_count - 1 do
+            local status, ret = pcall(bucket_send, active_buckets[j].id,
+                                      dst_uuid)
+            if not status or ret ~= true then
+                if not status then
+                    log.error('Error during rebalancer routes applying: %s', ret)
+                end
+                log.info('Can not apply routes')
+                self.is_rebalancing_in_progress = false
+                return
+            end
+        end
+        log.info('%s buckets are sent ok', bucket_count)
+        i = i + bucket_count
+    end
+    log.info('Rebalancer routes are applied')
+    self.is_rebalancing_in_progress = false
+end
+
+--
+-- Apply routes table of type: {
+--     dst_uuid = number, -- Bucket count to send.
+--     ...
+-- }. Is used by a rebalancer.
+--
+local function rebalancer_apply_routes(routes)
+    -- Can not apply routes here because of gh-946 in tarantool
+    -- about problems with long polling. Apply routes in a fiber.
+    lfiber.create(rebalancer_apply_routes_f, routes)
+    return true
+end
+
+--
+-- From each replicaset download bucket count, check all buckets
+-- to have SENT or ACTIVE state.
+-- @retval not nil Argument of rebalancer_calculate_metrics().
+-- @retval     nil Not all replicasets have only SENT and ACTIVE
+--         buckets, or some replicasets are unavailable.
+--
+local function rebalancer_download_states()
+    local replicasets = {}
+    local total_bucket_active_count = 0
+    for uuid, replicaset in pairs(self.replicasets) do
+        local bucket_active_count =
+            replicaset:call('vshard.storage.rebalancer_request_state', {})
+        if bucket_active_count == nil then
+            return
+        end
+        total_bucket_active_count = total_bucket_active_count +
+                                    bucket_active_count
+        replicasets[uuid] = {bucket_count = bucket_active_count,
+                             weight = replicaset.weight or 1}
+    end
+    if total_bucket_active_count == consts.BUCKET_COUNT then
+        return replicasets
+    else
+        log.info('Total active bucket count is not equal to BUCKET_COUNT. '..
+                 'Possibly a boostrap is not finished yet.')
+    end
+end
+
+--
+-- Background rebalancer. Works on a storage which has the
+-- smallest replicaset uuid and which is master.
+--
+local function rebalancer_f()
+    while true do
+::continue::
+        while not self.is_rebalancer_active do
+            log.info('Rebalancer is disabled. Sleep')
+            lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+        end
+        local status, replicasets = pcall(rebalancer_download_states)
+        if not status or replicasets == nil then
+            if not status then
+                log.error('Error during downloading rebalancer states: %s',
+                          replicasets)
+            end
+            log.info('Some buckets are not active, retry rebalancing later')
+            lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+            goto continue
+        end
+        local max_disbalance = rebalancer_calculate_metrics(replicasets)
+        if max_disbalance <= consts.REBALANCER_DISBALANCE_THRESHOLD then
+            log.info('The cluster is balanced ok. Schedule next rebalancing '..
+                     'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
+            lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+            goto continue
+        end
+        local routes = rebalancer_build_routes(replicasets)
+        -- Routes table can not be empty. If it had been empty,
+        -- then max_disbalance would have been calculated
+        -- incorrectly.
+        local is_empty = true
+        for _,__ in pairs(routes) do
+            is_empty = false
+            break
+        end
+        assert(not is_empty)
+        for src_uuid, src_routes in pairs(routes) do
+            local rs = self.replicasets[src_uuid]
+            local status, err =
+                rs:call('vshard.storage.rebalancer_apply_routes', {src_routes})
+            if not status then
+                log.error('Error during routes appying on "%s": %s. '..
+                          'Try rebalance later', src_uuid, err)
+                lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+                goto continue
+            end
+        end
+        log.info('Rebalance routes are sent. Schedule next wakeup after '..
+                 '%f seconds', consts.REBALANCER_WORK_INTERVAL)
+        lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+    end
+end
+
+--
+-- Check all buckets of the host storage to have SENT or ACTIVE
+-- state, return active bucket count.
+-- @retval not nil Count of active buckets.
+-- @retval     nil Not SENT or not ACTIVE buckets were found.
+--
+local function rebalancer_request_state()
+    if not self.is_rebalancer_active or self.is_rebalancing_in_progress then
+        return
+    end
+    local _bucket = box.space._bucket
+    local status_index = _bucket.index.status
+    if #status_index:select({consts.BUCKET.SENDING}, {limit = 1}) > 0 then
+        return
+    end
+    if #status_index:select({consts.BUCKET.RECEIVING}, {limit = 1}) > 0 then
+        return
+    end
+    if #status_index:select({consts.BUCKET.GARBAGE}, {limit = 1}) > 0 then
+        return
+    end
+    local bucket_count = _bucket:count()
+    return status_index:count({consts.BUCKET.ACTIVE})
+end
+
+--
+-- Immediately wakeup rebalancer, if it exists on the current
+-- node.
+--
+local function rebalancer_wakeup()
+    if self.rebalancer_fiber ~= nil then
+        self.rebalancer_fiber:wakeup()
+    end
+end
+
+--
+-- Disable/enable rebalancing. Disabled rebalancer sleeps until it
+-- is enabled back. If not a rebalancer node is disabled, it does
+-- not sends its state to rebalancer.
+--
+local function rebalancer_disable()
+    self.is_rebalancer_active = false
+end
+local function rebalancer_enable()
+    self.is_rebalancer_active = true
+end
+
+--------------------------------------------------------------------------------
 -- API
 --------------------------------------------------------------------------------
 
@@ -691,18 +994,19 @@ local function storage_cfg(cfg, this_replica_uuid)
     local this_replicaset
     local this_replica
     local new_replicasets = lreplicaset.buildall(cfg.sharding,
-                                                 self.replicasets or {},
-                                                 false)
+                                                 self.replicasets or {}, false)
+    local min_master_uuid
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
+            if (min_master_uuid == nil or replica_uuid < min_master_uuid) and
+               rs.master == replica then
+                min_master_uuid = replica_uuid
+            end
             if replica_uuid == this_replica_uuid then
+                assert(this_replicaset == nil)
                 this_replicaset = rs
                 this_replica = replica
-                break
             end
-        end
-        if this_replica ~= nil then
-            break
         end
     end
     if this_replicaset == nil then
@@ -745,6 +1049,20 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     -- Collect old net.box connections
     collectgarbage('collect')
+    if min_master_uuid == this_replica.uuid then
+        if not self.rebalancer_fiber then
+            log.info('Run rebalancer')
+            self.rebalancer_fiber = lfiber.create(rebalancer_f)
+        else
+            log.info('Wakeup rebalancer')
+            -- Configuration had changed. Time to rebalance.
+            self.rebalancer_fiber:wakeup()
+        end
+    elseif self.rebalancer_fiber then
+        log.info('Rebalancer location has changed to "%s"', min_master_uuid)
+        self.rebalancer_fiber:cancel()
+        self.rebalancer_fiber = nil
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -792,6 +1110,9 @@ self.find_garbage_bucket = find_garbage_bucket
 self.collect_garbage_step = collect_garbage_step
 self.collect_garbage_f = collect_garbage_f
 
+self.rebalancer_build_routes = rebalancer_build_routes
+self.rebalancer_calculate_metrics = rebalancer_calculate_metrics
+
 return {
     bucket_force_create = bucket_force_create;
     bucket_force_drop = bucket_force_drop;
@@ -800,6 +1121,11 @@ return {
     bucket_send = bucket_send;
     bucket_stat = bucket_stat;
     bucket_delete_garbage = bucket_delete_garbage;
+    rebalancer_request_state = rebalancer_request_state;
+    rebalancer_wakeup = rebalancer_wakeup;
+    rebalancer_apply_routes = rebalancer_apply_routes;
+    rebalancer_disable = rebalancer_disable;
+    rebalancer_enable = rebalancer_enable;
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;

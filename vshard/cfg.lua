@@ -13,6 +13,10 @@ local function cfg_check_replicaset(replicaset)
     if type(replicaset.replicas) ~= 'table' then
         error('Replicaset.replicas must be array of replicas')
     end
+    if replicaset.weight ~= nil and (type(replicaset.weight) ~= 'number' or
+                                     replicaset.weight < 0) then
+        error('Replicaset weight must be either nil or non-negative number')
+    end
     local master_is_found = false
     for k, replica in pairs(replicaset.replicas) do
         if type(replica.uri) ~= 'string' then

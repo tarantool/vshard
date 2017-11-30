@@ -9,6 +9,7 @@ test_run:wait_fullmesh(REPLICASET_1)
 test_run:wait_fullmesh(REPLICASET_2)
 
 test_run:switch('storage_1_a')
+vshard.storage.rebalancer_disable()
 vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_force_create(2)
 vshard.storage.bucket_force_create(3)

@@ -22,6 +22,9 @@ names = {
     ['storage_2_b'] = '001688c3-66f8-4a31-8e19-036c17d489c2',
 }
 
+replicasets = {'cbf06940-0790-498b-948d-042b62cf3d29',
+               'ac522f65-aa94-4134-9f64-51ee384f1a54'}
+
 -- Start the database with sharding
 vshard = require('vshard')
 vshard.storage.cfg(cfg, names[NAME])

@@ -25,6 +25,7 @@ test_run:cmd("push filter '"..storage_2_a_uuid.."' to '<storage_2_a>'")
 test_run:cmd("push filter '"..storage_2_b_uuid.."' to '<storage_2_b>'")
 
 _ = test_run:cmd("switch storage_1_a")
+vshard.storage.rebalancer_disable()
 
 replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
 replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]

@@ -23,6 +23,9 @@ test_run:switch('storage_1_a')
 ---
 - true
 ...
+vshard.storage.rebalancer_disable()
+---
+...
 vshard.storage.bucket_force_create(1)
 ---
 - true

@@ -62,3 +62,18 @@ cfg['rsid3'] = replicaset3
 check(cfg)
 cfg['rsid2'] = nil
 cfg['rsid3'] = nil
+
+--
+-- gh-40: replicaset weight. Weight is used by a rebalancer to
+-- correctly spead buckets on a cluster.
+--
+replicaset.weight = '100'
+check(cfg)
+replicaset.weight = -100
+check(cfg)
+replicaset.weight = 0
+lcfg.check(cfg)
+replicaset.weight = 0.123
+lcfg.check(cfg)
+replicaset.weight = 100000
+lcfg.check(cfg)
