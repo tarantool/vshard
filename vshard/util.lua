@@ -108,7 +108,24 @@ local function build_replicasets(shard_cfg, existing_replicasets, do_connection)
     return new_replicasets
 end
 
+--
+-- Extract parts of a tuple.
+-- @param tuple Tuple to extract a key from.
+-- @param parts Array of index parts. Each part must contain
+--        'fieldno' attribute.
+--
+-- @retval Extracted key.
+--
+local function tuple_extract_key(tuple, parts)
+    local key = {}
+    for _, part in pairs(parts) do
+        table.insert(key, tuple[part.fieldno])
+    end
+    return key
+end
+
 return {
     sanity_check_config = sanity_check_config,
-    build_replicasets = build_replicasets
+    build_replicasets = build_replicasets,
+    tuple_extract_key = tuple_extract_key
 }

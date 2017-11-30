@@ -1,0 +1,207 @@
+test_run = require('test_run').new()
+vshard = require('vshard')
+fiber = require('fiber')
+
+find_sharded = vshard.storage.internal.find_sharded_spaces
+
+--
+-- Find nothing if no bucket_id anywhere, or there is no index
+-- by it, or bucket_id is not unsigned.
+--
+
+s = box.schema.create_space('test')
+_ = s:create_index('pk')
+find_sharded()
+
+format = {}
+format[1] = {name = 'field1', type = 'unsigned'}
+format[2] = {name = 'bucket_id', type = 'unsigned'}
+s:format(format)
+find_sharded()
+
+format[2].type = 'string'
+s:format(format)
+sk = s:create_index('sk', {parts = {{2, 'string'}}})
+find_sharded()
+
+-- Bucket id must be the first part of an index.
+format[2].type = 'unsigned'
+sk:drop()
+s:format(format)
+sk = s:create_index('sk', {parts = {{1, 'unsigned'}, {2, 'unsigned'}}})
+find_sharded()
+
+-- Ok to find sharded space.
+sk:drop()
+sk = s:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
+find_sharded()
+
+s2 = box.schema.create_space('test2', {format = format})
+pk2 = s2:create_index('pk')
+sk2 = s2:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
+find_sharded()
+
+s:drop()
+s2:drop()
+
+--
+-- Test garbage buckets detection.
+--
+find_garbage = vshard.storage.internal.find_garbage_bucket
+control = {bucket_generation = 0, bucket_generation_collected = -1}
+format = {}
+format[1] = {name = 'id', type = 'unsigned'}
+format[2] = {name = 'status', type = 'string'}
+_bucket = box.schema.create_space('_bucket', {format = format})
+_ = _bucket:create_index('pk')
+_ = _bucket:create_index('status', {parts = {{2, 'string'}}, unique = false})
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
+_bucket:replace{2, vshard.consts.BUCKET.RECEIVING}
+_bucket:replace{3, vshard.consts.BUCKET.ACTIVE}
+_bucket:replace{4, vshard.consts.BUCKET.SENT}
+_bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
+
+format = {}
+format[1] = {name = 'field1', type = 'unsigned'}
+format[2] = {name = 'bucket_id', type = 'unsigned'}
+s = box.schema.create_space('test', {format = format})
+pk = s:create_index('pk')
+sk = s:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
+
+s:replace{1, 1}
+s:replace{2, 1}
+s:replace{3, 2}
+s:replace{4, 2}
+find_garbage(sk, control)
+
+s:replace{5, 100}
+s:replace{6, 200}
+find_garbage(sk, control)
+
+s:delete{5}
+find_garbage(sk, control)
+s:delete{6}
+
+s:replace{5, 4}
+find_garbage(sk, control)
+s:replace{5, 5}
+find_garbage(sk, control)
+s:delete{5}
+
+--
+-- Test garbage buckets deletion.
+--
+garbage_step = vshard.storage.internal.collect_garbage_step
+s2 = box.schema.create_space('test2', {format = format})
+pk2 = s2:create_index('pk')
+sk2 = s2:create_index('sk2', {parts = {{2, 'unsigned'}}, unique = false})
+s2:replace{1, 1}
+s2:replace{3, 3}
+
+test_run:cmd("setopt delimiter ';'")
+function fill_spaces_with_garbage()
+    s:replace{5, 100}
+    s:replace{6, 100}
+    s:replace{7, 4}
+    s:replace{8, 5}
+    -- Garbage bucket {200} is deleted in two parts: 1000 and 101.
+    for i = 7, 1107 do s:replace{i, 200} end
+    s2:replace{4, 200}
+    s2:replace{5, 100}
+    s2:replace{5, 300}
+    s2:replace{6, 4}
+    s2:replace{7, 5}
+end;
+test_run:cmd("setopt delimiter ''");
+
+fill_spaces_with_garbage()
+
+#s2:select{}
+#s:select{}
+garbage_step(control)
+s2:select{}
+s:select{}
+control.bucket_generation_collected
+-- Nothing deleted - update collected generation.
+garbage_step(control)
+control.bucket_generation_collected
+
+--
+-- Test continuous garbage collection via background fiber.
+--
+collect_f = vshard.storage.internal.collect_garbage_f
+f = fiber.create(collect_f)
+fill_spaces_with_garbage()
+-- Wait until garbage collection is finished.
+while #s2:select{} ~= 2 do fiber.sleep(0.1) end
+s:select{}
+s2:select{}
+-- Check garbage bucket is deleted by background fiber.
+_bucket:select{}
+--
+-- Test deletion of 'sent' buckets after a specified timeout.
+--
+_bucket:replace{2, vshard.consts.BUCKET.SENT}
+-- Wait deletion after a while.
+while _bucket:get{2} ~= nil do fiber.sleep(0.1) end
+_bucket:select{}
+s:select{}
+s2:select{}
+
+--
+-- Test full lifecycle of a bucket.
+--
+_bucket:replace{4, vshard.consts.BUCKET.ACTIVE}
+s:replace{5, 4}
+s:replace{6, 4}
+_bucket:replace{4, vshard.consts.BUCKET.SENT}
+while _bucket:get{4} ~= nil do fiber.sleep(0.1) end
+
+--
+-- Test WAL errors during deletion from _bucket.
+--
+function rollback_on_delete(old, new) if old ~= nil and new == nil then box.rollback() end end
+_ = _bucket:on_replace(rollback_on_delete)
+_bucket:replace{4, vshard.consts.BUCKET.SENT}
+s:replace{5, 4}
+s:replace{6, 4}
+while not test_run:grep_log("default", "Error during deletion of empty sent buckets") do fiber.sleep(0.1) end
+s:select{}
+_bucket:select{}
+_ = _bucket:on_replace(nil, rollback_on_delete)
+while _bucket:get{4} ~= nil do fiber.sleep(0.1) end
+
+f:cancel()
+
+--
+-- Test API function to delete a specified bucket data.
+--
+require('util')
+
+-- Delete an existing garbage bucket.
+_bucket:replace{4, vshard.consts.BUCKET.SENT}
+s:replace{5, 4}
+s:replace{6, 4}
+vshard.storage.bucket_delete_garbage(4)
+s:select{}
+
+-- Delete a not existing garbage bucket.
+_bucket:delete{4}
+s:replace{5, 4}
+s:replace{6, 4}
+vshard.storage.bucket_delete_garbage(4)
+s:select{}
+
+-- Fail to delete a not garbage bucket.
+_bucket:replace{4, vshard.consts.BUCKET.ACTIVE}
+s:replace{5, 4}
+s:replace{6, 4}
+check_error(vshard.storage.bucket_delete_garbage, 4)
+check_error(vshard.storage.bucket_delete_garbage, 4, 10000)
+-- 'Force' option ignores this error.
+vshard.storage.bucket_delete_garbage(4, {force = true})
+s:select{}
+
+s2:drop()
+s:drop()
+_bucket:drop()
