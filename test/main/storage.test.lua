@@ -26,8 +26,6 @@ test_run:cmd("push filter '"..storage_2_b_uuid.."' to '<storage_2_b>'")
 
 _ = test_run:cmd("switch storage_1_a")
 
-vshard.storage.wait_discovery()
-
 replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
 replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]
 vshard.storage.info().replicasets[replicaset1_uuid] or vshard.storage.info()

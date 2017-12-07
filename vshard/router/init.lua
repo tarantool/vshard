@@ -18,7 +18,7 @@ local self = {}
 -- {
 --     [pos] = { -- replicaset #1
 --         master_uri = <master_uri>
---         master_conn = <master net.box>
+--         master.conn = <master net.box>
 --     },
 --     ...
 -- }
@@ -37,7 +37,7 @@ local function bucket_discovery(bucket_id)
 
     log.info("Discovering bucket %d", bucket_id)
     for _, replicaset in pairs(self.replicasets) do
-        local conn = replicaset.master_conn
+        local conn = replicaset.master.conn
         local status, result = conn:call('vshard.storage.bucket_stat', {bucket_id})
         if status == consts.PROTO.OK then
             self.route_map[bucket_id] = replicaset
@@ -75,7 +75,7 @@ local function router_call(bucket_id, mode, func, args)
         status, reason = bucket_resolve(bucket_id)
         if status == consts.PROTO.OK then
             replicaset = reason
-            local conn = replicaset.master_conn
+            local conn = replicaset.master.conn
             if not conn:is_connected() then
                 -- Skip this event loop iteration and allow netbox
                 -- to try to reconnect.
@@ -100,59 +100,42 @@ end
 --------------------------------------------------------------------------------
 
 local function router_cfg(cfg)
-    util.sanity_check_config(cfg.sharding)
     cfg = table.deepcopy(cfg)
+    util.sanity_check_config(cfg.sharding)
     if self.replicasets == nil then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
+    self.replicasets = self.replicasets or {}
 
-    local replicasets = {}
-    local move_to_new_config = {}
-    for _, replicaset in ipairs(cfg.sharding) do
-        local master = nil
-        for _, replica in ipairs(replicaset) do
+    local new_replicasets = {}
+    for replicaset_uuid, replicaset in pairs(cfg.sharding) do
+        local new_replicaset = {servers = {}, uuid = replicaset_uuid}
+        for replica_uuid, replica in pairs(replicaset.servers) do
+            local new_replica = {uri = replica.uri,
+                                 name = replica.name,
+                                 uuid = replica_uuid}
+            if self.replicasets[replicaset_uuid] and
+               self.replicasets[replicaset_uuid].servers[replica_uuid] then
+                new_replica.conn = self.replicasets[replicaset_uuid].servers[replica_uuid].conn
+            end
+            new_replicaset.servers[replica_uuid] = new_replica
             if replica.master then
-                master = replica
+                new_replicaset.master = new_replica
             end
         end
-        -- Ignore replicaset with no master.
-        if master then
-            -- Try to reuse existing connection.
-            local old_idx = nil
-            for idx, old_replicaset in pairs(self.replicasets or {}) do
-                if old_replicaset.master_uri == master.uri then
-                    old_idx = idx
-                    break
-                end
-            end
-            if old_idx ~= nil then
-                log.info('Move master %s to a new config', master.uri)
-                move_to_new_config[old_idx] = true
-                table.insert(replicasets, self.replicasets[old_idx])
-            else
-                log.info('Connect to a new replicaset master %s', master.uri)
-                local master_conn = netbox.connect(master.uri,
-                    {reconnect_after = consts.RECONNECT_TIMEOUT})
-                table.insert(replicasets, {
-                    master_uri = master.uri,
-                    master_conn = master_conn
-                })
-            end
+        if new_replicaset.master.conn == nil then
+            new_replicaset.master.conn = netbox.new(new_replicaset.master.uri,
+                                                    {reconnect_after = consts.RECONNECT_TIMEOUT})
         end
+        new_replicasets[replicaset_uuid] = new_replicaset
     end
-    for idx, replicaset in pairs(self.replicasets or {}) do
-        if not move_to_new_config[idx] then
-            log.info('Kill connection to an old master %s',
-                     replicaset.master_uri)
-            replicaset.master_conn:close()
-        end
-    end
-    self.replicasets = replicasets
+
+    self.replicasets = new_replicasets
+    cfg.sharding = nil
 
     log.info("Calling box.cfg()...")
-    cfg.sharding = nil
     for k, v in pairs(cfg) do
         log.info({[k] = v})
     end
@@ -165,14 +148,17 @@ end
 --------------------------------------------------------------------------------
 
 local function cluster_bootstrap()
-    local replicasets = self.replicasets
-    local replicaset_count = #replicasets;
-    for bucket_id=1,consts.BUCKET_COUNT do
+    local replicasets = {}
+    for uuid, replicaset in pairs(self.replicasets) do
+        table.insert(replicasets, replicaset)
+    end
+    local replicaset_count = #replicasets
+    for bucket_id= 1, consts.BUCKET_COUNT do
         local replicaset = replicasets[1 + (bucket_id - 1) % replicaset_count]
         assert(replicaset ~= nil)
         log.info("Distributing bucket %d to master %s", bucket_id,
                  replicaset.master_uri)
-        local conn = replicaset.master_conn
+        local conn = replicaset.master.conn
         local status, info = conn:call('vshard.storage.bucket_force_create',
                                        {bucket_id})
         if status ~= consts.PROTO.OK then
@@ -191,10 +177,10 @@ local function router_info()
     for _, replicaset in pairs(self.replicasets) do
         table.insert(ireplicaset, {
             master = {
-                uri = replicaset.master_uri;
-                uuid = replicaset.master_conn and replicaset.master_conn.peer_uuid;
-                state = replicaset.master_conn and replicaset.master_conn.state;
-                error = replicaset.master_conn and replicaset.master_conn.error;
+                uri = replicaset.master.uri;
+                uuid = replicaset.master.conn and replicaset.master.conn.peer_uuid;
+                state = replicaset.master.conn and replicaset.master.conn.state;
+                error = replicaset.master.conn and replicaset.master.conn.error;
             };
         });
     end

@@ -12,18 +12,13 @@ local self = {
     --
     -- {
     --     [uuid] = { -- replicaset #1
-    --         master_uri = <master_uri>
-    --         master_conn = <master net.box>
+    --         servers = {<list of all servers>}
+    --         master = <master server>
     --         uuid = <uuid>,
     --     },
     --     ...
     -- }
     replicasets = nil,
-    -- Array of replicasets without known UUID
-    -- { <master_uri>, <master_uri>, <master_uri>,. .. }
-    replicasets_to_discovery = nil,
-    -- Fiber to discovery uuid of replicasets.
-    discovery_fiber = nil
 }
 
 --------------------------------------------------------------------------------
@@ -69,7 +64,7 @@ end
 local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
-    if not self.local_creplica.master then
+    if self.this_replicaset.master ~= self.this_replica then
         -- Add redirect here
         return consts.PROTO.NON_MASTER
     end
@@ -230,7 +225,15 @@ local function bucket_send(bucket_id, destination)
 
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
-    local conn = replicaset.master_conn
+    if replicaset.master.conn == nil then
+        local status, conn = pcall(netbox.new, replicaset.master.uri,
+                                   {reconnect_after = consts.RECONNECT_TIMEOUT})
+        if status ~= true then
+            return status, conn
+        end
+        replicaset.master.conn = conn
+    end
+    local conn = replicaset.master.conn
     local status, info = pcall(conn.call, conn, 'vshard.storage.bucket_recv',
                                {bucket_id, box.info.cluster.uuid, data})
     if status ~= true then
@@ -268,235 +271,77 @@ local function storage_call(bucket_id, mode, name, args)
 end
 
 --------------------------------------------------------------------------------
--- Re-balancing
---------------------------------------------------------------------------------
-
---
--- A background fiber to discovery UUID of all configured replicasets
---
-local function replicaset_discovery_f()
-    lfiber.name("replicaset_discovery")
-    log.info("Started replicaset discovery")
-    while true do
-        local replicasets_to_discovery2 = {}
-        for _, master_uri in pairs(self.replicasets_to_discovery) do
-            local conn = netbox.new(master_uri, {reconnect_after =
-                                                 consts.RECONNECT_TIMEOUT})
-            local status, uuid = pcall(function()
-                return conn.space._schema:get('cluster')[2]
-            end)
-            if status then
-                log.info("Discovered replicaset %s on %s", uuid, master_uri)
-                if self.replicasets[uuid] ~= nil then
-                    log.warn("Duplicate replicaset %s on %s and %s",
-                             self.replicasets[uuid].master_uri, master_uri)
-                else
-                    self.replicasets[uuid] = {
-                        master_uri = master_uri;
-                        master_conn = conn;
-                        uuid = uuid
-                    }
-                end
-            else
-                conn:close()
-                conn = nil
-                table.insert(replicasets_to_discovery2, master_uri)
-            end
-        end
-        self.replicasets_to_discovery = replicasets_to_discovery2
-        if #replicasets_to_discovery2 == 0 then
-            break
-        end
-    end
-    log.info("Discovered all configured replicasets")
-end
-
---------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
-
---
--- Try to find a new replicaset in existing ones by master uris.
--- @param new_replicaset One replicaset from sharding config.
--- @retval Not nil UUID of found replicaset.
--- @retval Nil Not found.
---
-local function find_in_existing_replicasets(existing_replicasets,
-                                            new_replicaset)
-    for uuid, replicaset in pairs(existing_replicasets) do
-        local master_uri = nil
-        for _, new_replica in ipairs(new_replicaset) do
-            if new_replica.master then
-                master_uri = new_replica.uri
-                break
-            end
-        end
-        if master_uri == replicaset.master_uri then
-            return uuid
-        end
+local function storage_cfg(cfg, this_server_uuid)
+    cfg = table.deepcopy(cfg)
+    if this_server_uuid == nil then
+        error('uuid must be specified')
     end
-end
-
---
--- Extract local replicaset, replica and replicasets to
--- discovery from a shard config.
--- @param cfg Shard config.
--- @param local_name Name of the current storage.
---
--- @retval Local replicaset, replica, replicasets to discovery and
---         already discovered replicasets.
---
-local function parse_config(existing_replicasets, cfg, local_name)
-    util.sanity_check_config(cfg)
-    -- Replicaset to which belong the current storage.
-    local local_replicaset = nil
-    -- This storage.
-    local local_replica = nil
-    local new_self_replicasets = {}
-
-    local replicasets_to_discovery = {}
-    for _, new_replicaset in ipairs(cfg) do
-        local uuid = find_in_existing_replicasets(existing_replicasets,
-                                                  new_replicaset)
-        if uuid ~= nil then
-            log.info('Move old replicaset %s to a new config with no changes',
-                     uuid)
-            new_self_replicasets[uuid] = existing_replicasets[uuid]
-        end
-        -- Try to find self.
-        local master = nil
-        for _, new_replica in ipairs(new_replicaset) do
-            if new_replica.name == local_name then
-                -- Checked by sanity check.
-                assert(local_replica == nil)
-                local_replicaset = new_replicaset
-                local_replica = new_replica
-            end
-            if new_replica.master then
-                master = new_replica
-            end
-        end
-        -- Ignore replicaset with no active master and do not
-        -- rediscovery already discovered one.
-        if master and not uuid then
-            log.info('Schedule master %s to discovery later', master.uri)
-            table.insert(replicasets_to_discovery, master.uri)
-        end
-    end
-    if local_replicaset == nil then
-        error(string.format("Cannot find replica %s in configuration",
-                            local_name))
-    end
-    return local_replicaset, local_replica, replicasets_to_discovery,
-           new_self_replicasets
-end
-
---
--- Create a config for box using a shard config and a local
--- replicaset settings.
---
-local function turn_shard_into_box_cfg(shard_cfg, local_replica,
-                                       local_replicaset)
-    local box_cfg = table.deepcopy(shard_cfg)
-    box_cfg.sharding = nil
-    box_cfg.listen = local_replica.uri
-    box_cfg.replication = {}
-    for _, replica in ipairs(local_replicaset) do
-        assert(replica.uri ~= nil)
-        table.insert(box_cfg.replication, replica.uri)
-    end
-    return box_cfg
-end
-
---
--- Close connections to masters, which are no masters anymore.
--- Use a new list of replicasets.
---
-local function reset_replicasets(new_replicasets)
-    if self.replicasets == nil then
-        self.replicasets = new_replicasets
-        return
-    end
-    for uuid, replicaset in pairs(self.replicasets) do
-        if new_replicasets[uuid] == nil then
-            log.info('Close connection to an old master %s',
-                     replicaset.master_uri)
-            replicaset.master_conn:close()
-        end
-    end
-    self.replicasets = new_replicasets
-end
-
-local function storage_cfg(cfg, name)
+    util.sanity_check_config(cfg.sharding)
     if self.replicasets ~= nil then
-        log.info("Starting reconfiguration of replica %s", name)
+        log.info("Starting reconfiguration of replica %s", this_server_uuid)
     else
-        log.info("Staring configuration of replica %s", name)
+        log.info("Staring configuration of replica %s", this_server_uuid)
+    end
+    self.replicasets = self.replicasets or {}
+
+    local this_replicaset
+    local this_replica
+    local new_replicasets = {}
+    for replicaset_uuid, replicaset in pairs(cfg.sharding) do
+        local new_replicaset = {servers = {}, uuid = replicaset_uuid}
+        for replica_uuid, replica in pairs(replicaset.servers) do
+            local new_replica = {uri = replica.uri,
+                                 name = replica.name,
+                                 uuid = replica_uuid}
+            if self.replicasets[replicaset_uuid] and
+               self.replicasets[replicaset_uuid].servers[replica_uuid] then
+                new_replica.conn = self.replicasets[replicaset_uuid].servers[replica_uuid].conn
+            end
+            new_replicaset.servers[replica_uuid] = new_replica
+            if replica.master then
+                new_replicaset.master = new_replica
+            end
+            if replica_uuid == this_server_uuid then
+                this_replicaset = new_replicaset
+                this_replica = new_replica
+            end
+        end
+        new_replicasets[replicaset_uuid] = new_replicaset
+    end
+    if this_replicaset == nil then
+        error('Local server wasn\'t found in config')
     end
 
-    if name == nil then
-        error('Name must be specified')
+    cfg.listen = cfg.listen or this_replica.uri
+    if cfg.replication == nil then
+        cfg.replication = {}
+        for uuid, server in pairs(this_replicaset.servers) do
+            table.insert(cfg.replication, server.uri)
+         end
     end
-    if cfg.listen ~= nil or cfg.replication ~= nil then
-        error('"listen" and "replication" can not be set manually')
-    end
-    local local_replicaset, local_replica, replicasets_to_discovery,
-          new_self_replicasets =
-            parse_config(self.replicasets or {}, cfg.sharding, name)
-    self.local_creplicaset = local_replicaset
-    self.local_creplica = local_replica
-    if local_replica.master then
+    cfg.instance_uuid = this_replica.uuid
+    cfg.replicaset_uuid = this_replicaset.uuid
+    cfg.sharding = nil
+
+    local is_master = this_replicaset.master == this_replica
+    if is_master then
         log.info('I am master')
     end
-    local uri = luri.parse(local_replica.uri)
-    if uri.login == nil or uri.password == nil then
-        error('URI must contain login and password')
-    end
-    log.info("Successfully found self in the configuration")
-    cfg = turn_shard_into_box_cfg(cfg, local_replica, local_replicaset)
-    log.info("Calling box.cfg()...")
-    -- Stop discovering unti successfull cfg{} end.
-    local saved_replicasets_to_discovery = self.replicasets_to_discovery
-    self.replicasets_to_discovery = {}
-    local status = pcall(box.cfg, cfg)
-    if not status then
-        -- Continue working with old config.
-        self.replicasets_to_discovery = saved_replicasets_to_discovery
-        box.error()
-    end
+    box.cfg(cfg)
     log.info("Box has been configured")
+    self.replicasets = new_replicasets
+    self.this_replicaset = this_replicaset
+    self.this_replica = this_replica
+    local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
-    self.replicasets_to_discovery = replicasets_to_discovery
-    reset_replicasets(new_self_replicasets)
-    if #self.replicasets_to_discovery > 0 and (self.discovery_fiber == nil or
-       self.discovery_fiber:status() == 'dead') then
-        -- Start background process to discovery replicasets
-        self.discovery_fiber = lfiber.create(replicaset_discovery_f)
-    end
+    collectgarbage('collect')
 end
 
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
-
---
--- Wait @a timeout seconds until all replicaset uuids are
--- discovered.
---
-local function wait_discovery(timeout)
-    if self.replicasets_to_discovery == nil then
-        return true
-    end
-    if timeout == nil then
-        timeout = 1
-    end
-    local total_time = 0
-    while #self.replicasets_to_discovery > 0 and total_time < timeout do
-        lfiber.sleep(0.1)
-        total_time = total_time + 0.1
-    end
-    return #self.replicasets_to_discovery == 0
-end
 
 local function storage_info()
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
@@ -514,10 +359,10 @@ local function storage_info()
         ireplicaset[uuid] = {
             uuid = uuid;
             master = {
-                uri = replicaset.master_uri;
-                uuid = replicaset.master_conn and replicaset.master_conn.peer_uuid;
-                state = replicaset.master_conn and replicaset.master_conn.state;
-                error = replicaset.master_conn and replicaset.master_conn.error;
+                uri = replicaset.master.uri;
+                uuid = replicaset.master.conn and replicaset.master.conn.peer_uuid;
+                state = replicaset.master.conn and replicaset.master.conn.state;
+                error = replicaset.master.conn and replicaset.master.conn.error;
             };
         };
     end
@@ -532,8 +377,6 @@ end
 -- Module definition
 --------------------------------------------------------------------------------
 
-self.parse_config = parse_config
-
 return {
     bucket_force_create = bucket_force_create;
     bucket_force_drop = bucket_force_drop;
@@ -544,6 +387,5 @@ return {
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;
-    wait_discovery = wait_discovery,
     internal = self;
 }
