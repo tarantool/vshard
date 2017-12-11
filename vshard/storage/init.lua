@@ -269,13 +269,13 @@ end
 local function storage_cfg(cfg, this_server_uuid)
     cfg = table.deepcopy(cfg)
     if this_server_uuid == nil then
-        error('uuid must be specified')
+        error('Usage: cfg(configuration, this_server_uuid)')
     end
     util.sanity_check_config(cfg.sharding)
     if self.replicasets ~= nil then
         log.info("Starting reconfiguration of replica %s", this_server_uuid)
     else
-        log.info("Staring configuration of replica %s", this_server_uuid)
+        log.info("Starting configuration of replica %s", this_server_uuid)
     end
 
     local this_replicaset
@@ -321,6 +321,7 @@ local function storage_cfg(cfg, this_server_uuid)
     self.this_replica = this_replica
     local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+    -- Collect old net.box connections
     collectgarbage('collect')
 end
 
