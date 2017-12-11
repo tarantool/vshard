@@ -32,7 +32,8 @@ test_run:create_cluster(REPLICASET_3, 'main')
 
 -- test for unknown uuid
 test_run:cmd('switch storage_1_a')
-vshard.storage.cfg(cfg, 'unknow uuid')
+require('util')
+check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 
 -- test without master
 for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.servers) do s.master = nil end end

@@ -7,25 +7,15 @@ vshard = require('vshard')
 util = require('vshard.util')
 ---
 ...
+require('util')
+---
+- true
+...
 --
 -- Check sharding config sanity.
 --
-test_run:cmd("setopt delimiter ';'")
----
-- true
-...
 check_config = util.sanity_check_config
-function check_error(func, ...)
-	local status, err = pcall(func, ...)
-	assert(not status)
-	err = string.gsub(err, '.*/[a-z]+.lua.*[0-9]+: ', '')
-	return err
-end;
 ---
-...
-test_run:cmd("setopt delimiter ''");
----
-- true
 ...
 -- Not table.
 check_error(check_config, 100)

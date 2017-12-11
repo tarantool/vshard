@@ -82,10 +82,13 @@ test_run:cmd('switch storage_1_a')
 ---
 - true
 ...
-vshard.storage.cfg(cfg, 'unknow uuid')
+require('util')
 ---
-Local server
-    wasn''t found in config'
+- true
+...
+check_error(vshard.storage.cfg, cfg, 'unknow uuid')
+---
+- Local server unknow uuid wasn't found in config
 ...
 -- test without master
 for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.servers) do s.master = nil end end

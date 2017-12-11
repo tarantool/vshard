@@ -52,8 +52,8 @@ test_run:cmd("setopt delimiter ';'")
 - true
 ...
 function is_disonnected()
-	for i, rep in ipairs(reps) do
-		if rep.master_conn.state ~= 'active' then
+	for i, rep in pairs(reps) do
+		if rep.master.conn.state ~= 'active' then
 			return true
 		end
 	end
