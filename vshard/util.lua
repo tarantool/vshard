@@ -1,4 +1,7 @@
 local luri = require('uri')
+local consts = require('vshard.consts')
+local netbox = require('net.box')
+
 --
 -- Check replicaset config on correctness.
 --
@@ -64,6 +67,48 @@ local function sanity_check_config(shard_cfg)
     end
 end
 
+--
+-- Build replicasets map in a format: {
+--     [replicaset_uuid] = {
+--         servers = array of maps of type {
+--             uri = string,
+--             name = string,
+--             uuid = string,
+--             conn = netbox connection
+--         },
+--         master = <master server from the array above>
+--         uuid = <replicaset_uuid>,
+--     },
+--     ...
+-- }
+--
+local function build_replicasets(shard_cfg, existing_replicasets, do_connection)
+    local new_replicasets = {}
+    for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
+        local new_replicaset = {servers = {}, uuid = replicaset_uuid}
+        for replica_uuid, replica in pairs(replicaset.servers) do
+            local new_replica = {uri = replica.uri, name = replica.name,
+                                 uuid = replica_uuid}
+            local existing_rs = existing_replicasets[replicaset_uuid]
+            if existing_rs ~= nil and existing_rs.servers[replica_uuid] then
+                new_replica.conn = existing_rs.servers[replica_uuid].conn
+            end
+            new_replicaset.servers[replica_uuid] = new_replica
+            if replica.master then
+                new_replicaset.master = new_replica
+            end
+        end
+        local rs_master = new_replicaset.master
+        if do_connection and rs_master ~= nil and rs_master.conn == nil then
+            rs_master.conn = netbox.new(rs_master.uri,
+                                        {reconnect_after = consts.RECONNECT_TIMEOUT})
+        end
+        new_replicasets[replicaset_uuid] = new_replicaset
+    end
+    return new_replicasets
+end
+
 return {
-    sanity_check_config = sanity_check_config
+    sanity_check_config = sanity_check_config,
+    build_replicasets = build_replicasets
 }

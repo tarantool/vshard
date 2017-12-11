@@ -8,16 +8,9 @@ local util = require('vshard.util')
 -- Internal state
 local self = {
     --
-    -- All known replicasets used for bucket re-balancing
+    -- All known replicasets used for bucket re-balancing.
+    -- See format in util.build_replicasets.
     --
-    -- {
-    --     [uuid] = { -- replicaset #1
-    --         servers = {<list of all servers>}
-    --         master = <master server>
-    --         uuid = <uuid>,
-    --     },
-    --     ...
-    -- }
     replicasets = nil,
 }
 
@@ -284,34 +277,26 @@ local function storage_cfg(cfg, this_server_uuid)
     else
         log.info("Staring configuration of replica %s", this_server_uuid)
     end
-    self.replicasets = self.replicasets or {}
 
     local this_replicaset
     local this_replica
-    local new_replicasets = {}
-    for replicaset_uuid, replicaset in pairs(cfg.sharding) do
-        local new_replicaset = {servers = {}, uuid = replicaset_uuid}
-        for replica_uuid, replica in pairs(replicaset.servers) do
-            local new_replica = {uri = replica.uri,
-                                 name = replica.name,
-                                 uuid = replica_uuid}
-            if self.replicasets[replicaset_uuid] and
-               self.replicasets[replicaset_uuid].servers[replica_uuid] then
-                new_replica.conn = self.replicasets[replicaset_uuid].servers[replica_uuid].conn
-            end
-            new_replicaset.servers[replica_uuid] = new_replica
-            if replica.master then
-                new_replicaset.master = new_replica
-            end
+    local new_replicasets = util.build_replicasets(cfg, self.replicasets or {},
+                                                   false)
+    for rs_uuid, rs in pairs(new_replicasets) do
+        for replica_uuid, replica in pairs(rs.servers) do
             if replica_uuid == this_server_uuid then
-                this_replicaset = new_replicaset
-                this_replica = new_replica
+                this_replicaset = rs
+                this_replica = replica
+                break
             end
         end
-        new_replicasets[replicaset_uuid] = new_replicaset
+        if this_replica ~= nil then
+            break
+        end
     end
     if this_replicaset == nil then
-        error('Local server wasn\'t found in config')
+        error(string.format("Local server %s wasn't found in config",
+                            this_server_uuid))
     end
 
     cfg.listen = cfg.listen or this_replica.uri

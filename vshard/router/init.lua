@@ -107,32 +107,7 @@ local function router_cfg(cfg)
     else
         log.info('Starting router reconfiguration')
     end
-    self.replicasets = self.replicasets or {}
-
-    local new_replicasets = {}
-    for replicaset_uuid, replicaset in pairs(cfg.sharding) do
-        local new_replicaset = {servers = {}, uuid = replicaset_uuid}
-        for replica_uuid, replica in pairs(replicaset.servers) do
-            local new_replica = {uri = replica.uri,
-                                 name = replica.name,
-                                 uuid = replica_uuid}
-            if self.replicasets[replicaset_uuid] and
-               self.replicasets[replicaset_uuid].servers[replica_uuid] then
-                new_replica.conn = self.replicasets[replicaset_uuid].servers[replica_uuid].conn
-            end
-            new_replicaset.servers[replica_uuid] = new_replica
-            if replica.master then
-                new_replicaset.master = new_replica
-            end
-        end
-        if new_replicaset.master.conn == nil then
-            new_replicaset.master.conn = netbox.new(new_replicaset.master.uri,
-                                                    {reconnect_after = consts.RECONNECT_TIMEOUT})
-        end
-        new_replicasets[replicaset_uuid] = new_replicaset
-    end
-
-    self.replicasets = new_replicasets
+    self.replicasets = util.build_replicasets(cfg, self.replicasets or {}, true)
     cfg.sharding = nil
 
     log.info("Calling box.cfg()...")
