@@ -31,6 +31,8 @@ replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]
 vshard.storage.info().replicasets[replicaset1_uuid] or vshard.storage.info()
 vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 
+vshard.storage.internal.sync()
+
 vshard.storage.info().buckets
 vshard.storage.bucket_force_create(1)
 vshard.storage.info().buckets

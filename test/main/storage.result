@@ -92,6 +92,10 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
   master:
     uri: storage:storage@127.0.0.1:3303
 ...
+vshard.storage.internal.sync()
+---
+- 0
+...
 vshard.storage.info().buckets
 ---
 - {}

@@ -51,6 +51,45 @@ local function storage_schema_v1(username, password)
 end
 
 --------------------------------------------------------------------------------
+-- Replicaset
+--------------------------------------------------------------------------------
+
+-- Vclock comparing function
+local function vclock_lesseq(vc1, vc2)
+    local lesseq = true
+    for i, lsn in ipairs(vc1) do
+        lesseq = lesseq and lsn <= (vc2[i] or 0)
+        if not lesseq then
+            break
+        end
+    end
+    return lesseq
+end
+
+local function sync(timeout)
+    timeout = timeout or consts.SYNC_TIMEOUT
+    local vclock = box.info.vclock
+    local tstart = lfiber.time()
+    local done = false
+    repeat
+        done = true
+        for _, replica in ipairs(box.info.replication) do
+            if replica.downstream and
+               not vclock_lesseq(vclock, replica.downstream.vclock) then
+                done = false
+            end
+        end
+        if not done then
+            lfiber.sleep(0.001)
+        end
+    until not (lfiber.time() <= tstart + timeout and not done)
+    if not done then
+        return consts.PROTO.BOX_ERROR, 'Sync timeout'
+    end
+    return consts.PROTO.OK
+end
+
+--------------------------------------------------------------------------------
 -- Buckets
 --------------------------------------------------------------------------------
 
@@ -191,6 +230,27 @@ local function bucket_collect(bucket_id)
 end
 
 --
+-- This function executes when a master role is removed from local
+-- instance during configuration
+--
+local function local_master_disable()
+    -- Wait until replicas are synchronized before one another become a new master
+--    local status, info = sync(#box.info.replication - 1)
+--    if status ~= consts.PROTO.OK then
+--        return error(info or 'Can\'t sync storage')
+--    end
+    return true
+end
+
+--
+-- This function executes whan a master role is added to local
+-- instance during configuration
+--
+local function local_master_enable()
+    -- TODO: check current status
+end
+
+--
 -- Send a bucket to other replicaset
 --
 local function bucket_send(bucket_id, destination)
@@ -278,6 +338,9 @@ local function storage_cfg(cfg, this_server_uuid)
         log.info("Starting configuration of replica %s", this_server_uuid)
     end
 
+    local was_master = self.this_replicaset and
+                       self.this_replicaset.master == self.this_replica
+
     local this_replicaset
     local this_replica
     local new_replicasets = util.build_replicasets(cfg, self.replicasets or {},
@@ -321,6 +384,17 @@ local function storage_cfg(cfg, this_server_uuid)
     self.this_replica = this_replica
     local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+
+    local is_master = self.this_replicaset and
+                      self.this_replicaset.master == self.this_replica
+    if was_master and not is_master then
+        local_master_disable()
+    end
+
+    if not was_master and is_master then
+        local_master_enable()
+    end
+
     -- Collect old net.box connections
     collectgarbage('collect')
 end
@@ -362,6 +436,8 @@ end
 --------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
+
+self.sync = sync
 
 return {
     bucket_force_create = bucket_force_create;

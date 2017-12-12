@@ -21,4 +21,5 @@ return {
     BUCKET_SYNC_TIMEOUT = 0.1;
     CALL_TIMEOUT = 0.1;
     RECONNECT_TIMEOUT = 0.5;
+    SYNC_TIMEOUT = 1;
 }
