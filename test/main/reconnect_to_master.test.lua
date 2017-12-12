@@ -44,5 +44,7 @@ while is_disonnected() and i < max_iters do i = i + 1 fiber.sleep(0.1) end
 is_disonnected()
 
 _ = test_run:cmd("switch default")
+test_run:cmd('stop server router_1')
+test_run:cmd('cleanup server router_1')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

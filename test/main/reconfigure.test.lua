@@ -110,6 +110,8 @@ uris
 
 test_run:switch('default')
 
+test_run:cmd('stop server router_1')
+test_run:cmd('cleanup server router_1')
 test_run:drop_cluster(REPLICASET_1)
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_3)

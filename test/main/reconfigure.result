@@ -304,6 +304,14 @@ test_run:switch('default')
 ---
 - true
 ...
+test_run:cmd('stop server router_1')
+---
+- true
+...
+test_run:cmd('cleanup server router_1')
+---
+- true
+...
 test_run:drop_cluster(REPLICASET_1)
 ---
 ...
