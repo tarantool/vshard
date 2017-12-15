@@ -1,5 +1,7 @@
 test_run = require('test_run').new()
 test_run:cmd("push filter '.*/init.lua.*[0-9]+: ' to ''")
+test_run:cmd("push filter 'lag: .+' to 'lag: <lag>'")
+test_run:cmd("push filter 'idle: .+' to 'idle: <idle>'")
 netbox = require('net.box')
 fiber = require('fiber')
 
@@ -34,16 +36,36 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 
 vshard.storage.internal.sync()
 
-vshard.storage.info().buckets
+vshard.storage.bucket_info()
 vshard.storage.bucket_force_create(1)
-vshard.storage.info().buckets
+vshard.storage.bucket_info()
 vshard.storage.bucket_force_create(1) -- error
 vshard.storage.bucket_force_drop(1)
-vshard.storage.info().buckets
-vshard.storage.bucket_force_create(0)
+
+vshard.storage.bucket_info()
 vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_force_create(2)
+_ = test_run:cmd("switch storage_2_a")
 vshard.storage.bucket_force_create(3)
+vshard.storage.bucket_force_create(4)
+_ = test_run:cmd("switch storage_2_b")
+box.cfg{replication_timeout = 0.01}
+vshard.storage.info()
+test_run:cmd("stop server storage_2_a")
+box.cfg{replication_timeout = 0.01}
+vshard.storage.info()
+test_run:cmd("start server storage_2_a")
+test_run:cmd("switch storage_2_a")
+vshard.storage.info()
+test_run:cmd("stop server storage_2_b")
+vshard.storage.info()
+test_run:cmd("start server storage_2_b")
+test_run:cmd("switch storage_2_b")
+vshard.storage.info()
+test_run:cmd("switch storage_2_a")
+vshard.storage.info()
+
+_ = test_run:cmd("switch storage_1_a")
 
 test_run:cmd("setopt delimiter ';'")
 box.begin()
@@ -75,9 +97,9 @@ vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 --
 vshard.storage.bucket_send(1, replicaset2_uuid)
 _ = test_run:cmd("switch storage_2_a")
-vshard.storage.info().buckets
+vshard.storage.bucket_info()
 _ = test_run:cmd("switch storage_1_a")
-vshard.storage.info().buckets
+vshard.storage.bucket_info()
 
 _ = test_run:cmd("switch default")
 

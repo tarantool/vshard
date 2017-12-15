@@ -8,6 +8,16 @@ return {
         GARBAGE = 'garbage',
     },
 
+    STATE = {
+        GREEN = 0,
+        YELLOW = 1,
+        ORANGE = 2,
+        RED = 3,
+    },
+    REPLICATION_THRESHOLD_SOFT = 1,
+    REPLICATION_THRESHOLD_HARD = 5,
+    REPLICATION_THRESHOLD_FAIL = 10,
+
     BUCKET_COUNT = 3000;
     BUCKET_SYNC_TIMEOUT = 0.1;
     BUCKET_SENT_GARBAGE_DELAY = 0.5;

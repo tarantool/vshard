@@ -1081,7 +1081,7 @@ end
 -- Monitoring
 --------------------------------------------------------------------------------
 
-local function storage_info()
+local function storage_bucket_info()
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
 
     for _, bucket in box.space._bucket:pairs() do
@@ -1093,6 +1093,103 @@ local function storage_info()
         }
     end
 
+    return ibuckets
+end
+
+local function state_max(old_state, new_state)
+    return old_state > new_state and old_state or new_state
+end
+
+local function storage_state()
+    local state = {
+        alerts = {},
+        replication = {},
+        bucket = {},
+        level = consts.STATE.GREEN,
+    }
+    if self.this_replicaset.master == nil then
+        table.insert(state.alerts, {'MASTER_NOT_CONFIGURED',
+                                    'Master isn\'t configured'})
+        state.level = state_max(state.level, consts.STATE.ORANGE)
+    end
+    if self.this_replicaset.master ~= self.this_replica then
+        for id, replica in pairs(box.info.replication) do
+            if replica.uuid ~= self.this_replicaset.master.uuid then
+                goto cont
+            end
+            state.replication.status = replica.upstream.status
+            if replica.upstream.status ~= 'follow' then
+                state.replication.idle = replica.upstream.idle
+                table.insert(state.alerts,
+                             {'MASTER_UNREACHABLE',
+                              'Master is unreachable: ' .. replica.upstream.status})
+                if replica.upstream.idle > consts.REPLICATION_THRESHOLD_FAIL then
+                    state.level = state_max(state.level, consts.STATE.RED)
+                elseif replica.upstream.idle > consts.REPLICATION_THRESHOLD_HARD then
+                    state.level = state_max(state.level, consts.STATE.ORANGE)
+                else
+                    state.level = state_max(state.level, consts.STATE.YELLOW)
+                end
+                goto cont
+            end
+
+            state.replication.lag = replica.upstream.lag
+            if state.replication.lag >= consts.REPLICATION_THRESHOLD_FAIL then
+                table.insert(state.alerts, {'HIGH_REPLICATION_LAG',
+                                            'Replica is not sync'})
+                state.level = state_max(state.level, consts.STATE.RED)
+            elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_HARD then
+                table.insert(state.alerts,
+                             {'HIGH_REPLICATION_LAG',
+                              'High replication lag: ' .. tostring(state.replication.lag)})
+                state.level = state_max(state.level, consts.STATE.ORANGE)
+            elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_SOFT then
+                table.insert(state.alerts,
+                             {'HIGH_REPLICATION_LAG',
+                              'High replication lag: ' .. tostring(state.replication.lag)})
+                state.level = state_max(state.level, consts.STATE.YELLOW)
+            end
+            ::cont::
+        end
+    else
+        state.replication.status = 'master'
+        local redundancy = 0
+        for id, replica in pairs(box.info.replication) do
+            if replica.uuid ~= self.this_replica.uuid then
+                if replica.downstream == nil then
+                    table.insert(state.alerts, {'REPLICA_IS_DOWN', 'Replica isn\'t active ' .. replica.uuid})
+                    state.level = state_max(state.level, consts.STATE.YELLOW)
+                else
+                    redundancy = redundancy + 1
+                end
+            end
+        end
+        if redundancy == 0 then
+            table.insert(state.alerts, {'NO_REDUNDANCY', 'There is no active replicas'})
+            state.level = state_max(state.level, consts.STATE.RED)
+        elseif redundancy == 1 then
+            table.insert(state.alerts, {'LOW_REDUNDANCY', 'Only one replica is active'})
+            state.level = state_max(state.level, consts.STATE.ORANGE)
+        end
+    end
+
+    state.bucket.count = box.space._bucket.index.pk:count()
+    state.bucket.active = box.space._bucket.index.status:count({consts.BUCKET.ACTIVE})
+    state.bucket.garbage = box.space._bucket.index.status:count({consts.BUCKET.SENT})
+    state.bucket.receiving = box.space._bucket.index.status:count({consts.BUCKET.RECEIVING})
+    state.bucket.sending = box.space._bucket.index.status:count({consts.BUCKET.SENDING})
+    if state.bucket.receiving ~= 0 and state.bucket.sending ~= 0 then
+        --
+        --Some buckets are receiving and some buckets are sending at same time,
+        --this may be a balancer issue, alert it.
+        --
+        table.insert(state.alerts, {'BAD_BALANCING', 'Sending and receiving buckets at same time, check balancer'})
+        state.level = state_max(state.level, consts.STATE.YELLOW)
+    end
+    return state
+end
+
+local function storage_info()
     local ireplicaset = {}
     for uuid, replicaset in pairs(self.replicasets) do
         ireplicaset[uuid] = {
@@ -1105,10 +1202,9 @@ local function storage_info()
             };
         };
     end
-
     return {
-        buckets = ibuckets;
         replicasets = ireplicaset;
+        state = storage_state();
     }
 end
 
@@ -1141,5 +1237,6 @@ return {
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;
+    bucket_info = storage_bucket_info;
     internal = self;
 }
