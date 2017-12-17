@@ -212,7 +212,7 @@ end
 
 --
 -- Find spaces with indexed bucket_id fields.
--- @retval Array of pairs {space_id, bucket_index_id}.
+-- @retval Map of type {space_id = <space object>}.
 --
 local function find_sharded_spaces()
     local spaces = {}
@@ -227,7 +227,11 @@ local function find_sharded_spaces()
     return spaces
 end
 
-
+--
+-- Collect bucket data from all spaces.
+-- @retval In a case of success, PROTO.OK code and bucket data in
+--         array of pairs: {space_id, <array of tuples>}.
+--
 local function bucket_collect_internal(bucket_id)
     local data = {}
     local spaces = find_sharded_spaces()
@@ -236,12 +240,14 @@ local function bucket_collect_internal(bucket_id)
         local space_data = space.index.bucket_id:select({bucket_id})
         table.insert(data, {space.id, space_data})
     end
-
     return consts.PROTO.OK, data
 end
 
 --
--- Collect bucket content
+-- Collect content of ACTIVE bucket.
+-- @retval PROTO.OK and bucket data (see bucket_collect_internal).
+-- @retval PROTO.WRONG_BUCKET and bucket_id, if a bucket is not
+--         active.
 --
 local function bucket_collect(bucket_id)
     if type(bucket_id) ~= 'number' then
@@ -406,10 +412,7 @@ end
 -- @param bucket_index Index containing bucket_id in a first part.
 -- @param bucket_id Garbage bucket identifier.
 --
--- @retval True if nothing deleted. Else false.
---
-local function collect_garbage_bucket_part(space, bucket_index, bucket_id)
-    -- TODO: reuse bucket_collect() here
+local function collect_garbage_bucket_in_space(space, bucket_index, bucket_id)
     local pk_parts = space.index[0].parts
     box.begin()
     for _, tuple in bucket_index:pairs({bucket_id}) do
@@ -442,7 +445,6 @@ local function collect_garbage_step(control)
     -- 3) Go to 1.
     for _, space in pairs(sharded_spaces) do
         local bucket_index = space.index.bucket_id
-        -- Loop over garbage buckets in the space.
         while true do
             local garbage_bucket = find_garbage_bucket(bucket_index, control)
             -- Stop the step, if a generation has changed.
@@ -453,8 +455,7 @@ local function collect_garbage_step(control)
             if garbage_bucket == nil then
                 break
             end
-            -- Loop over data of the garbage bucket in the space.
-            collect_garbage_bucket_part(space, bucket_index, garbage_bucket)
+            collect_garbage_bucket_in_space(space, bucket_index, garbage_bucket)
             if bucket_generation ~= control.bucket_generation then
                 log.info('Interrupt garbage collection step')
                 return
@@ -530,8 +531,7 @@ end
 -- After wakeup it checks follows the plan:
 -- 1) Check if _bucket has changed. If not, then sleep again;
 -- 2) Scan user spaces for not existing, sent and garbage buckets,
---    delete garbage data part by part in 1000 tuples per
---    transaction;
+--    delete garbage data in a single transaction;
 -- 3) Restart GC, if _bucket has changed during data deletion;
 -- 4) Delete GARBAGE buckets from _bucket immediately, and
 --    schedule SENT buckets for deletion after a timeout;
@@ -622,12 +622,7 @@ local function bucket_delete_garbage(bucket_id, opts)
     end
     local sharded_spaces = find_sharded_spaces()
     for _, space in pairs(sharded_spaces) do
-        local is_empty = false
-        repeat
-            is_empty = collect_garbage_bucket_part(space,
-                                                   space.index.bucket_id,
-                                                   bucket_id)
-        until is_empty
+        collect_garbage_bucket_in_space(space, space.index.bucket_id, bucket_id)
     end
 end
 

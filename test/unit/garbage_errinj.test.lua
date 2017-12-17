@@ -31,7 +31,6 @@ pk2 = s2:create_index('pk')
 sk2 = s2:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s2:replace{1, 1}
 s2:replace{3, 3}
--- Garbage bucket {200} is deleted in two parts: 1000 and 101.
 for i = 7, 1107 do s:replace{i, 200} end
 s2:replace{4, 200}
 s2:replace{5, 100}
@@ -67,27 +66,6 @@ _bucket:select{4}
 garbage_step(control)
 #s:select{}
 _bucket:delete{4}
-
---
--- Test WAL error during garbage bucket cleaning.
---
-collect_f = vshard.storage.internal.collect_garbage_f
-f = fiber.create(collect_f)
-
-vshard.storage.internal.errinj.ERRINJ_BUCKET_PART_DELETE_DELAY = true
-_bucket:replace{4, vshard.consts.BUCKET.SENT}
-s:replace{5, 4}
-s:replace{6, 4}
-box_errinj = box.error.injection
-box_errinj.set("ERRINJ_WAL_IO", true)
-vshard.storage.internal.errinj.ERRINJ_BUCKET_PART_DELETE_DELAY = false
-while not test_run:grep_log("default", "Error during garbage collection step") do fiber.sleep(0.1) end
-s:select{}
-_bucket:select{}
-box_errinj.set("ERRINJ_WAL_IO", false)
-while _bucket:get{4} ~= nil do fiber.sleep(0.1) end
-
-f:cancel()
 
 s2:drop()
 s:drop()

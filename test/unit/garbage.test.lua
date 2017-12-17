@@ -94,7 +94,6 @@ s2:replace{1, 1}
 s2:replace{3, 3}
 
 test_run:cmd("setopt delimiter ';'")
--- Garbage bucket {200} is deleted in two parts: 1000 and 101.
 function fill_spaces_with_garbage()
     s:replace{5, 100}
     s:replace{6, 100}
