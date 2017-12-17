@@ -94,7 +94,7 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 ...
 vshard.storage.internal.sync()
 ---
-- 0
+- true
 ...
 vshard.storage.info().buckets
 ---

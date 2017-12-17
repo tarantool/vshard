@@ -67,6 +67,7 @@ local function vclock_lesseq(vc1, vc2)
 end
 
 local function sync(timeout)
+    log.verbose("Synchronizing replicaset...")
     timeout = timeout or consts.SYNC_TIMEOUT
     local vclock = box.info.vclock
     local tstart = lfiber.time()
@@ -84,9 +85,11 @@ local function sync(timeout)
         end
     until not (lfiber.time() <= tstart + timeout and not done)
     if not done then
-        return consts.PROTO.BOX_ERROR, 'Sync timeout'
+        log.warn("Timed out during synchronizing replicaset")
+        return false
     end
-    return consts.PROTO.OK
+    log.info("Replicaset has been synchronized")
+    return true
 end
 
 --------------------------------------------------------------------------------
@@ -234,12 +237,10 @@ end
 -- instance during configuration
 --
 local function local_master_disable()
+    log.verbose("Resigning from the replicaset master role...")
     -- Wait until replicas are synchronized before one another become a new master
---    local status, info = sync(#box.info.replication - 1)
---    if status ~= consts.PROTO.OK then
---        return error(info or 'Can\'t sync storage')
---    end
-    return true
+    sync(consts.SYNC_TIMEOUT)
+    log.info("Resigned from the replicaset master role")
 end
 
 --
@@ -247,7 +248,9 @@ end
 -- instance during configuration
 --
 local function local_master_enable()
+    log.verbose("Taking on replicaset master role...")
     -- TODO: check current status
+    log.info("Took on replicaset master role")
 end
 
 --

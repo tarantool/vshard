@@ -6,7 +6,7 @@ return {
         NON_MASTER = 0x03,
         BUCKET_ALREADY_EXISTS = 0x04,
         NO_SUCH_REPLICASET = 0x05,
-        MOVE_TO_SELF = 0x06,
+        MOVE_TO_SELF = 0x06
     },
 
     -- Bucket FSM
