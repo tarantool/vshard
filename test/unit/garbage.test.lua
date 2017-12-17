@@ -172,6 +172,8 @@ f:cancel()
 --
 util = require('util')
 
+util.check_error(vshard.storage.bucket_delete_garbage)
+
 -- Delete an existing garbage bucket.
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
 s:replace{5, 4}

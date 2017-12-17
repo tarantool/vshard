@@ -611,11 +611,11 @@ end
 --        bucket regardless of is it garbage or not.
 --
 local function bucket_delete_garbage(bucket_id, opts)
-    local bucket = box.space._bucket:get{bucket_id}
-    if opts ~= nil and type(opts) ~= 'table' then
+    if bucket_id == nil or (opts ~= nil and type(opts) ~= 'table') then
         error('Usage: bucket_delete_garbage(bucket_id, opts)')
     end
     opts = opts or {}
+    local bucket = box.space._bucket:get({bucket_id})
     if bucket ~= nil and not bucket_is_garbage(bucket) and not opts.force then
         error('Can not delete not garbage bucket. Use "{force=true}" to '..
               'ignore this attention')

@@ -311,6 +311,10 @@ unix/:./data/storage_1_a.control> vshard.storage.bucket_stat(1)
 ...
 ```
 
+#### `vshard.storage.bucket_delete_garbage(bucket_id)`
+
+Force garbage collection for `bucket_id`.
+
 #### `status, result = bucket_collect(bucket_id)`
 
 Collect all data logically stored in `bucket_id`:
