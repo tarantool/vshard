@@ -4,26 +4,25 @@ test_run = require('test_run').new()
 vshard = require('vshard')
 ---
 ...
-util = require('vshard.util')
+vutil = require('vshard.util')
 ---
 ...
-require('util')
+util = require('util')
 ---
-- true
 ...
 --
 -- Check sharding config sanity.
 --
-check_config = util.sanity_check_config
+function check(cfg) return util.check_error(vutil.sanity_check_config, cfg) end
 ---
 ...
 -- Not table.
-check_error(check_config, 100)
+check(100)
 ---
 - Sharding config must be array of replicasets
 ...
 -- Replicaset is not table.
-check_error(check_config, {100})
+check({100})
 ---
 - Replicaset must be a table
 ...
@@ -37,14 +36,14 @@ cfg = {['replicaset_uuid'] = replicaset}
 ---
 ...
 -- URI is not string.
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Server uri must be string
 ...
 server.uri = 100
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Server uri must be string
 ...
@@ -52,14 +51,14 @@ server.uri = 'uri:uri@uri'
 ---
 ...
 -- Name is not string.
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Server name must be string
 ...
 server.name = 100
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Server name must be string
 ...
@@ -70,7 +69,7 @@ server.name = 'storage'
 server.master = 100
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - '"master" must be boolean'
 ...
@@ -84,7 +83,7 @@ server2 = {uri = 'uri:uri@uri2', name = 'storage2', master = true}
 replicaset.servers['id2'] = server2
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Only one master is allowed per replicaset
 ...
@@ -98,7 +97,7 @@ server2 = {uri = 'uri:uri@uri', name = 'storage2'}
 replicaset.servers['id2'] = server2
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Duplicate uri uri:uri@uri
 ...
@@ -112,7 +111,7 @@ replicaset2 = {servers = {['id2'] = {uri = 'uri:uri@uri', name = 'storage2', mas
 cfg['rsid2'] = replicaset2
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Duplicate uri uri:uri@uri
 ...
@@ -132,7 +131,7 @@ replicaset3 = {servers = {['id3'] = {uri = 'uri:uri@uri3', name = 'storage', mas
 cfg['rsid3'] = replicaset3
 ---
 ...
-check_error(check_config, cfg)
+check(cfg)
 ---
 - Duplicate uuid id3
 ...
