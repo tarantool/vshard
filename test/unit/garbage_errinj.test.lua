@@ -14,12 +14,9 @@ _bucket:replace{3, vshard.consts.BUCKET.ACTIVE}
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
 _bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
 
-format = {}
-format[1] = {name = 'field1', type = 'unsigned'}
-format[2] = {name = 'bucket_id', type = 'unsigned'}
-s = box.schema.create_space('test', {format = format})
+s = box.schema.create_space('test')
 pk = s:create_index('pk')
-sk = s:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
+sk = s:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s:replace{1, 1}
 s:replace{2, 1}
 s:replace{3, 2}
@@ -29,9 +26,9 @@ s:replace{6, 100}
 s:replace{7, 4}
 s:replace{8, 5}
 
-s2 = box.schema.create_space('test2', {format = format})
+s2 = box.schema.create_space('test2')
 pk2 = s2:create_index('pk')
-sk2 = s2:create_index('sk2', {parts = {{2, 'unsigned'}}, unique = false})
+sk2 = s2:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s2:replace{1, 1}
 s2:replace{3, 3}
 -- Garbage bucket {200} is deleted in two parts: 1000 and 101.
@@ -44,33 +41,6 @@ s2:replace{7, 5}
 
 garbage_step = vshard.storage.internal.collect_garbage_step
 control = {bucket_generation = 0, bucket_generation_collected = -1}
-
---
--- Test the following case:
--- 1) start garbage collection;
--- 2) deletion of a part of tuples makes long yield;
--- 3) during long yield some of not garbage buckets becames
---    garbage.
--- In such a case restart garbage collection.
---
-control.bucket_generation_collected = -1
-vshard.storage.internal.errinj.ERRINJ_BUCKET_PART_DELETE_DELAY = true
-old_count = #s:select{}
-f = fiber.create(function() garbage_step(control) end)
-while old_count == #s:select{} do fiber.sleep(0.1) end
-_bucket:delete{3}
-control.bucket_generation = 1
-vshard.storage.internal.errinj.ERRINJ_BUCKET_PART_DELETE_DELAY = false
-while f:status() ~= 'dead' do fiber.sleep(0.1) end
--- Bucket {100} deleted.
-sk:select{100}
--- Bucket {200} is not deleted - the step had been interrupted by
--- _bucket change.
-#sk:select{200}
--- Space 's2' is not changed - the interrupt was on a space 's'.
-#s2:select{}
-control.bucket_generation_collected
-_bucket:replace{3, vshard.consts.BUCKET.ACTIVE}
 
 -- Restart garbage collection.
 garbage_step(control)

@@ -118,7 +118,7 @@ end
 --
 local function tuple_extract_key(tuple, parts)
     local key = {}
-    for _, part in pairs(parts) do
+    for _, part in ipairs(parts) do
         table.insert(key, tuple[part.fieldno])
     end
     return key

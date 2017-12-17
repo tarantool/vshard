@@ -15,7 +15,6 @@ local self = {
     -- Fiber to remove garbage buckets data.
     garbage_collect_fiber = nil,
     errinj = {
-        ERRINJ_BUCKET_PART_DELETE_DELAY = false,
         ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
     }
 }
@@ -211,13 +210,31 @@ local function bucket_recv(bucket_id, from, data)
     return consts.PROTO.OK
 end
 
-local function bucket_collect_internal(bucket_id)
-    local data = {}
+--
+-- Find spaces with indexed bucket_id fields.
+-- @retval Array of pairs {space_id, bucket_index_id}.
+--
+local function find_sharded_spaces()
+    local spaces = {}
     for k, space in pairs(box.space) do
         if type(k) == 'number' and space.index.bucket_id ~= nil then
-            local space_data = space.index.bucket_id:select({bucket_id})
-            table.insert(data, {space.id, space_data})
+            local parts = space.index.bucket_id.parts
+            if #parts == 1 and parts[1].type == 'unsigned' then
+                spaces[k] = space
+            end
         end
+    end
+    return spaces
+end
+
+
+local function bucket_collect_internal(bucket_id)
+    local data = {}
+    local spaces = find_sharded_spaces()
+    for k, space in pairs(spaces) do
+        assert(space.index.bucket_id ~= nil)
+        local space_data = space.index.bucket_id:select({bucket_id})
+        table.insert(data, {space.id, space_data})
     end
 
     return consts.PROTO.OK, data
@@ -245,8 +262,8 @@ end
 --
 local function local_master_disable()
     log.verbose("Resigning from the replicaset master role...")
+    -- Stop garbage collecting
     if self.garbage_collect_fiber ~= nil then
-        -- Stop garbage collecting if the 'master' role is lost.
         self.garbage_collect_fiber:cancel()
         self.garbage_collect_fiber = nil
         log.info("GC stopped")
@@ -255,6 +272,8 @@ local function local_master_disable()
     sync(consts.SYNC_TIMEOUT)
     log.info("Resigned from the replicaset master role")
 end
+
+local collect_garbage_f
 
 --
 -- This function executes whan a master role is added to local
@@ -319,49 +338,6 @@ local function bucket_send(bucket_id, destination)
     return true
 end
 
---
--- Find spaces with indexed bucket_id fields.
--- @retval Array of pairs {space_id, bucket_index_id}.
---
-local function find_sharded_spaces()
-    -- User spaces start from id 512.
-    local space_tuples = box.space._space:select({512}, {iterator = 'GE'})
-    -- Each space is represented by space id and bucket_id index
-    -- id.
-    local spaces = {}
-    for _, space_tuple in pairs(space_tuples) do
-        -- Can not use 'space_tuple.id' - _space tuples does not
-        -- support names.
-        local space_id = space_tuple[1]
-        local space_format = space_tuple[7]
-        local bucket_id_fieldno = nil
-        for fieldno, field_def in ipairs(space_format) do
-            if field_def.name == 'bucket_id' and
-               field_def.type == 'unsigned' then
-                bucket_id_fieldno = fieldno
-                break
-            end
-        end
-        if bucket_id_fieldno ~= nil then
-            local space = box.space[space_id]
-            local bucket_index_id = nil
-            for iid, index in pairs(space.index) do
-                local parts = index.parts
-                if type(iid) == 'number' and
-                   parts[1].fieldno == bucket_id_fieldno then
-                    bucket_index_id = iid
-                    break
-                end
-            end
-            if bucket_index_id ~= nil then
-                table.insert(spaces, {space_id = space_id,
-                                      bucket_index_id = bucket_index_id})
-            end
-        end
-    end
-    return spaces
-end
-
 --------------------------------------------------------------------------------
 -- Garbage collector
 --------------------------------------------------------------------------------
@@ -395,7 +371,7 @@ local function find_garbage_bucket(bucket_index, control)
             return
         end
         assert(#t == 1)
-        local bucket_id = t[1].bucket_id
+        local bucket_id = util.tuple_extract_key(t[1], bucket_index.parts)[1]
         t = box.space._bucket:get({bucket_id})
         -- If a bucket is stored in _bucket and is garbage - the
         -- result is found.
@@ -433,19 +409,13 @@ end
 -- @retval True if nothing deleted. Else false.
 --
 local function collect_garbage_bucket_part(space, bucket_index, bucket_id)
+    -- TODO: reuse bucket_collect() here
     local pk_parts = space.index[0].parts
-    local batch = bucket_index:select({bucket_id}, {limit = 1000})
-    if #batch > 0 then
-        box.begin()
-        for _, tuple in pairs(batch) do
-            space:delete(util.tuple_extract_key(tuple, pk_parts))
-        end
-        box.commit()
+    box.begin()
+    for _, tuple in bucket_index:pairs({bucket_id}) do
+        space:delete(util.tuple_extract_key(tuple, pk_parts))
     end
-    while self.errinj.ERRINJ_BUCKET_PART_DELETE_DELAY do
-        lfiber.sleep(0.1)
-    end
-    return #batch == 0
+    box.commit()
 end
 
 --
@@ -470,9 +440,8 @@ local function collect_garbage_step(control)
     -- 1) Find garbage bucket. If not found, go to a next space;
     -- 2) Delete all its tuples;
     -- 3) Go to 1.
-    for _, sharded_space in pairs(sharded_spaces) do
-        local space = box.space[sharded_space.space_id]
-        local bucket_index = space.index[sharded_space.bucket_index_id]
+    for _, space in pairs(sharded_spaces) do
+        local bucket_index = space.index.bucket_id
         -- Loop over garbage buckets in the space.
         while true do
             local garbage_bucket = find_garbage_bucket(bucket_index, control)
@@ -484,16 +453,12 @@ local function collect_garbage_step(control)
             if garbage_bucket == nil then
                 break
             end
-            local is_empty = false
             -- Loop over data of the garbage bucket in the space.
-            repeat
-                is_empty = collect_garbage_bucket_part(space, bucket_index,
-                                                       garbage_bucket)
-                if bucket_generation ~= control.bucket_generation then
-                    log.info('Interrupt garbage collection step')
-                    return
-                end
-            until is_empty
+            collect_garbage_bucket_part(space, bucket_index, garbage_bucket)
+            if bucket_generation ~= control.bucket_generation then
+                log.info('Interrupt garbage collection step')
+                return
+            end
         end
     end
     assert(bucket_generation == control.bucket_generation)
@@ -573,8 +538,7 @@ end
 -- 5) Sleep, go to (1).
 -- For each step detains see comments in code.
 --
-local function collect_garbage_f()
-    log.info('Start garbage collector')
+function collect_garbage_f()
     -- Collector controller. Changes of _bucket increments
     -- bucket generation. Garbage collector has its own bucket
     -- generation which is <= actual. Garbage collection is
@@ -590,13 +554,6 @@ local function collect_garbage_f()
         if old_tuple ~= nil then
             control.bucket_generation = control.bucket_generation + 1
         end
-    end
-    -- _bucket can be not created, if a box.once(create_schema) in
-    -- shard_cfg started to work not on a master. In such a case
-    -- master can start garbage collector before receiving _bucket
-    -- from the replica.
-    while box.space._bucket == nil do
-        lfiber.sleep(consts.GARBAGE_COLLECT_INTERVAL)
     end
     box.space._bucket:on_replace(on_bucket_replace)
     -- Empty sent buckets are collected into an array. After a
@@ -664,12 +621,11 @@ local function bucket_delete_garbage(bucket_id, opts)
               'ignore this attention')
     end
     local sharded_spaces = find_sharded_spaces()
-    for _, sharded_space in pairs(sharded_spaces) do
-        local space = box.space[sharded_space.space_id]
-        local bucket_index = space.index[sharded_space.bucket_index_id]
+    for _, space in pairs(sharded_spaces) do
         local is_empty = false
         repeat
-            is_empty = collect_garbage_bucket_part(space, bucket_index,
+            is_empty = collect_garbage_bucket_part(space,
+                                                   space.index.bucket_id,
                                                    bucket_id)
         until is_empty
     end

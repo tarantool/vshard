@@ -2,7 +2,15 @@ test_run = require('test_run').new()
 vshard = require('vshard')
 fiber = require('fiber')
 
-find_sharded = vshard.storage.internal.find_sharded_spaces
+test_run:cmd("setopt delimiter ';'")
+function show_sharded_spaces()
+    local result = {}
+    for k, space in pairs(vshard.storage.internal.find_sharded_spaces()) do
+        table.insert(result, space.name)
+    end
+    return result
+end;
+test_run:cmd("setopt delimiter ''");
 
 --
 -- Find nothing if no bucket_id anywhere, or there is no index
@@ -11,35 +19,25 @@ find_sharded = vshard.storage.internal.find_sharded_spaces
 
 s = box.schema.create_space('test')
 _ = s:create_index('pk')
-find_sharded()
+show_sharded_spaces()
 
-format = {}
-format[1] = {name = 'field1', type = 'unsigned'}
-format[2] = {name = 'bucket_id', type = 'unsigned'}
-s:format(format)
-find_sharded()
-
-format[2].type = 'string'
-s:format(format)
-sk = s:create_index('sk', {parts = {{2, 'string'}}})
-find_sharded()
+sk = s:create_index('bucket_id', {parts = {{2, 'string'}}})
+show_sharded_spaces()
 
 -- Bucket id must be the first part of an index.
-format[2].type = 'unsigned'
 sk:drop()
-s:format(format)
-sk = s:create_index('sk', {parts = {{1, 'unsigned'}, {2, 'unsigned'}}})
-find_sharded()
+sk = s:create_index('bucket_id', {parts = {{1, 'unsigned'}, {2, 'unsigned'}}})
+show_sharded_spaces()
 
 -- Ok to find sharded space.
 sk:drop()
-sk = s:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
-find_sharded()
+sk = s:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
+show_sharded_spaces()
 
-s2 = box.schema.create_space('test2', {format = format})
+s2 = box.schema.create_space('test2')
 pk2 = s2:create_index('pk')
-sk2 = s2:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
-find_sharded()
+sk2 = s2:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
+show_sharded_spaces()
 
 s:drop()
 s2:drop()
@@ -61,12 +59,9 @@ _bucket:replace{3, vshard.consts.BUCKET.ACTIVE}
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
 _bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
 
-format = {}
-format[1] = {name = 'field1', type = 'unsigned'}
-format[2] = {name = 'bucket_id', type = 'unsigned'}
-s = box.schema.create_space('test', {format = format})
+s = box.schema.create_space('test')
 pk = s:create_index('pk')
-sk = s:create_index('sk', {parts = {{2, 'unsigned'}}, unique = false})
+sk = s:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 
 s:replace{1, 1}
 s:replace{2, 1}
@@ -92,19 +87,19 @@ s:delete{5}
 -- Test garbage buckets deletion.
 --
 garbage_step = vshard.storage.internal.collect_garbage_step
-s2 = box.schema.create_space('test2', {format = format})
+s2 = box.schema.create_space('test2')
 pk2 = s2:create_index('pk')
-sk2 = s2:create_index('sk2', {parts = {{2, 'unsigned'}}, unique = false})
+sk2 = s2:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s2:replace{1, 1}
 s2:replace{3, 3}
 
 test_run:cmd("setopt delimiter ';'")
+-- Garbage bucket {200} is deleted in two parts: 1000 and 101.
 function fill_spaces_with_garbage()
     s:replace{5, 100}
     s:replace{6, 100}
     s:replace{7, 4}
     s:replace{8, 5}
-    -- Garbage bucket {200} is deleted in two parts: 1000 and 101.
     for i = 7, 1107 do s:replace{i, 200} end
     s2:replace{4, 200}
     s2:replace{5, 100}
@@ -176,7 +171,7 @@ f:cancel()
 --
 -- Test API function to delete a specified bucket data.
 --
-require('util')
+util = require('util')
 
 -- Delete an existing garbage bucket.
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
@@ -196,8 +191,8 @@ s:select{}
 _bucket:replace{4, vshard.consts.BUCKET.ACTIVE}
 s:replace{5, 4}
 s:replace{6, 4}
-check_error(vshard.storage.bucket_delete_garbage, 4)
-check_error(vshard.storage.bucket_delete_garbage, 4, 10000)
+util.check_error(vshard.storage.bucket_delete_garbage, 4)
+util.check_error(vshard.storage.bucket_delete_garbage, 4, 10000)
 -- 'Force' option ignores this error.
 vshard.storage.bucket_delete_garbage(4, {force = true})
 s:select{}
