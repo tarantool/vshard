@@ -82,11 +82,10 @@ test_run:cmd('switch storage_1_a')
 ---
 - true
 ...
-require('util')
+util = require('util')
 ---
-- true
 ...
-check_error(vshard.storage.cfg, cfg, 'unknow uuid')
+util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 ---
 - Local server unknow uuid wasn't found in config
 ...

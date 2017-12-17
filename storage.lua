@@ -51,6 +51,8 @@ box.once("testapp:schema:1", function()
     box.schema.role.grant('public', 'execute', 'function', 'customer_lookup')
     box.schema.func.create('customer_add')
     box.schema.role.grant('public', 'execute', 'function', 'customer_add')
+    box.schema.func.create('echo')
+    box.schema.role.grant('public', 'execute', 'function', 'echo')
 end)
 
 function customer_add(customer)
@@ -93,4 +95,8 @@ function customer_lookup(customer_id)
     end
     customer.accounts = accounts;
     return customer
+end
+
+function echo(...)
+    return ...
 end

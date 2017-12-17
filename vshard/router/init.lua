@@ -28,6 +28,29 @@ self.replicasets = nil
 -- NOTE: it is should be good to store bucket map in memtx space
 self.route_map = {}
 
+--
+-- Call a function on remote storage
+--
+local function vshard_call(replicaset, func, args)
+    local master = replicaset.master
+    local conn = master.conn
+    local pstatus, status, result = pcall(conn.call, conn, func, args)
+    if not pstatus then
+        log.error("Exception during calling '%s' on '%s': %s", func, master.uuid,
+                  status)
+        return consts.PROTO.BOX_ERROR, status
+    end
+    if status == consts.PROTO.OK then
+        return status, result
+    end
+    if status == consts.PROTO.NON_MASTER then
+        log.warn("Replica %s is not master for replicaset %s anymore,"..
+                 "please update router configuration!",
+                  master.uuid, replicaset.uuid)
+    end
+    return status, result
+end
+
 -- Search bucket in whole cluster
 local function bucket_discovery(bucket_id)
     local replicaset = self.route_map[bucket_id]
@@ -37,8 +60,9 @@ local function bucket_discovery(bucket_id)
 
     log.info("Discovering bucket %d", bucket_id)
     for _, replicaset in pairs(self.replicasets) do
-        local conn = replicaset.master.conn
-        local status, result = conn:call('vshard.storage.bucket_stat', {bucket_id})
+        local status, result = vshard_call(replicaset,
+                                           'vshard.storage.bucket_stat',
+                                           {bucket_id})
         if status == consts.PROTO.OK then
             self.route_map[bucket_id] = replicaset
             return consts.PROTO.OK, replicaset
@@ -81,12 +105,17 @@ local function router_call(bucket_id, mode, func, args)
                 -- to try to reconnect.
                 lfiber.yield()
             end
-            local status, info = conn:call('vshard.storage.call',
-                                           {bucket_id, mode, func, args})
+            local status, info = vshard_call(replicaset, 'vshard.storage.call',
+                                             {bucket_id, mode, func, args})
             if status == consts.PROTO.OK then
                 return info
             elseif status == consts.PROTO.WRONG_BUCKET then
                 route_map[bucket_id] = nil
+            elseif status == consts.PROTO.NON_MASTER then
+                error("Can't found master for "..tostring(replicaset.uuid))
+            elseif status == consts.PROTO.BOX_ERROR then
+                -- Re-throw original error
+                error(info)
             else
                 error("Unknown result code: "..tostring(info))
             end
@@ -108,6 +137,8 @@ local function router_cfg(cfg)
         log.info('Starting router reconfiguration')
     end
     self.replicasets = util.build_replicasets(cfg, self.replicasets or {}, true)
+    -- TODO: update existing route map in-place
+    self.route_map = {}
     cfg.sharding = nil
 
     log.info("Calling box.cfg()...")
@@ -132,7 +163,7 @@ local function cluster_bootstrap()
         local replicaset = replicasets[1 + (bucket_id - 1) % replicaset_count]
         assert(replicaset ~= nil)
         log.info("Distributing bucket %d to master %s", bucket_id,
-                 replicaset.master_uri)
+                 replicaset.master.uri)
         local conn = replicaset.master.conn
         local status, info = conn:call('vshard.storage.bucket_force_create',
                                        {bucket_id})

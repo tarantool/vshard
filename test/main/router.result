@@ -132,6 +132,82 @@ vshard.router.info().replicasets[2].master.state
 ---
 - active
 ...
+--
+-- Configuration: inconsistency master=true on storage and routers
+--
+-- This test case flips masters in replicasets without changing
+-- configuration on router and tests NON_MASTER response
+--
+-- Test the WRITE request
+vshard.router.call(1, 'write', 'echo', { 'hello world' })
+---
+- hello world
+...
+-- Shuffle masters
+util = require('util')
+---
+...
+util.shuffle_masters(cfg)
+---
+...
+-- Reconfigure storages
+test_run:cmd("switch storage_1_a")
+---
+- true
+...
+cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
+---
+...
+vshard.storage.cfg(cfg, names['storage_1_a'])
+---
+...
+test_run:cmd("switch storage_1_b")
+---
+- true
+...
+cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
+---
+...
+vshard.storage.cfg(cfg, names['storage_1_b'])
+---
+...
+test_run:cmd("switch storage_2_a")
+---
+- true
+...
+cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
+---
+...
+vshard.storage.cfg(cfg, names['storage_2_a'])
+---
+...
+test_run:cmd("switch storage_2_b")
+---
+- true
+...
+cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
+---
+...
+vshard.storage.cfg(cfg, names['storage_2_b'])
+---
+...
+-- Test that the WRITE request doesn't work
+test_run:cmd("switch router_1")
+---
+- true
+...
+util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
+---
+- Can't found master for <replicaset_2>
+...
+-- Reconfigure router and test that the WRITE request does work
+vshard.router.cfg(cfg)
+---
+...
+vshard.router.call(1, 'write', 'echo', { 'hello world' })
+---
+- hello world
+...
 _ = test_run:cmd("switch default")
 ---
 ...
