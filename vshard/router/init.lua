@@ -80,7 +80,7 @@ local function bucket_resolve(bucket_id)
         return consts.PROTO.OK, replicaset
     end
     -- Replicaset removed from cluster, perform discovery
-    local status
+    local status, reason
     status, reason = bucket_discovery(bucket_id)
     if status ~= consts.PROTO.OK then
         return status, reason

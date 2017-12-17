@@ -1,5 +1,7 @@
 #!/usr/bin/env tarantool
 
+require('strict').on()
+
 -- Get instance name
 local fio = require('fio')
 local NAME = fio.basename(arg[0], '.lua')

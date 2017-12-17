@@ -1,5 +1,7 @@
 #!/usr/bin/env tarantool
 
+require('strict').on()
+
 -- Check if we are running under test-run
 if os.getenv('ADMIN') then
     test_run = require('test_run').new()
