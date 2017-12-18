@@ -48,6 +48,7 @@ control.bucket_generation_collected
 --
 -- Test _bucket generation change during garbage buckets search.
 --
+s:truncate()
 control.bucket_generation_collected = -1
 control.bucket_generation = 1
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = true

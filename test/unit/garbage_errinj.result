@@ -143,6 +143,9 @@ control.bucket_generation_collected
 --
 -- Test _bucket generation change during garbage buckets search.
 --
+s:truncate()
+---
+...
 control.bucket_generation_collected = -1
 ---
 ...
@@ -169,7 +172,7 @@ s:replace{6, 4}
 ...
 #s:select{}
 ---
-- 6
+- 2
 ...
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false
 ---
@@ -181,7 +184,7 @@ while f:status() ~= 'dead' do fiber.sleep(0.1) end
 -- generation during search of garbage buckets.
 #s:select{}
 ---
-- 6
+- 2
 ...
 _bucket:select{4}
 ---
@@ -193,7 +196,7 @@ garbage_step(control)
 ...
 #s:select{}
 ---
-- 4
+- 0
 ...
 _bucket:delete{4}
 ---

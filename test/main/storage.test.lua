@@ -39,8 +39,10 @@ vshard.storage.info().buckets
 vshard.storage.bucket_force_create(1) -- error
 vshard.storage.bucket_force_drop(1)
 vshard.storage.info().buckets
+vshard.storage.bucket_force_create(0)
 vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_force_create(2)
+vshard.storage.bucket_force_create(3)
 
 test_run:cmd("setopt delimiter ';'")
 box.begin()

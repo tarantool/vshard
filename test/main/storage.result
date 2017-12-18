@@ -122,11 +122,19 @@ vshard.storage.info().buckets
 ---
 - {}
 ...
+vshard.storage.bucket_force_create(0)
+---
+- 0
+...
 vshard.storage.bucket_force_create(1)
 ---
 - 0
 ...
 vshard.storage.bucket_force_create(2)
+---
+- 0
+...
+vshard.storage.bucket_force_create(3)
 ---
 - 0
 ...
@@ -275,13 +283,19 @@ _ = test_run:cmd("switch storage_1_a")
 ...
 vshard.storage.info().buckets
 ---
-- 1:
+- 0:
+    status: active
+    id: 0
+  1:
     status: sent
     destination: <replicaset_2>
     id: 1
   2:
     status: active
     id: 2
+  3:
+    status: active
+    id: 3
 ...
 _ = test_run:cmd("switch default")
 ---
