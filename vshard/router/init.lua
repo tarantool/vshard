@@ -87,7 +87,10 @@ local function bucket_resolve(bucket_id)
     return replicaset
 end
 
---
+--------------------------------------------------------------------------------
+-- API
+--------------------------------------------------------------------------------
+
 -- Perform shard operation
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
@@ -138,6 +141,27 @@ local function router_call(bucket_id, mode, func, args)
         end
     else
         return box.error(box.error.TIMEOUT)
+    end
+end
+
+--
+-- Get netbox connection by bucket identifier.
+-- @param bucket_id Bucket identifier.
+-- @retval Netbox connection.
+--
+local function bucket_route(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_route(bucket_id)')
+    end
+    local result = bucket_resolve(bucket_id)
+    if result == nil then
+        error('Wrong bucket')
+    else
+        local conn, err = result:connect()
+        if conn then
+            return conn
+        end
+        error(string.format('Error during connecting: code = %d', err.code))
     end
 end
 
@@ -224,6 +248,7 @@ return {
     cfg = router_cfg;
     info = router_info;
     call = router_call;
+    bucket_route = bucket_route;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
     internal = self;
