@@ -1,7 +1,7 @@
 local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
-local netbox = require('net.box')
+local netbox = require('net.box') -- for net.box:self()
 local consts = require('vshard.consts')
 local util = require('vshard.util')
 
@@ -322,18 +322,10 @@ local function bucket_send(bucket_id, destination)
 
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
-    if replicaset.master.conn == nil then
-        local status, conn = pcall(netbox.new, replicaset.master.uri,
-                                   {reconnect_after = consts.RECONNECT_TIMEOUT})
-        if status ~= true then
-            return status, conn
-        end
-        replicaset.master.conn = conn
-    end
-    local conn = replicaset.master.conn
-    local status, info = pcall(conn.call, conn, 'vshard.storage.bucket_recv',
-                               {bucket_id, box.info.cluster.uuid, data})
-    if status ~= true then
+    local status, info =
+        replicaset:call('vshard.storage.bucket_recv',
+                        {bucket_id, box.info.cluster.uuid, data})
+    if status ~= consts.PROTO.OK then
         -- Rollback bucket state.
         box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
         return status, info

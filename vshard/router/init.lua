@@ -1,7 +1,6 @@
 local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
-local netbox = require('net.box')
 local consts = require('vshard.consts')
 local util = require('vshard.util')
 
@@ -15,41 +14,11 @@ local self = {}
 --
 -- All known replicasets used for bucket re-balancing
 --
--- {
---     [pos] = { -- replicaset #1
---         master_uri = <master_uri>
---         master.conn = <master net.box>
---     },
---     ...
--- }
 self.replicasets = nil
 
 -- Bucket map cache
 -- NOTE: it is should be good to store bucket map in memtx space
 self.route_map = {}
-
---
--- Call a function on remote storage
---
-local function vshard_call(replicaset, func, args)
-    local master = replicaset.master
-    local conn = master.conn
-    local pstatus, status, result = pcall(conn.call, conn, func, args)
-    if not pstatus then
-        log.error("Exception during calling '%s' on '%s': %s", func, master.uuid,
-                  status)
-        return consts.PROTO.BOX_ERROR, status
-    end
-    if status == consts.PROTO.OK then
-        return status, result
-    end
-    if status == consts.PROTO.NON_MASTER then
-        log.warn("Replica %s is not master for replicaset %s anymore,"..
-                 "please update router configuration!",
-                  master.uuid, replicaset.uuid)
-    end
-    return status, result
-end
 
 -- Search bucket in whole cluster
 local function bucket_discovery(bucket_id)
@@ -60,9 +29,8 @@ local function bucket_discovery(bucket_id)
 
     log.info("Discovering bucket %d", bucket_id)
     for _, replicaset in pairs(self.replicasets) do
-        local status, result = vshard_call(replicaset,
-                                           'vshard.storage.bucket_stat',
-                                           {bucket_id})
+        local status, result = replicaset:call('vshard.storage.bucket_stat',
+                                               {bucket_id})
         if status == consts.PROTO.OK then
             self.route_map[bucket_id] = replicaset
             return consts.PROTO.OK, replicaset
@@ -105,8 +73,9 @@ local function router_call(bucket_id, mode, func, args)
                 -- to try to reconnect.
                 lfiber.yield()
             end
-            local status, info = vshard_call(replicaset, 'vshard.storage.call',
-                                             {bucket_id, mode, func, args})
+            local status, info =
+                replicaset:call('vshard.storage.call',
+                                {bucket_id, mode, func, args})
             if status == consts.PROTO.OK then
                 return info
             elseif status == consts.PROTO.WRONG_BUCKET then
@@ -147,6 +116,10 @@ local function router_cfg(cfg)
     end
     box.cfg(cfg)
     log.info("Box has been configured")
+    -- Force net.box connection on cfg()
+    for _, replicaset in pairs(self.replicasets) do
+        replicaset:connect()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -162,11 +135,9 @@ local function cluster_bootstrap()
     for bucket_id= 1, consts.BUCKET_COUNT do
         local replicaset = replicasets[1 + (bucket_id - 1) % replicaset_count]
         assert(replicaset ~= nil)
-        log.info("Distributing bucket %d to master %s", bucket_id,
-                 replicaset.master.uri)
-        local conn = replicaset.master.conn
-        local status, info = conn:call('vshard.storage.bucket_force_create',
-                                       {bucket_id})
+        log.info("Distributing bucket %d to %s", bucket_id, replicaset)
+        local status, info =
+            replicaset:call('vshard.storage.bucket_force_create', {bucket_id})
         if status ~= consts.PROTO.OK then
             -- TODO: handle errors properly
             error('Failed to bootstrap cluster: '..tostring(info))

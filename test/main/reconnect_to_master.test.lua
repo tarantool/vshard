@@ -20,28 +20,28 @@ _ = test_run:switch('router_1')
 
 reps = vshard.router.internal.replicasets
 test_run:cmd("setopt delimiter ';'")
-function is_disonnected()
-	for i, rep in pairs(reps) do
-		if rep.master.conn.state ~= 'active' then
-			return true
-		end
-	end
-	return false
+function is_disconnected()
+    for i, rep in pairs(reps) do
+        if rep.master.conn == nil or rep.master.conn.state ~= 'active' then
+            return true
+        end
+    end
+    return false
 end
 test_run:cmd("setopt delimiter ''");
 
 -- No master in replica set 1.
-is_disonnected()
+is_disconnected()
 
 -- Return master.
 _ = test_run:cmd('start server storage_1_a')
 fiber = require('fiber')
 max_iters = 1000
 i = 0
-while is_disonnected() and i < max_iters do i = i + 1 fiber.sleep(0.1) end
+while is_disconnected() and i < max_iters do i = i + 1 fiber.sleep(0.1) end
 
 -- Master connection is active again.
-is_disonnected()
+is_disconnected()
 
 _ = test_run:cmd("switch default")
 test_run:cmd('stop server router_1')
