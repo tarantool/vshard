@@ -9,11 +9,11 @@ local function shuffle_masters(cfg)
     for replicaset_uuid, replicaset in pairs(cfg.sharding) do
         local old_master = nil
         local new_master = nil
-        for instance_uuid, server in pairs(replicaset.servers) do
-            if server.master then
-                old_master = server
+        for instance_uuid, replica in pairs(replicaset.replicas) do
+            if replica.master then
+                old_master = replica
             else
-                new_master = server
+                new_master = replica
             end
         end
         old_master.master = nil

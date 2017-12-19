@@ -22,10 +22,10 @@ s2_2_id = '001688c3-66f8-4a31-8e19-036c17d489c2'
 rs3_id = '910ee49b-2540-41b6-9b8c-c976bef1bb17'
 s3_1_id = 'ee34807e-be5c-4ae3-8348-e97be227a305'
 
-cfg.sharding[rs1_id].servers[s1_2_id] = nil
-cfg.sharding[rs2_id].servers[s2_1_id].master = nil
-cfg.sharding[rs2_id].servers[s2_2_id].master = true
-cfg.sharding[rs3_id] = {servers = {[s3_1_id] = {uri = "storage:storage@127.0.0.1:3306", name = 'storage_3_a', master = true}}}
+cfg.sharding[rs1_id].replicas[s1_2_id] = nil
+cfg.sharding[rs2_id].replicas[s2_1_id].master = nil
+cfg.sharding[rs2_id].replicas[s2_2_id].master = true
+cfg.sharding[rs3_id] = {replicas = {[s3_1_id] = {uri = "storage:storage@127.0.0.1:3306", name = 'storage_3_a', master = true}}}
 
 REPLICASET_3 = {'storage_3_a'}
 test_run:create_cluster(REPLICASET_3, 'main')
@@ -36,7 +36,7 @@ util = require('util')
 util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 
 -- test without master
-for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.servers) do s.master = nil end end
+for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.replicas) do s.master = nil end end
 vshard.storage.cfg(cfg, box.info.uuid)
 
 test_run:cmd('switch default')

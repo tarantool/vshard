@@ -10,26 +10,26 @@ local function sanity_check_replicaset(replicaset)
     if type(replicaset) ~= 'table' then
         error('Replicaset must be a table')
     end
-    if type(replicaset.servers) ~= 'table' then
-        error('Replicaset.servers must be array of servers')
+    if type(replicaset.replicas) ~= 'table' then
+        error('Replicaset.replicas must be array of replicas')
     end
     local master_is_found = false
-    for k, server in pairs(replicaset.servers) do
-        if type(server.uri) ~= 'string' then
-            error('Server uri must be string')
+    for k, replica in pairs(replicaset.replicas) do
+        if type(replica.uri) ~= 'string' then
+            error('replica uri must be string')
         end
-        local uri = luri.parse(server.uri)
+        local uri = luri.parse(replica.uri)
         if uri.login == nil or uri.password == nil then
             error('URI must contain login and password')
         end
-         if type(server.name) ~= 'string' then
-            error('Server name must be string')
+         if type(replica.name) ~= 'string' then
+            error('replica name must be string')
         end
-        if server.master ~= nil then
-            if type(server.master) ~= 'boolean' then
+        if replica.master ~= nil then
+            if type(replica.master) ~= 'boolean' then
                 error('"master" must be boolean')
             end
-            if server.master then
+            if replica.master then
                 if master_is_found then
                     error('Only one master is allowed per replicaset')
                 end
@@ -55,7 +55,7 @@ local function sanity_check_config(shard_cfg)
         end
         uuids[replicaset_uuid] = true
         sanity_check_replicaset(replicaset)
-        for replica_uuid, replica in pairs(replicaset.servers) do
+        for replica_uuid, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
                 error(string.format('Duplicate uri %s', replica.uri))
             end
@@ -173,13 +173,13 @@ local replicaset_mt = {
 --
 -- Build replicasets map in a format: {
 --     [replicaset_uuid] = {
---         servers = array of maps of type {
+--         replicas = array of maps of type {
 --             uri = string,
 --             name = string,
 --             uuid = string,
 --             conn = netbox connection
 --         },
---         master = <master server from the array above>
+--         master = <master replica from the array above>
 --         uuid = <replicaset_uuid>,
 --     },
 --     ...
@@ -189,17 +189,17 @@ local function build_replicasets(shard_cfg, existing_replicasets)
     local new_replicasets = {}
     for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
         local new_replicaset = setmetatable({
-            servers = {},
+            replicas = {},
             uuid = replicaset_uuid
         }, replicaset_mt)
-        for replica_uuid, replica in pairs(replicaset.servers) do
+        for replica_uuid, replica in pairs(replicaset.replicas) do
             local new_replica = {uri = replica.uri, name = replica.name,
                                  uuid = replica_uuid}
             local existing_rs = existing_replicasets[replicaset_uuid]
-            if existing_rs ~= nil and existing_rs.servers[replica_uuid] then
-                new_replica.conn = existing_rs.servers[replica_uuid].conn
+            if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then
+                new_replica.conn = existing_rs.replicas[replica_uuid].conn
             end
-            new_replicaset.servers[replica_uuid] = new_replica
+            new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then
                 new_replicaset.master = new_replica
             end

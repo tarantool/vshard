@@ -643,16 +643,16 @@ end
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
-local function storage_cfg(cfg, this_server_uuid)
+local function storage_cfg(cfg, this_replica_uuid)
     cfg = table.deepcopy(cfg)
-    if this_server_uuid == nil then
-        error('Usage: cfg(configuration, this_server_uuid)')
+    if this_replica_uuid == nil then
+        error('Usage: cfg(configuration, this_replica_uuid)')
     end
     util.sanity_check_config(cfg.sharding)
     if self.replicasets ~= nil then
-        log.info("Starting reconfiguration of replica %s", this_server_uuid)
+        log.info("Starting reconfiguration of replica %s", this_replica_uuid)
     else
-        log.info("Starting configuration of replica %s", this_server_uuid)
+        log.info("Starting configuration of replica %s", this_replica_uuid)
     end
 
     local was_master = self.this_replicaset and
@@ -663,8 +663,8 @@ local function storage_cfg(cfg, this_server_uuid)
     local new_replicasets = util.build_replicasets(cfg, self.replicasets or {},
                                                    false)
     for rs_uuid, rs in pairs(new_replicasets) do
-        for replica_uuid, replica in pairs(rs.servers) do
-            if replica_uuid == this_server_uuid then
+        for replica_uuid, replica in pairs(rs.replicas) do
+            if replica_uuid == this_replica_uuid then
                 this_replicaset = rs
                 this_replica = replica
                 break
@@ -675,15 +675,15 @@ local function storage_cfg(cfg, this_server_uuid)
         end
     end
     if this_replicaset == nil then
-        error(string.format("Local server %s wasn't found in config",
-                            this_server_uuid))
+        error(string.format("Local replica %s wasn't found in config",
+                            this_replica_uuid))
     end
 
     cfg.listen = cfg.listen or this_replica.uri
     if cfg.replication == nil then
         cfg.replication = {}
-        for uuid, server in pairs(this_replicaset.servers) do
-            table.insert(cfg.replication, server.uri)
+        for uuid, replica in pairs(this_replicaset.replicas) do
+            table.insert(cfg.replication, replica.uri)
          end
     end
     cfg.instance_uuid = this_replica.uuid
