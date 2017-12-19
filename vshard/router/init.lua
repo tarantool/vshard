@@ -69,12 +69,6 @@ local function router_call(bucket_id, mode, func, args)
         status, reason = bucket_resolve(bucket_id)
         if status == consts.PROTO.OK then
             replicaset = reason
-            local conn = replicaset.master.conn
-            if not conn:is_connected() then
-                -- Skip this event loop iteration and allow netbox
-                -- to try to reconnect.
-                lfiber.yield()
-            end
             local status, info =
                 replicaset:call('vshard.storage.call',
                                 {bucket_id, mode, func, args})
