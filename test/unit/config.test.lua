@@ -1,13 +1,13 @@
 test_run = require('test_run').new()
 vshard = require('vshard')
-vutil = require('vshard.util')
+lcfg = require('vshard.cfg')
 util = require('util')
 
 --
 -- Check sharding config sanity.
 --
 
-function check(cfg) return util.check_error(vutil.sanity_check_config, cfg) end
+function check(cfg) return util.check_error(lcfg.check, cfg) end
 
 -- Not table.
 check(100)

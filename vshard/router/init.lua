@@ -2,6 +2,7 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local consts = require('vshard.consts')
+local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 
@@ -100,7 +101,7 @@ end
 
 local function router_cfg(cfg)
     cfg = table.deepcopy(cfg)
-    util.sanity_check_config(cfg.sharding)
+    lcfg.check(cfg.sharding)
     if self.replicasets == nil then
         log.info('Starting router configuration')
     else

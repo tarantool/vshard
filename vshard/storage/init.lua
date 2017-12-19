@@ -4,6 +4,7 @@ local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local consts = require('vshard.consts')
 local util = require('vshard.util')
+local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 
 -- Internal state
@@ -649,7 +650,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
-    util.sanity_check_config(cfg.sharding)
+    lcfg.check(cfg.sharding)
     if self.replicasets ~= nil then
         log.info("Starting reconfiguration of replica %s", this_replica_uuid)
     else
