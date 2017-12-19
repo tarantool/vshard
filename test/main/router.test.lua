@@ -20,6 +20,9 @@ test_run:cmd("push filter '"..replicaset2_uuid.."' to '<replicaset_2>'")
 
 _ = test_run:cmd("switch router_1")
 
+-- gh-24: log all connnect/disconnect events.
+test_run:grep_log('router_1', 'connected to ')
+
 --
 -- Initial distribution
 --
@@ -104,10 +107,14 @@ util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 vshard.router.cfg(cfg)
 vshard.router.call(1, 'write', 'echo', { 'hello world' })
 
+
 _ = test_run:cmd("switch default")
+test_run:drop_cluster(REPLICASET_2)
+
+-- gh-24: log all connnect/disconnect events.
+while test_run:grep_log('router_1', 'disconnected from ') == nil do fiber.sleep(0.1) end
 
 test_run:cmd("stop server router_1")
 test_run:cmd("cleanup server router_1")
-test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
 test_run:cmd('clear filter')
