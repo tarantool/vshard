@@ -2,6 +2,7 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local consts = require('vshard.consts')
+local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 
 -- Internal state
@@ -105,7 +106,8 @@ local function router_cfg(cfg)
     else
         log.info('Starting router reconfiguration')
     end
-    self.replicasets = util.build_replicasets(cfg, self.replicasets or {}, true)
+    self.replicasets = lreplicaset.buildall(cfg.sharding,
+                                             self.replicasets or {})
     -- TODO: update existing route map in-place
     self.route_map = {}
     cfg.sharding = nil

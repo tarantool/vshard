@@ -1,0 +1,157 @@
+-- vshard.replicaset
+
+--
+-- <replicaset> = {
+--     replicas = {
+--         [replica_uuid] = {
+--             uri = string,
+--             name = string,
+--             uuid = string,
+--             conn = <netbox>
+--          }
+--      },
+--      master = <master server from the array above>
+--      uuid = <replicaset_uuid>,
+--  }
+--
+-- replicasets = {
+--    [replicaset_uuid] = <replicaset>
+-- }
+--
+
+local log = require('log')
+local netbox = require('net.box')
+local consts = require('vshard.consts')
+
+--
+-- on_connect() trigger for net.box
+--
+local function netbox_on_connect(conn)
+    log.info("connected to %s:%s", conn.host, conn.port)
+end
+
+--
+-- on_disconnect() trigger for net.box
+--
+local function netbox_on_disconnect(conn)
+    log.info("disconnected from %s:%s", conn.host, conn.port)
+end
+
+--
+-- Create net.box connection to master
+--
+local function replicaset_connect(replicaset)
+    local master = replicaset.master
+    if master == nil then
+        return consts.PROTO.MISSING_MASTER
+    end
+    local conn = master.conn
+    if conn == nil then
+        -- Use wait_connected = false to prevent races on parallel requests
+        conn = netbox.connect(master.uri, {
+            reconnect_after = consts.RECONNECT_TIMEOUT,
+            wait_connected = false
+        })
+        conn:on_connect(netbox_on_connect)
+        conn:on_disconnect(netbox_on_disconnect)
+        master.conn = conn
+        conn:ping()
+    end
+    return consts.PROTO.OK, conn
+end
+
+--
+-- Destroy net.box connection to master
+--
+local function replicaset_disconnect(replicaset)
+    local master = replicaset.master
+    if master == nil then
+       return consts.PROTO.OK
+    end
+    local conn = replicaset.master.conn
+    replicaset.master.conn = nil
+    conn:close()
+    return consts.PROTO.OK
+end
+
+--
+-- Call a function on remote storage
+--
+local function replicaset_call(replicaset, func, args)
+    assert(type(func) == 'string', 'function name')
+    assert(type(args) == 'table', 'function arguments')
+    local status, conn = replicaset_connect(replicaset)
+    if status ~= consts.PROTO.OK then
+        return status, conn
+    end
+    local pstatus, status, result = pcall(conn.call, conn, func, args)
+    if not pstatus then
+        log.error("Exception during calling '%s' on '%s': %s", func,
+                  replicaset.master.uuid, status)
+        return consts.PROTO.BOX_ERROR, status
+    end
+    if status == consts.PROTO.OK then
+        return status, result
+    end
+    if status == consts.PROTO.NON_MASTER then
+        log.warn("Replica %s is not master for replicaset %s anymore,"..
+                 "please update configuration!",
+                  replicaset.master.uuid, replicaset.uuid)
+    end
+    return status, result
+end
+
+--
+-- Nice formatter for replicaset
+--
+local function replicaset_tostring(replicaset)
+    local uri = ''
+    if replicaset.master then
+        uri = replicaset.master.uri
+    end
+    return string.format('Replicaset(uuid=%s, master=%s)',
+        replicaset.uuid, uri)
+end
+
+--
+-- Meta-methods
+--
+local replicaset_mt = {
+    __index = {
+        connect = replicaset_connect;
+        disconnect = replicaset_disconnect;
+        call = replicaset_call;
+    };
+    __tostring = replicaset_tostring;
+}
+
+--
+-- Update/build replicasets from configuration
+--
+local function buildall(sharding_cfg, existing_replicasets)
+    local new_replicasets = {}
+    for replicaset_uuid, replicaset in pairs(sharding_cfg) do
+        local new_replicaset = setmetatable({
+            replicas = {},
+            uuid = replicaset_uuid
+        }, replicaset_mt)
+        for replica_uuid, replica in pairs(replicaset.replicas) do
+            local new_replica = {uri = replica.uri, name = replica.name,
+                                 uuid = replica_uuid}
+            local existing_rs = existing_replicasets[replicaset_uuid]
+            if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then
+                new_replica.conn = existing_rs.replicas[replica_uuid].conn
+            end
+            new_replicaset.replicas[replica_uuid] = new_replica
+            if replica.master then
+                new_replicaset.master = new_replica
+            end
+        end
+        new_replicasets[replicaset_uuid] = new_replicaset
+    end
+    return new_replicasets
+end
+
+return {
+    buildall = buildall;
+}

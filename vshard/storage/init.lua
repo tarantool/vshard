@@ -4,12 +4,13 @@ local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local consts = require('vshard.consts')
 local util = require('vshard.util')
+local lreplicaset = require('vshard.replicaset')
 
 -- Internal state
 local self = {
     --
     -- All known replicasets used for bucket re-balancing.
-    -- See format in util.build_replicasets.
+    -- See format in replicaset.lua.
     --
     replicasets = nil,
     -- Fiber to remove garbage buckets data.
@@ -660,8 +661,9 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = util.build_replicasets(cfg, self.replicasets or {},
-                                                   false)
+    local new_replicasets = lreplicaset.buildall(cfg.sharding,
+                                                 self.replicasets or {},
+                                                 false)
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
             if replica_uuid == this_replica_uuid then
