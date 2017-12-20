@@ -19,6 +19,8 @@ test_run:cmd("push filter '"..replicaset1_uuid.."' to '<replicaset_1>'")
 test_run:cmd("push filter '"..replicaset2_uuid.."' to '<replicaset_2>'")
 
 _ = test_run:cmd("switch router_1")
+-- gh-46: Ensure a cfg is not destroyed after router.cfg().
+cfg.sharding ~= nil
 
 -- gh-24: log all connnect/disconnect events.
 test_run:grep_log('router_1', 'connected to ')
