@@ -1,6 +1,8 @@
 local function check_error(func, ...)
     local status, err = pcall(func, ...)
-    assert(not status)
+    if status then
+        return status, err
+    end
     err = string.gsub(err, '.*/[a-z]+.lua.*[0-9]+: ', '')
     return err
 end

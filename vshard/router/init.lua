@@ -2,6 +2,7 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local consts = require('vshard.consts')
+local codes = require('vshard.codes')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
@@ -26,63 +27,71 @@ self.route_map = {}
 local function bucket_discovery(bucket_id)
     local replicaset = self.route_map[bucket_id]
     if replicaset ~= nil then
-        return consts.PROTO.OK, replicaset
+        return replicaset
     end
 
     log.info("Discovering bucket %d", bucket_id)
     for _, replicaset in pairs(self.replicasets) do
-        local status, result = replicaset:call('vshard.storage.bucket_stat',
-                                               {bucket_id})
-        if status == consts.PROTO.OK then
+        local found, err = replicaset:call('vshard.storage.bucket_stat',
+                                           {bucket_id})
+        if found then
+            log.info("Discovered bucket %d on %s", bucket_id, replicaset)
             self.route_map[bucket_id] = replicaset
-            return consts.PROTO.OK, replicaset
+            return replicaset
         end
     end
 
-    return consts.PROTO.WRONG_BUCKET
+    return nil, {
+        code = codes.WRONG_BUCKET,
+        bucket_id = bucket_id,
+    }
 end
 
 -- Resolve bucket id to replicaset uuid
 local function bucket_resolve(bucket_id)
-    local replicaset
+    local replicaset, err
     local replicaset = self.route_map[bucket_id]
     if replicaset ~= nil then
-        return consts.PROTO.OK, replicaset
+        return replicaset
     end
     -- Replicaset removed from cluster, perform discovery
-    local status, reason
-    status, reason = bucket_discovery(bucket_id)
-    if status ~= consts.PROTO.OK then
-        return status, reason
+    replicaset, err = bucket_discovery(bucket_id)
+    if replicaset == nil then
+        return nil, err
     end
-    replicaset = reason
-    return consts.PROTO.OK, replicaset
+    return replicaset
 end
 
+--
 -- Perform shard operation
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
+--
 local function router_call(bucket_id, mode, func, args)
-    local replicaset, status, reason
+    local replicaset, err
     local tstart = lfiber.time()
     repeat
-        status, reason = bucket_resolve(bucket_id)
-        if status == consts.PROTO.OK then
-            replicaset = reason
+        replicaset, err = bucket_resolve(bucket_id)
+        if replicaset then
             local status, info =
                 replicaset:call('vshard.storage.call',
                                 {bucket_id, mode, func, args})
-            if status == consts.PROTO.OK then
+            if status then
                 return info
-            elseif status == consts.PROTO.WRONG_BUCKET then
-                route_map[bucket_id] = nil
-            elseif status == consts.PROTO.NON_MASTER then
+            end
+            local err = info
+            if err.code == codes.WRONG_BUCKET then
+                self.route_map[bucket_id] = nil
+            elseif err.code == codes.NON_MASTER then
+                log.warn("Replica %s is not master for replicaset %s anymore,"..
+                         "please update configuration!",
+                          replicaset.master.uuid, replicaset.uuid)
                 error("Can't found master for "..tostring(replicaset.uuid))
-            elseif status == consts.PROTO.BOX_ERROR then
+            elseif err.code == codes.BOX_ERROR then
                 -- Re-throw original error
-                error(info)
+                error(err.error)
             else
-                error("Unknown result code: "..tostring(info))
+                error("Unknown result code: "..tostring(err.code))
             end
         end
     until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
@@ -135,7 +144,7 @@ local function cluster_bootstrap()
         log.info("Distributing bucket %d to %s", bucket_id, replicaset)
         local status, info =
             replicaset:call('vshard.storage.bucket_force_create', {bucket_id})
-        if status ~= consts.PROTO.OK then
+        if not status then
             -- TODO: handle errors properly
             error('Failed to bootstrap cluster: '..tostring(info))
         end

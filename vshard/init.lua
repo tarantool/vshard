@@ -17,4 +17,5 @@ return {
     router = require('vshard.router'),
     storage = require('vshard.storage'),
     consts = require('vshard.consts'),
+    codes = require('vshard.codes'),
 }

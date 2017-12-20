@@ -22,6 +22,7 @@
 local log = require('log')
 local netbox = require('net.box')
 local consts = require('vshard.consts')
+local codes = require('vshard.codes')
 
 --
 -- on_connect() trigger for net.box
@@ -43,7 +44,10 @@ end
 local function replicaset_connect(replicaset)
     local master = replicaset.master
     if master == nil then
-        return consts.PROTO.MISSING_MASTER
+        return nil, {
+            code = codes.MISSING_MASTER,
+            replicaset_uuid = replicaset.uuid,
+        }
     end
     local conn = master.conn
     if conn == nil then
@@ -57,7 +61,7 @@ local function replicaset_connect(replicaset)
         master.conn = conn
         conn:ping()
     end
-    return consts.PROTO.OK, conn
+    return conn
 end
 
 --
@@ -66,39 +70,47 @@ end
 local function replicaset_disconnect(replicaset)
     local master = replicaset.master
     if master == nil then
-       return consts.PROTO.OK
+       return true
     end
     local conn = replicaset.master.conn
     replicaset.master.conn = nil
     conn:close()
-    return consts.PROTO.OK
+    return true
+end
+
+--
+-- Helper for replicaset_call
+--
+local function replicaset_call_tail(replicaset, pstatus, status, ...)
+    if not pstatus then
+        log.error("Exception during calling '%s' on '%s': %s", func,
+                  replicaset.master.uuid, status)
+        return nil, {
+            status = codes.BOX_ERROR,
+            error = status
+        }
+    end
+    log.info("xxx: %s", require('json').encode({...}))
+    if status == nil then
+        status = nil -- Workaround for `not msgpack.NULL` magic.
+    end
+    return status, ...
 end
 
 --
 -- Call a function on remote storage
+-- Note: this function uses pcall-style error handling
+-- @retval false, err on error
+-- @retval true, ... on success
 --
 local function replicaset_call(replicaset, func, args)
     assert(type(func) == 'string', 'function name')
     assert(type(args) == 'table', 'function arguments')
-    local status, conn = replicaset_connect(replicaset)
-    if status ~= consts.PROTO.OK then
-        return status, conn
+    local conn, err = replicaset_connect(replicaset)
+    if conn == nil then
+        return nil, err
     end
-    local pstatus, status, result = pcall(conn.call, conn, func, args)
-    if not pstatus then
-        log.error("Exception during calling '%s' on '%s': %s", func,
-                  replicaset.master.uuid, status)
-        return consts.PROTO.BOX_ERROR, status
-    end
-    if status == consts.PROTO.OK then
-        return status, result
-    end
-    if status == consts.PROTO.NON_MASTER then
-        log.warn("Replica %s is not master for replicaset %s anymore,"..
-                 "please update configuration!",
-                  replicaset.master.uuid, replicaset.uuid)
-    end
-    return status, result
+    return replicaset_call_tail(replicaset, pcall(conn.call, conn, func, args))
 end
 
 --
@@ -110,7 +122,7 @@ local function replicaset_tostring(replicaset)
         uri = replicaset.master.uri
     end
     return string.format('Replicaset(uuid=%s, master=%s)',
-        replicaset.uuid, uri)
+                         replicaset.uuid, uri)
 end
 
 --

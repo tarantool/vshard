@@ -102,7 +102,7 @@ vshard.storage.info().buckets
 ...
 vshard.storage.bucket_force_create(1)
 ---
-- 0
+- true
 ...
 vshard.storage.info().buckets
 ---
@@ -116,7 +116,7 @@ vshard.storage.bucket_force_create(1) -- error
 ...
 vshard.storage.bucket_force_drop(1)
 ---
-- 0
+- true
 ...
 vshard.storage.info().buckets
 ---
@@ -124,19 +124,19 @@ vshard.storage.info().buckets
 ...
 vshard.storage.bucket_force_create(0)
 ---
-- 0
+- true
 ...
 vshard.storage.bucket_force_create(1)
 ---
-- 0
+- true
 ...
 vshard.storage.bucket_force_create(2)
 ---
-- 0
+- true
 ...
 vshard.storage.bucket_force_create(3)
 ---
-- 0
+- true
 ...
 test_run:cmd("setopt delimiter ';'")
 ---
@@ -200,7 +200,6 @@ box.space.account:select()
 ...
 vshard.storage.bucket_collect(1)
 ---
-- 0
 - - - 514
     - - [10, 1, 1, 100, 'Account 10']
       - [11, 1, 1, 100, 'Account 11']
@@ -214,7 +213,6 @@ vshard.storage.bucket_collect(1)
 ...
 vshard.storage.bucket_collect(2)
 ---
-- 0
 - - - 514
     - - [20, 2, 2, 100, 'Account 20']
       - [21, 2, 2, 100, 'Account 21']
@@ -243,7 +241,7 @@ customer_lookup(1)
 ...
 vshard.storage.call(1, 'read', 'customer_lookup', {1})
 ---
-- 0
+- true
 - accounts:
   - account_id: 10
     balance: 100
@@ -259,8 +257,9 @@ vshard.storage.call(1, 'read', 'customer_lookup', {1})
 ...
 vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 ---
-- 2
 - null
+- code: 2
+  bucket_id: 100500
 ...
 --
 -- Bucket transfer

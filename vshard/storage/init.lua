@@ -3,6 +3,7 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local consts = require('vshard.consts')
+local codes = require('vshard.codes')
 local util = require('vshard.util')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
@@ -78,25 +79,22 @@ local function sync(timeout)
     timeout = timeout or consts.SYNC_TIMEOUT
     local vclock = box.info.vclock
     local tstart = lfiber.time()
-    local done = false
     repeat
-        done = true
+        local done = true
         for _, replica in ipairs(box.info.replication) do
             if replica.downstream and
                not vclock_lesseq(vclock, replica.downstream.vclock) then
                 done = false
             end
         end
-        if not done then
-            lfiber.sleep(0.001)
+        if done then
+            log.info("Replicaset has been synchronized")
+            return true
         end
-    until not (lfiber.time() <= tstart + timeout and not done)
-    if not done then
-        log.warn("Timed out during synchronizing replicaset")
-        return false
-    end
-    log.info("Replicaset has been synchronized")
-    return true
+        lfiber.sleep(0.001)
+    until not (lfiber.time() <= tstart + timeout)
+    log.warn("Timed out during synchronizing replicaset")
+    return false
 end
 
 --------------------------------------------------------------------------------
@@ -108,17 +106,23 @@ local function bucket_check_state(bucket_id, mode)
     assert(mode == 'read' or mode == 'write')
     if self.this_replicaset.master ~= self.this_replica then
         -- Add redirect here
-        return consts.PROTO.NON_MASTER
+        return nil, {
+            code = codes.NON_MASTER,
+            bucket_id = bucket_id,
+        }
     end
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil then
-        return consts.PROTO.WRONG_BUCKET
+        return nil, {
+            code = codes.WRONG_BUCKET,
+            bucket_id = bucket_id
+        }
     end
 
     if bucket.status == consts.BUCKET.ACTIVE or
        (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
-        return consts.PROTO.OK
+        return true
     end
 
     assert(bucket.status == consts.BUCKET.SENDING or
@@ -126,7 +130,11 @@ local function bucket_check_state(bucket_id, mode)
            bucket.status == consts.BUCKET.RECEIVING or
            bucket.status == consts.BUCKET.GARBAGE)
 
-    return consts.PROTO.WRONG_BUCKET, {bucket.id, bucket.destination}
+    return nil, {
+        code = codes.WRONG_BUCKET,
+        bucket_id = bucket_id,
+        destination = bucket.destination
+    }
 end
 
 --
@@ -139,10 +147,13 @@ local function bucket_stat(bucket_id)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return consts.PROTO.WRONG_BUCKET, bucket_id
+        return nil, {
+            code = codes.WRONG_BUCKET,
+            bucket_id = bucket_id,
+        }
     end
 
-    return consts.PROTO.OK, {
+    return {
         id = bucket.id;
         status = bucket.status;
         destination = bucket.destination;
@@ -159,7 +170,7 @@ local function bucket_force_create(bucket_id)
     end
 
     box.space._bucket:insert({bucket_id, consts.BUCKET.ACTIVE})
-    return consts.PROTO.OK
+    return true
 end
 
 --
@@ -171,7 +182,7 @@ local function bucket_force_drop(bucket_id)
     end
 
     box.space._bucket:delete({bucket_id})
-    return consts.PROTO.OK
+    return true
 end
 
 
@@ -185,7 +196,10 @@ local function bucket_recv(bucket_id, from, data)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket ~= nil then
-        return consts.PROTO.BUCKET_ALREADY_EXISTS, bucket_id
+        return nil, {
+            code = codes.BUCKET_ALREADY_EXISTS,
+            bucket_id = bucket_id
+        }
     end
 
     bucket = box.space._bucket:insert({bucket_id, consts.BUCKET.RECEIVING, from})
@@ -209,7 +223,7 @@ local function bucket_recv(bucket_id, from, data)
     bucket = box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
 
     box.commit()
-    return consts.PROTO.OK
+    return true
 end
 
 --
@@ -231,7 +245,7 @@ end
 
 --
 -- Collect bucket data from all spaces.
--- @retval In a case of success, PROTO.OK code and bucket data in
+-- @retval In a case of success, bucket data in
 --         array of pairs: {space_id, <array of tuples>}.
 --
 local function bucket_collect_internal(bucket_id)
@@ -242,14 +256,11 @@ local function bucket_collect_internal(bucket_id)
         local space_data = space.index.bucket_id:select({bucket_id})
         table.insert(data, {space.id, space_data})
     end
-    return consts.PROTO.OK, data
+    return data
 end
 
 --
 -- Collect content of ACTIVE bucket.
--- @retval PROTO.OK and bucket data (see bucket_collect_internal).
--- @retval PROTO.WRONG_BUCKET and bucket_id, if a bucket is not
---         active.
 --
 local function bucket_collect(bucket_id)
     if type(bucket_id) ~= 'number' then
@@ -258,7 +269,10 @@ local function bucket_collect(bucket_id)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return consts.PROTO.WRONG_BUCKET, bucket_id
+        return nil, {
+            code = codes.WRONG_BUCKET,
+            bucket_id = bucket_id
+        }
     end
 
     return bucket_collect_internal(bucket_id)
@@ -306,31 +320,41 @@ local function bucket_send(bucket_id, destination)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return consts.PROTO.WRONG_BUCKET, bucket_id
+        return nil, {
+            code = codes.WRONG_BUCKET,
+            bucket_id = bucket_id
+        }
     end
     local replicaset = self.replicasets[destination]
     if replicaset == nil then
-        return consts.PROTO.NO_SUCH_REPLICASET, destination
+        return nil, {
+            code = codes.NO_SUCH_REPLICASET,
+            replicaset_uuid = destination,
+        }
     end
 
     if destination == box.info.cluster.uuid then
-        return consts.PROTO.MOVE_TO_SELF, bucket_id, destination
+        return nil, {
+            code = codes.MOVE_TO_SELF,
+            bucket_id = bucket_id,
+            replicaset_uuid = replicaset_uuid,
+        }
     end
 
-    local status, data = bucket_collect_internal(bucket_id)
-    if status ~= consts.PROTO.OK then
-        return status, data
+    local data, err = bucket_collect_internal(bucket_id)
+    if data == nil then
+        return nil, err
     end
 
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
-    local status, info =
+    local status, err =
         replicaset:call('vshard.storage.bucket_recv',
                         {bucket_id, box.info.cluster.uuid, data})
-    if status ~= consts.PROTO.OK then
+    if not status then
         -- Rollback bucket state.
         box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-        return status, info
+        return status, err
     end
 
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
@@ -629,17 +653,21 @@ end
 -- call protocol: there is no way to detect what corresponding function does.
 -- NOTE: may be a custom function call api without any checks is needed,
 -- for example for some monitoring functions.
+--
+-- NOTE: this function uses pcall-style error handling
+-- @retval nil, err Error.
+-- @retval values Success.
 local function storage_call(bucket_id, mode, name, args)
     if mode ~= 'write' and mode ~= 'read' then
         error('Unknown mode: '..tostring(mode))
     end
 
-    local status, info = bucket_check_state(bucket_id, mode)
-    if status ~= consts.PROTO.OK then
-        return status, info
+    local ok, err = bucket_check_state(bucket_id, mode)
+    if not ok then
+        return nil, err
     end
     -- TODO: implement box.call()
-    return consts.PROTO.OK, netbox.self:call(name, args)
+    return true, netbox.self:call(name, args)
 end
 
 --------------------------------------------------------------------------------

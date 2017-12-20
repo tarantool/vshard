@@ -57,26 +57,21 @@ _ = test_run:cmd("switch router_1")
 --
 -- Initial distribution
 --
-vshard.router.bucket_discovery(1)
+replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 ---
-- 2
+- code: 2
+  bucket_id: 1
 ...
 vshard.router.bootstrap()
 ---
 ...
-status, replicaset = vshard.router.bucket_discovery(1)
+replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 ---
+- true
 ...
-status
+replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
 ---
-- 0
-...
-status, replicaset = vshard.router.bucket_discovery(2)
----
-...
-status
----
-- 0
+- true
 ...
 --
 -- Function call

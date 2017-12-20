@@ -25,15 +25,15 @@ test_run:switch('storage_1_a')
 ...
 vshard.storage.bucket_force_create(1)
 ---
-- 0
+- true
 ...
 vshard.storage.bucket_force_create(2)
 ---
-- 0
+- true
 ...
 vshard.storage.bucket_force_create(3)
 ---
-- 0
+- true
 ...
 customer = box.space.customer
 ---
@@ -82,7 +82,7 @@ box.space._bucket:replace{3, vshard.consts.BUCKET.SENT}
 ...
 vshard.storage.bucket_force_drop(2)
 ---
-- 0
+- true
 ...
 -- Wait until garbage collector deletes data and 'sent' bucket.
 while box.space._bucket:get{3} ~= nil do fiber.sleep(0.1) end

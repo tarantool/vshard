@@ -1,15 +1,4 @@
 return {
-    PROTO = {
-        OK = 0x00,
-        BOX_ERROR = 0x01,
-        WRONG_BUCKET = 0x02,
-        NON_MASTER = 0x03,
-        BUCKET_ALREADY_EXISTS = 0x04,
-        NO_SUCH_REPLICASET = 0x05,
-        MOVE_TO_SELF = 0x06,
-        MISSING_MASTER = 0x07
-    },
-
     -- Bucket FSM
     BUCKET = {
         ACTIVE = 'active',
