@@ -30,6 +30,13 @@ local codes = require('vshard.codes')
 --
 local function netbox_on_connect(conn)
     log.info("connected to %s:%s", conn.host, conn.port)
+    local master = conn.replicaset.master
+    assert(conn == master.conn)
+    if conn.peer_uuid ~= master.uuid then
+        log.info('Mismatch server UUID: expected "%s", but got "%s"',
+                 master.uuid, conn.peer_uuid)
+        conn:close()
+    end
 end
 
 --
@@ -51,16 +58,15 @@ local function replicaset_connect(replicaset)
         }
     end
     local conn = master.conn
-    if conn == nil then
-        -- Use wait_connected = false to prevent races on parallel requests
+    if conn == nil or conn.state == 'closed' then
         conn = netbox.connect(master.uri, {
             reconnect_after = consts.RECONNECT_TIMEOUT,
             wait_connected = false
         })
+        conn.replicaset = replicaset
         conn:on_connect(netbox_on_connect)
         conn:on_disconnect(netbox_on_disconnect)
         master.conn = conn
-        conn:ping()
     end
     return conn
 end
