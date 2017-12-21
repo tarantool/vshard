@@ -19,13 +19,13 @@ local self = {
     garbage_collect_fiber = nil,
     -- Fiber to rebalance a cluster.
     rebalancer_fiber = nil,
+    -- Fiber which applies routes one by one. Its presense and
+    -- active status means that the rebalancing is in progress
+    -- now on the current node.
+    rebalancer_applier_fiber = nil,
     -- Internal flag to activate and deactivate rebalancer. Mostly
     -- for tests.
     is_rebalancer_active = true,
-    -- True, if now a routes from a rebalancer are beeing applied.
-    -- If it is set, then reject all rebalancer requests to avoid
-    -- multiple simultaneous rebalancing processes.
-    is_rebalancing_in_progress = false,
     errinj = {
         ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
     }
@@ -775,9 +775,12 @@ end
 -- Fiber function to apply routes as described below.
 --
 local function rebalancer_apply_routes_f(routes)
-    assert(not self.is_rebalancing_in_progress)
-    self.is_rebalancing_in_progress = true
     log.info('Apply rebalancer routes')
+    -- Can not assing it on fiber.create() like
+    -- var = fiber.create(), because when it yields, we have no
+    -- guarantee that an event loop does not contain events
+    -- between this fiber and its creator.
+    self.rebalancer_applier_fiber = lfiber.self()
     local active_buckets =
         box.space._bucket.index.status:select{consts.BUCKET.ACTIVE}
     local i = 1
@@ -792,7 +795,6 @@ local function rebalancer_apply_routes_f(routes)
                     log.error('Error during rebalancer routes applying: %s', ret)
                 end
                 log.info('Can not apply routes')
-                self.is_rebalancing_in_progress = false
                 return
             end
         end
@@ -800,7 +802,16 @@ local function rebalancer_apply_routes_f(routes)
         i = i + bucket_count
     end
     log.info('Rebalancer routes are applied')
-    self.is_rebalancing_in_progress = false
+end
+
+--
+-- Check if a rebalancing is in progress. It is true, if the node
+-- applies routes received from a rebalancer node in the special
+-- fiber.
+--
+local function rebalancing_is_in_progress()
+    local f = self.rebalancer_applier_fiber
+    return f ~= nil and f:status() ~= 'dead'
 end
 
 --
@@ -810,6 +821,7 @@ end
 -- }. Is used by a rebalancer.
 --
 local function rebalancer_apply_routes(routes)
+    assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool
     -- about problems with long polling. Apply routes in a fiber.
     lfiber.create(rebalancer_apply_routes_f, routes)
@@ -907,7 +919,7 @@ end
 -- @retval     nil Not SENT or not ACTIVE buckets were found.
 --
 local function rebalancer_request_state()
-    if not self.is_rebalancer_active or self.is_rebalancing_in_progress then
+    if not self.is_rebalancer_active or rebalancing_is_in_progress() then
         return
     end
     local _bucket = box.space._bucket
