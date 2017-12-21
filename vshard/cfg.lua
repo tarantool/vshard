@@ -26,8 +26,12 @@ local function cfg_check_replicaset(replicaset)
         if uri.login == nil or uri.password == nil then
             error('URI must contain login and password')
         end
-         if type(replica.name) ~= 'string' then
+        if type(replica.name) ~= 'string' then
             error('replica name must be string')
+        end
+        if replica.zone ~= nil and type(replica.zone) ~= 'number' and
+           type(replica.zone) ~= 'string' then
+            error('replica zone must be either string or number')
         end
         if replica.master ~= nil then
             if type(replica.master) ~= 'boolean' then
@@ -44,16 +48,58 @@ local function cfg_check_replicaset(replicaset)
 end
 
 --
+-- Check weights map on correctness.
+--
+local function cfg_check_weights(weights)
+    if type(weights) ~= 'table' then
+        error('weights must be map of maps')
+    end
+    for zone1, v in pairs(weights) do
+        if type(zone1) ~= 'number' and type(zone1) ~= 'string' then
+            -- Zone1 can be not number or string, if an user made
+            -- this: weights = {[{1}] = ...}. In such a case
+            -- {1} is the unaccassible key of a lua table, which
+            -- is available only via pairs.
+            error('zone identifier must be either string or number')
+        end
+        if type(v) ~= 'table' then
+            error('zone must be map of relative weights of other zones')
+        end
+        for zone2, weight in pairs(v) do
+            if type(zone2) ~= 'number' and type(zone2) ~= 'string' then
+                error('zone identifier must be either string or number')
+            end
+            if type(weight) ~= 'number' or weight < 0 then
+                error('weight must be either nil or non-negative number')
+            end
+            if zone2 == zone1 and weight ~= 0 then
+                error('weight of zone self must be either nil or 0')
+            end
+        end
+    end
+end
+
+--
 -- Check sharding config on correctness. Check types, name and uri
 -- uniqueness, master count (in each replicaset must by <= 1).
 --
 local function cfg_check(shard_cfg)
     if type(shard_cfg) ~= 'table' then
+        error('Сonfig must be map of options')
+    end
+    if type(shard_cfg.sharding) ~= 'table' then
         error('Sharding config must be array of replicasets')
+    end
+    if shard_cfg.weights ~= nil then
+        cfg_check_weights(shard_cfg.weights)
+    end
+    if shard_cfg.zone ~= nil and type(shard_cfg.zone) ~= 'number' and
+       type(shard_cfg.zone) ~= 'string' then
+        error('Config zone must be either number or string')
     end
     local uuids = {}
     local uris = {}
-    for replicaset_uuid, replicaset in pairs(shard_cfg) do
+    for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
         end

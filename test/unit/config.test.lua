@@ -12,12 +12,15 @@ function check(cfg) return util.check_error(lcfg.check, cfg) end
 -- Not table.
 check(100)
 
+-- Sharding is not a table.
+check({sharding = 100})
+
 -- Replicaset is not table.
-check({100})
+check({sharding = {100}})
 
 replica = {}
 replicaset = {replicas = {['replica_uuid'] = replica}}
-cfg = {['replicaset_uuid'] = replicaset}
+cfg = {sharding = {['replicaset_uuid'] = replicaset}}
 
 -- URI is not string.
 check(cfg)
@@ -50,18 +53,18 @@ replicaset.replicas['id2'] = nil
 
 -- URI duplicate in different replicasets.
 replicaset2 = {replicas = {['id2'] = {uri = 'uri:uri@uri', name = 'storage2', master = true}}}
-cfg['rsid2'] = replicaset2
+cfg.sharding['rsid2'] = replicaset2
 check(cfg)
-cfg['rsid2'] = nil
+cfg.sharding['rsid2'] = nil
 
 -- UUID duplicate in different replicasets.
 replicaset2 = {replicas = {['id3'] = {uri = 'uri:uri@uri2', name = 'storage', master = true}}}
-cfg['rsid2'] = replicaset2
+cfg.sharding['rsid2'] = replicaset2
 replicaset3 = {replicas = {['id3'] = {uri = 'uri:uri@uri3', name = 'storage', master = true}}}
-cfg['rsid3'] = replicaset3
+cfg.sharding['rsid3'] = replicaset3
 check(cfg)
-cfg['rsid2'] = nil
-cfg['rsid3'] = nil
+cfg.sharding['rsid2'] = nil
+cfg.sharding['rsid3'] = nil
 
 --
 -- gh-40: replicaset weight. Weight is used by a rebalancer to
@@ -76,4 +79,24 @@ lcfg.check(cfg)
 replicaset.weight = 0.123
 lcfg.check(cfg)
 replicaset.weight = 100000
+lcfg.check(cfg)
+
+--
+-- gh-12: zones, zone weight and failover by weight.
+--
+cfg.weights = 100
+check(cfg)
+cfg.weights = {[{1}] = 200}
+check(cfg)
+weights = {zone1 = 100}
+cfg.weights = weights
+check(cfg)
+weights.zone1 = {[{1}] = 100}
+check(cfg)
+weights.zone1 = {zone2 = '100'}
+check(cfg)
+weights.zone1 = {zone1 = 100}
+check(cfg)
+weights[2] = {zone1 = 100}
+weights.zone1 = {[2] = 100}
 lcfg.check(cfg)

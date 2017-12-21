@@ -19,10 +19,15 @@ function check(cfg) return util.check_error(lcfg.check, cfg) end
 -- Not table.
 check(100)
 ---
+- Сonfig must be map of options
+...
+-- Sharding is not a table.
+check({sharding = 100})
+---
 - Sharding config must be array of replicasets
 ...
 -- Replicaset is not table.
-check({100})
+check({sharding = {100}})
 ---
 - Replicaset must be a table
 ...
@@ -32,7 +37,7 @@ replica = {}
 replicaset = {replicas = {['replica_uuid'] = replica}}
 ---
 ...
-cfg = {['replicaset_uuid'] = replicaset}
+cfg = {sharding = {['replicaset_uuid'] = replicaset}}
 ---
 ...
 -- URI is not string.
@@ -108,37 +113,37 @@ replicaset.replicas['id2'] = nil
 replicaset2 = {replicas = {['id2'] = {uri = 'uri:uri@uri', name = 'storage2', master = true}}}
 ---
 ...
-cfg['rsid2'] = replicaset2
+cfg.sharding['rsid2'] = replicaset2
 ---
 ...
 check(cfg)
 ---
 - Duplicate uri uri:uri@uri
 ...
-cfg['rsid2'] = nil
+cfg.sharding['rsid2'] = nil
 ---
 ...
 -- UUID duplicate in different replicasets.
 replicaset2 = {replicas = {['id3'] = {uri = 'uri:uri@uri2', name = 'storage', master = true}}}
 ---
 ...
-cfg['rsid2'] = replicaset2
+cfg.sharding['rsid2'] = replicaset2
 ---
 ...
 replicaset3 = {replicas = {['id3'] = {uri = 'uri:uri@uri3', name = 'storage', master = true}}}
 ---
 ...
-cfg['rsid3'] = replicaset3
+cfg.sharding['rsid3'] = replicaset3
 ---
 ...
 check(cfg)
 ---
 - Duplicate uuid id3
 ...
-cfg['rsid2'] = nil
+cfg.sharding['rsid2'] = nil
 ---
 ...
-cfg['rsid3'] = nil
+cfg.sharding['rsid3'] = nil
 ---
 ...
 --
@@ -172,6 +177,63 @@ lcfg.check(cfg)
 ---
 ...
 replicaset.weight = 100000
+---
+...
+lcfg.check(cfg)
+---
+...
+--
+-- gh-12: zones, zone weight and failover by weight.
+--
+cfg.weights = 100
+---
+...
+check(cfg)
+---
+- weights must be map of maps
+...
+cfg.weights = {[{1}] = 200}
+---
+...
+check(cfg)
+---
+- zone identifier must be either string or number
+...
+weights = {zone1 = 100}
+---
+...
+cfg.weights = weights
+---
+...
+check(cfg)
+---
+- zone must be map of relative weights of other zones
+...
+weights.zone1 = {[{1}] = 100}
+---
+...
+check(cfg)
+---
+- zone identifier must be either string or number
+...
+weights.zone1 = {zone2 = '100'}
+---
+...
+check(cfg)
+---
+- weight must be either nil or non-negative number
+...
+weights.zone1 = {zone1 = 100}
+---
+...
+check(cfg)
+---
+- weight of zone self must be either nil or 0
+...
+weights[2] = {zone1 = 100}
+---
+...
+weights.zone1 = {[2] = 100}
 ---
 ...
 lcfg.check(cfg)

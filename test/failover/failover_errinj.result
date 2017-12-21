@@ -1,0 +1,84 @@
+test_run = require('test_run').new()
+---
+...
+REPLICASET_1 = { 'box_1_a', 'box_1_b', 'box_1_c', 'box_1_d' }
+---
+...
+REPLICASET_2 = { 'box_2_a', 'box_2_b', 'box_2_c' }
+---
+...
+REPLICASET_3 = { 'box_3_a', 'box_3_b' }
+---
+...
+test_run:create_cluster(REPLICASET_1, 'failover')
+---
+...
+test_run:create_cluster(REPLICASET_2, 'failover')
+---
+...
+test_run:create_cluster(REPLICASET_3, 'failover')
+---
+...
+test_run:wait_fullmesh(REPLICASET_1)
+---
+...
+test_run:wait_fullmesh(REPLICASET_2)
+---
+...
+test_run:wait_fullmesh(REPLICASET_3)
+---
+...
+test_run:cmd('create server router_1 with script="failover/router_1.lua"')
+---
+- true
+...
+test_run:cmd('start server router_1')
+---
+- true
+...
+test_run:switch('router_1')
+---
+- true
+...
+vshard.router.cfg(cfg)
+---
+...
+-- Check that already run failover step is restarted on
+-- configuration change (if some replicasets are removed from
+-- config).
+rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
+---
+...
+while not rs1.failover or not rs1.failover.conn:is_connected() do fiber.sleep(0.1) end
+---
+...
+vshard.router.internal.errinj.ERRINJ_FAILOVER_CHANGE_CFG = true
+---
+...
+wait_state('Configuration has changed, restart ')
+---
+...
+wait_state('All failover connections are ok')
+---
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:cmd('stop server router_1')
+---
+- true
+...
+test_run:cmd('cleanup server router_1')
+---
+- true
+...
+test_run:drop_cluster(REPLICASET_1)
+---
+...
+test_run:drop_cluster(REPLICASET_2)
+---
+...
+test_run:drop_cluster(REPLICASET_3)
+---
+...

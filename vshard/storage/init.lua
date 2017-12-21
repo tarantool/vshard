@@ -352,8 +352,8 @@ local function bucket_send(bucket_id, destination)
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
     local status, err =
-        replicaset:call('vshard.storage.bucket_recv',
-                        {bucket_id, box.info.cluster.uuid, data})
+        replicaset:callrw('vshard.storage.bucket_recv',
+                           {bucket_id, box.info.cluster.uuid, data})
     if not status then
         -- Rollback bucket state.
         box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
@@ -822,7 +822,7 @@ local function rebalancer_download_states()
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(self.replicasets) do
         local bucket_active_count =
-            replicaset:call('vshard.storage.rebalancer_request_state', {})
+            replicaset:callrw('vshard.storage.rebalancer_request_state', {})
         if bucket_active_count == nil then
             return
         end
@@ -880,7 +880,8 @@ local function rebalancer_f()
         for src_uuid, src_routes in pairs(routes) do
             local rs = self.replicasets[src_uuid]
             local status, err =
-                rs:call('vshard.storage.rebalancer_apply_routes', {src_routes})
+                rs:callrw('vshard.storage.rebalancer_apply_routes',
+                          {src_routes})
             if not status then
                 log.error('Error during routes appying on "%s": %s. '..
                           'Try rebalance later', src_uuid, err)
@@ -975,7 +976,10 @@ local function storage_cfg(cfg, this_replica_uuid)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
-    lcfg.check(cfg.sharding)
+    lcfg.check(cfg)
+    if cfg.weights or cfg.zone then
+        error('Weights and zone are not allowed for storage configuration')
+    end
     if self.replicasets ~= nil then
         log.info("Starting reconfiguration of replica %s", this_replica_uuid)
     else
@@ -987,8 +991,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg.sharding,
-                                                 self.replicasets or {}, false)
+    local new_replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
     local min_master_uuid
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
