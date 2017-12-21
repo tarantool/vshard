@@ -112,6 +112,47 @@ end
 -- Buckets
 --------------------------------------------------------------------------------
 
+--
+-- Check if @a bucket is garbage. It is true for
+-- * sent buckets;
+-- * buckets explicitly marked to be a garbage.
+--
+local function bucket_is_garbage(bucket)
+    return bucket.status == consts.BUCKET.SENT or
+           bucket.status == consts.BUCKET.GARBAGE
+end
+
+--
+-- Check that an action of a specified mode can be applied to a
+-- bucket.
+-- @param bucket Bucket tuple from _bucket. Can be nil, if not
+--        found.
+-- @param bucket_id Bucket identifier. Used in error object, if
+--        @a bucket is nil.
+-- @param mode 'Read' or 'write' mode.
+--
+-- @retval true Bucket can accept an action of a specified mode.
+-- @retval nil, error object Bucket can not accept the action.
+--
+local function bucket_check_mode(bucket, bucket_id, mode)
+    local errcode = nil
+    if bucket == nil or bucket_is_garbage(bucket) then
+        errcode = consts.WRONG_BUCKET
+    elseif bucket.status == consts.BUCKET.ACTIVE or
+       (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
+        return true
+    else
+        assert(bucket.status == consts.BUCKET.SENDING or
+               bucket.status == consts.BUCKET.RECEIVING)
+        errcode = codes.TRANSFER_IS_IN_PROGRESS
+    end
+    return nil, {
+        code = errcode,
+        bucket_id = bucket_id,
+        destination = bucket and bucket.destination or nil
+    }
+end
+
 local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
@@ -124,28 +165,7 @@ local function bucket_check_state(bucket_id, mode)
     end
 
     local bucket = box.space._bucket:get({bucket_id})
-    if bucket == nil then
-        return nil, {
-            code = codes.WRONG_BUCKET,
-            bucket_id = bucket_id
-        }
-    end
-
-    if bucket.status == consts.BUCKET.ACTIVE or
-       (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
-        return true
-    end
-
-    assert(bucket.status == consts.BUCKET.SENDING or
-           bucket.status == consts.BUCKET.SENT or
-           bucket.status == consts.BUCKET.RECEIVING or
-           bucket.status == consts.BUCKET.GARBAGE)
-
-    return nil, {
-        code = codes.WRONG_BUCKET,
-        bucket_id = bucket_id,
-        destination = bucket.destination
-    }
+    return bucket_check_mode(bucket, bucket_id, mode)
 end
 
 --
@@ -153,22 +173,19 @@ end
 --
 local function bucket_stat(bucket_id)
     if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_force_create(bucket_id)')
+        error('Usage: bucket_stat(bucket_id)')
     end
-
     local bucket = box.space._bucket:get({bucket_id})
-    if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return nil, {
-            code = codes.WRONG_BUCKET,
-            bucket_id = bucket_id,
+
+    if not bucket or bucket_is_garbage(bucket) then
+        return nil, {code = codes.WRONG_BUCKET, bucket_id = bucket_id}
+    else
+        return {
+            id = bucket.id;
+            status = bucket.status;
+            destination = bucket.destination;
         }
     end
-
-    return {
-        id = bucket.id;
-        status = bucket.status;
-        destination = bucket.destination;
-    }
 end
 
 --
@@ -279,13 +296,10 @@ local function bucket_collect(bucket_id)
     end
 
     local bucket = box.space._bucket:get({bucket_id})
-    if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return nil, {
-            code = codes.WRONG_BUCKET,
-            bucket_id = bucket_id
-        }
+    local status, err = bucket_check_mode(bucket, bucket_id, 'read')
+    if not status then
+        return err
     end
-
     return bucket_collect_internal(bucket_id)
 end
 
@@ -330,11 +344,9 @@ local function bucket_send(bucket_id, destination)
     end
 
     local bucket = box.space._bucket:get({bucket_id})
-    if bucket == nil or bucket.status ~= consts.BUCKET.ACTIVE then
-        return nil, {
-            code = codes.WRONG_BUCKET,
-            bucket_id = bucket_id
-        }
+    local status, err = bucket_check_mode(bucket, bucket_id, 'write')
+    if not status then
+        return err
     end
     local replicaset = self.replicasets[destination]
     if replicaset == nil then
@@ -352,11 +364,7 @@ local function bucket_send(bucket_id, destination)
         }
     end
 
-    local data, err = bucket_collect_internal(bucket_id)
-    if data == nil then
-        return nil, err
-    end
-
+    local data = bucket_collect_internal(bucket_id)
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
     local status, err =
@@ -376,16 +384,6 @@ end
 --------------------------------------------------------------------------------
 -- Garbage collector
 --------------------------------------------------------------------------------
---
--- Check if @a bucket is garbage. It is true for
--- * sent buckets;
--- * buckets explicitly marked to be a garbage.
---
-local function bucket_is_garbage(bucket)
-    return bucket.status == consts.BUCKET.SENT or
-           bucket.status == consts.BUCKET.GARBAGE
-end
-
 --
 -- Find a bucket which has data in a space, but is not stored
 -- in _bucket space or is garbage bucket.

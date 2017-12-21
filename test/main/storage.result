@@ -464,8 +464,7 @@ vshard.storage.call(1, 'read', 'customer_lookup', {1})
 vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 ---
 - null
-- code: 2
-  bucket_id: 100500
+- bucket_id: 100500
 ...
 --
 -- Bucket transfer

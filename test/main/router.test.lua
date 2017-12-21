@@ -22,16 +22,45 @@ _ = test_run:cmd("switch router_1")
 -- gh-46: Ensure a cfg is not destroyed after router.cfg().
 cfg.sharding ~= nil
 
+util = require('util')
+
 -- gh-24: log all connnect/disconnect events.
 test_run:grep_log('router_1', 'connected to ')
 
 --
 -- Initial distribution
 --
+util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 vshard.router.bootstrap()
+--
+-- gh-48: more precise error messages about bucket unavailability.
+--
+util.check_error(vshard.router.call, vshard.consts.BUCKET_COUNT + 1, 'read', 'echo', {123})
+util.check_error(vshard.router.call, -1, 'read', 'echo', {123})
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
+
+test_run:cmd('switch storage_2_a')
+box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING})
+test_run:cmd('switch storage_1_a')
+box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING})
+test_run:cmd('switch router_1')
+-- Ok to read sending bucket.
+vshard.router.call(1, 'read', 'echo', {123})
+-- Not ok to write sending bucket.
+util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
+
+test_run:cmd('switch storage_2_a')
+box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
+test_run:cmd('switch storage_1_a')
+box.space._bucket:delete({1})
+test_run:cmd('switch router_1')
+
+-- Check unavailability of master of a replicaset.
+test_run:cmd('stop server storage_2_a')
+util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
+test_run:cmd('start server storage_2_a')
 
 --
 -- Function call
@@ -81,7 +110,6 @@ vshard.router.info().replicasets[2].master.state
 vshard.router.call(1, 'write', 'echo', { 'hello world' })
 
 -- Shuffle masters
-util = require('util')
 util.shuffle_masters(cfg)
 
 -- Reconfigure storages

@@ -111,7 +111,8 @@ local function replicaset_call(replicaset, func, args)
         return nil, err
     end
     return replicaset_call_tail(replicaset, func,
-                                pcall(conn.call, conn, func, args))
+                                pcall(conn.call, conn, func, args,
+                                      {timeout = consts.CALL_TIMEOUT}))
 end
 
 --

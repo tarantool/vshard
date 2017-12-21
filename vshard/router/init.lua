@@ -31,19 +31,44 @@ local function bucket_discovery(bucket_id)
     end
 
     log.info("Discovering bucket %d", bucket_id)
+    local unreachable_uuid = nil
+    local is_transfer_in_progress = false
     for _, replicaset in pairs(self.replicasets) do
-        local found, err = replicaset:call('vshard.storage.bucket_stat',
-                                           {bucket_id})
-        if found then
-            log.info("Discovered bucket %d on %s", bucket_id, replicaset)
-            self.route_map[bucket_id] = replicaset
-            return replicaset
+        local stat, err = replicaset:call('vshard.storage.bucket_stat',
+                                          {bucket_id})
+        if stat then
+            if stat.status == consts.BUCKET.ACTIVE or
+               stat.status == consts.BUCKET.SENDING then
+                log.info("Discovered bucket %d on %s", bucket_id,
+                         replicaset.uuid)
+                self.route_map[bucket_id] = replicaset
+                return replicaset
+            elseif stat.status == consts.BUCKET.RECEIVING then
+                is_transfer_in_progress = true
+            end
+        elseif err.code ~= codes.WRONG_BUCKET then
+            unreachable_uuid = replicaset.uuid
         end
+    end
+    local errcode = nil
+    if unreachable_uuid then
+        errcode = codes.REPLICASET_IS_UNREACHABLE
+    elseif is_transfer_in_progress then
+        errcode = codes.TRANSFER_IS_IN_PROGRESS
+    else
+        -- All replicasets were scanned, but a bucket was not
+        -- found anywhere, so most likely it does not exist. It
+        -- can be wrong, if rebalancing is in progress, and a
+        -- bucket was found to be RECEIVING on one replicaset, and
+        -- was not found on other replicasets (it was sent during
+        -- discovery).
+        errcode = codes.NO_ROUTE_TO_BUCKET
     end
 
     return nil, {
-        code = codes.WRONG_BUCKET,
+        code = errcode,
         bucket_id = bucket_id,
+        unreachable_uuid = unreachable_uuid,
     }
 end
 
@@ -70,6 +95,10 @@ end
 local function router_call(bucket_id, mode, func, args)
     local replicaset, err
     local tstart = lfiber.time()
+    local is_transfer_in_progress = false
+    if bucket_id > consts.BUCKET_COUNT or bucket_id < 0 then
+        error('Bucket is unreachable: bucket id is out of range')
+    end
     repeat
         replicaset, err = bucket_resolve(bucket_id)
         if replicaset then
@@ -79,8 +108,9 @@ local function router_call(bucket_id, mode, func, args)
             if status then
                 return info
             end
-            local err = info
-            if err.code == codes.WRONG_BUCKET then
+            err = info
+            if err.code == codes.WRONG_BUCKET or
+               err.code == codes.TRANSFER_IS_IN_PROGRESS then
                 self.route_map[bucket_id] = nil
             elseif err.code == codes.NON_MASTER then
                 log.warn("Replica %s is not master for replicaset %s anymore,"..
@@ -95,7 +125,20 @@ local function router_call(bucket_id, mode, func, args)
             end
         end
     until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
-    return box.error(box.error.TIMEOUT)
+    if err then
+        if err.code == codes.TRANSFER_IS_IN_PROGRESS then
+            error('Bucket transfer is in progress')
+        elseif err.code == codes.NO_ROUTE_TO_BUCKET then
+            error('Bucket is unreachable: no route to bucket')
+        else
+            assert(err.code == codes.REPLICASET_IS_UNREACHABLE)
+            error(string.format('Bucket is unreachable: replicaset\'s "%s" '..
+                                'master is unreachable',
+                                err.unreachable_uuid))
+        end
+    else
+        return box.error(box.error.TIMEOUT)
+    end
 end
 
 --------------------------------------------------------------------------------
