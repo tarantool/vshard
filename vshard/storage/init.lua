@@ -1081,7 +1081,7 @@ end
 -- Monitoring
 --------------------------------------------------------------------------------
 
-local function storage_bucket_info()
+local function storage_buckets_info()
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
 
     for _, bucket in box.space._bucket:pairs() do
@@ -1096,21 +1096,23 @@ local function storage_bucket_info()
     return ibuckets
 end
 
-local function state_max(old_state, new_state)
-    return old_state > new_state and old_state or new_state
+local function compact(t)
+    return setmetatable(t, { __serialize = 'seq' })
 end
 
-local function storage_state()
+local function storage_info()
     local state = {
         alerts = {},
         replication = {},
         bucket = {},
-        level = consts.STATE.GREEN,
+        status = 0,
     }
     if self.this_replicaset.master == nil then
-        table.insert(state.alerts, {'MASTER_NOT_CONFIGURED',
-                                    'Master isn\'t configured'})
-        state.level = state_max(state.level, consts.STATE.ORANGE)
+        table.insert(state.alerts, compact({
+            'MISSING_MASTER',
+            'Master is not configured for this replicaset.'
+        }))
+        state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
     if self.this_replicaset.master ~= self.this_replica then
         for id, replica in pairs(box.info.replication) do
@@ -1120,34 +1122,39 @@ local function storage_state()
             state.replication.status = replica.upstream.status
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
-                table.insert(state.alerts,
-                             {'MASTER_UNREACHABLE',
-                              'Master is unreachable: ' .. replica.upstream.status})
+                table.insert(state.alerts, compact({
+                    'UNREACHABLE_MASTER',
+                    'Master is unreachable: '..replica.upstream.status
+                }))
                 if replica.upstream.idle > consts.REPLICATION_THRESHOLD_FAIL then
-                    state.level = state_max(state.level, consts.STATE.RED)
+                    state.status = math.max(state.status, consts.STATUS.RED)
                 elseif replica.upstream.idle > consts.REPLICATION_THRESHOLD_HARD then
-                    state.level = state_max(state.level, consts.STATE.ORANGE)
+                    state.status = math.max(state.status, consts.STATUS.ORANGE)
                 else
-                    state.level = state_max(state.level, consts.STATE.YELLOW)
+                    state.status = math.max(state.status, consts.STATUS.YELLOW)
                 end
                 goto cont
             end
 
             state.replication.lag = replica.upstream.lag
             if state.replication.lag >= consts.REPLICATION_THRESHOLD_FAIL then
-                table.insert(state.alerts, {'HIGH_REPLICATION_LAG',
-                                            'Replica is not sync'})
-                state.level = state_max(state.level, consts.STATE.RED)
+                table.insert(state.alerts, compact({
+                    'OUT_OF_SYNC',
+                    'Replica is out of sync.'
+                }))
+                state.status = math.max(state.status, consts.STATUS.RED)
             elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_HARD then
-                table.insert(state.alerts,
-                             {'HIGH_REPLICATION_LAG',
-                              'High replication lag: ' .. tostring(state.replication.lag)})
-                state.level = state_max(state.level, consts.STATE.ORANGE)
+                table.insert(state.alerts, compact({
+                    'HIGH_REPLICATION_LAG',
+                    'High replication lag: ' .. tostring(state.replication.lag)
+                }))
+                state.status = math.max(state.status, consts.STATUS.ORANGE)
             elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_SOFT then
-                table.insert(state.alerts,
-                             {'HIGH_REPLICATION_LAG',
-                              'High replication lag: ' .. tostring(state.replication.lag)})
-                state.level = state_max(state.level, consts.STATE.YELLOW)
+                table.insert(state.alerts, compact({
+                    'HIGH_REPLICATION_LAG',
+                    'High replication lag: ' .. tostring(state.replication.lag)
+                }))
+                state.status = math.max(state.status, consts.STATUS.YELLOW)
             end
             ::cont::
         end
@@ -1157,19 +1164,28 @@ local function storage_state()
         for id, replica in pairs(box.info.replication) do
             if replica.uuid ~= self.this_replica.uuid then
                 if replica.downstream == nil then
-                    table.insert(state.alerts, {'REPLICA_IS_DOWN', 'Replica isn\'t active ' .. replica.uuid})
-                    state.level = state_max(state.level, consts.STATE.YELLOW)
+                    table.insert(state.alerts, compact({
+                        'REPLICA_IS_DOWN',
+                        string.format('Replica %s isn\'t active ', replica.uuid)
+                    }))
+                    state.status = math.max(state.status, consts.STATUS.YELLOW)
                 else
                     redundancy = redundancy + 1
                 end
             end
         end
         if redundancy == 0 then
-            table.insert(state.alerts, {'NO_REDUNDANCY', 'There is no active replicas'})
-            state.level = state_max(state.level, consts.STATE.RED)
+            table.insert(state.alerts, compact({
+                'UNREACHABLE_REPLICASET',
+                'There is no active replicas.'
+            }))
+            state.status = math.max(state.status, consts.STATUS.RED)
         elseif redundancy == 1 then
-            table.insert(state.alerts, {'LOW_REDUNDANCY', 'Only one replica is active'})
-            state.level = state_max(state.level, consts.STATE.ORANGE)
+            table.insert(state.alerts, compact({
+                'LOW_REDUNDANCY',
+                'Only one replica is active.'
+            }))
+            state.status = math.max(state.status, consts.STATUS.ORANGE)
         end
     end
 
@@ -1183,16 +1199,16 @@ local function storage_state()
         --Some buckets are receiving and some buckets are sending at same time,
         --this may be a balancer issue, alert it.
         --
-        table.insert(state.alerts, {'BAD_BALANCING', 'Sending and receiving buckets at same time, check balancer'})
-        state.level = state_max(state.level, consts.STATE.YELLOW)
+        table.insert(state.alerts, compact({
+            'INVALID_REBALANCING',
+            'Sending and receiving buckets at same time.'
+        }))
+        state.status = math.max(state.status, consts.STATUS.YELLOW)
     end
-    return state
-end
 
-local function storage_info()
-    local ireplicaset = {}
+    local ireplicasets = {}
     for uuid, replicaset in pairs(self.replicasets) do
-        ireplicaset[uuid] = {
+        ireplicasets[uuid] = {
             uuid = uuid;
             master = {
                 uri = replicaset.master.uri;
@@ -1202,10 +1218,8 @@ local function storage_info()
             };
         };
     end
-    return {
-        replicasets = ireplicaset;
-        state = storage_state();
-    }
+    state.replicasets = ireplicasets
+    return state
 end
 
 --------------------------------------------------------------------------------
@@ -1237,6 +1251,6 @@ return {
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;
-    bucket_info = storage_bucket_info;
+    buckets_info = storage_buckets_info;
     internal = self;
 }

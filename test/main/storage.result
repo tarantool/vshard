@@ -107,7 +107,7 @@ vshard.storage.internal.sync()
 ---
 - true
 ...
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 ---
 - {}
 ...
@@ -115,7 +115,7 @@ vshard.storage.bucket_force_create(1)
 ---
 - true
 ...
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 ---
 - 1:
     status: active
@@ -129,7 +129,7 @@ vshard.storage.bucket_force_drop(1)
 ---
 - true
 ...
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 ---
 - {}
 ...
@@ -169,18 +169,17 @@ vshard.storage.info()
       uuid: <replicaset_1>
       master:
         uri: storage:storage@127.0.0.1:3301
-  state:
-    level: 0
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: follow
-      lag: <lag>
-    alerts: []
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 0
+  replication:
+    status: follow
+    lag: <lag>
+  alerts: []
 ...
 test_run:cmd("stop server storage_2_a")
 ---
@@ -200,20 +199,18 @@ vshard.storage.info()
       uuid: <replicaset_1>
       master:
         uri: storage:storage@127.0.0.1:3301
-  state:
-    level: 1
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: disconnected
-      idle: <idle>
-    alerts:
-    - - MASTER_UNREACHABLE
-      - 'Master is unreachable: disconnected'
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 1
+  replication:
+    status: disconnected
+    idle: <idle>
+  alerts:
+  - ['UNREACHABLE_MASTER', 'Master is unreachable: disconnected']
 ...
 test_run:cmd("start server storage_2_a")
 ---
@@ -238,19 +235,17 @@ vshard.storage.info()
         state: active
         uri: storage:storage@127.0.0.1:3301
         uuid: <storage_1_a>
-  state:
-    level: 2
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: master
-    alerts:
-    - - LOW_REDUNDANCY
-      - Only one replica is active
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 2
+  replication:
+    status: master
+  alerts:
+  - ['LOW_REDUNDANCY', 'Only one replica is active.']
 ...
 test_run:cmd("stop server storage_2_b")
 ---
@@ -271,21 +266,18 @@ vshard.storage.info()
         state: active
         uri: storage:storage@127.0.0.1:3301
         uuid: <storage_1_a>
-  state:
-    level: 3
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: master
-    alerts:
-    - - REPLICA_IS_DOWN
-      - Replica isn't active <storage_2_b>
-    - - NO_REDUNDANCY
-      - There is no active replicas
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 3
+  replication:
+    status: master
+  alerts:
+  - ['REPLICA_IS_DOWN', 'Replica <storage_2_b> isn''t active ']
+  - ['UNREACHABLE_REPLICASET', 'There is no active replicas.']
 ...
 test_run:cmd("start server storage_2_b")
 ---
@@ -306,18 +298,17 @@ vshard.storage.info()
       uuid: <replicaset_1>
       master:
         uri: storage:storage@127.0.0.1:3301
-  state:
-    level: 0
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: follow
-      lag: <lag>
-    alerts: []
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 0
+  replication:
+    status: follow
+    lag: <lag>
+  alerts: []
 ...
 test_run:cmd("switch storage_2_a")
 ---
@@ -338,19 +329,17 @@ vshard.storage.info()
         state: active
         uri: storage:storage@127.0.0.1:3301
         uuid: <storage_1_a>
-  state:
-    level: 2
-    bucket:
-      receiving: 0
-      active: 2
-      garbage: 0
-      count: 2
-      sending: 0
-    replication:
-      status: master
-    alerts:
-    - - LOW_REDUNDANCY
-      - Only one replica is active
+  bucket:
+    receiving: 0
+    active: 2
+    garbage: 0
+    count: 2
+    sending: 0
+  status: 2
+  replication:
+    status: master
+  alerts:
+  - ['LOW_REDUNDANCY', 'Only one replica is active.']
 ...
 _ = test_run:cmd("switch storage_1_a")
 ---
@@ -488,7 +477,7 @@ vshard.storage.bucket_send(1, replicaset2_uuid)
 _ = test_run:cmd("switch storage_2_a")
 ---
 ...
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 ---
 - 1:
     status: active
@@ -503,7 +492,7 @@ vshard.storage.bucket_info()
 _ = test_run:cmd("switch storage_1_a")
 ---
 ...
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 ---
 - 1:
     status: sent

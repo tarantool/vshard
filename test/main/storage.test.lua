@@ -36,13 +36,13 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 
 vshard.storage.internal.sync()
 
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1)
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1) -- error
 vshard.storage.bucket_force_drop(1)
 
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_force_create(2)
 _ = test_run:cmd("switch storage_2_a")
@@ -97,9 +97,9 @@ vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 --
 vshard.storage.bucket_send(1, replicaset2_uuid)
 _ = test_run:cmd("switch storage_2_a")
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 _ = test_run:cmd("switch storage_1_a")
-vshard.storage.bucket_info()
+vshard.storage.buckets_info()
 
 _ = test_run:cmd("switch default")
 

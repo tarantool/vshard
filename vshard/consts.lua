@@ -8,12 +8,13 @@ return {
         GARBAGE = 'garbage',
     },
 
-    STATE = {
+    STATUS = {
         GREEN = 0,
         YELLOW = 1,
         ORANGE = 2,
         RED = 3,
     },
+
     REPLICATION_THRESHOLD_SOFT = 1,
     REPLICATION_THRESHOLD_HARD = 5,
     REPLICATION_THRESHOLD_FAIL = 10,
