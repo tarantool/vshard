@@ -1,0 +1,5 @@
+tarantool-vshard (0.1.0-1) unstable; urgency=medium
+
+  * Initial release.
+
+ -- Roman Tsisyk <roman@tarantool.org>  Fri, 22 Dec 2017 13:00:00 +0300

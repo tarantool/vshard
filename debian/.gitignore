@@ -1,0 +1,5 @@
+tarantool-shard/
+files
+stamp-*
+*.substvars
+*.log

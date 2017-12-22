@@ -1,0 +1,77 @@
+sudo: false
+language: C
+services:
+  - docker
+
+cache:
+    directories:
+      - $HOME/.cache
+
+git:
+    depth: 100500
+
+env:
+    global:
+      - PRODUCT=tarantool-vshard
+    matrix:
+      - OS=el DIST=6
+      - OS=el DIST=7
+      - OS=fedora DIST=24
+      - OS=fedora DIST=25
+      - OS=ubuntu DIST=precise
+      - OS=ubuntu DIST=trusty
+      - OS=ubuntu DIST=xenial
+      - OS=debian DIST=wheezy
+      - OS=debian DIST=jessie
+      - OS=debian DIST=stretch
+
+#matrix:
+#    allow_failures:
+#      - env: OS=el DIST=6
+#      - env: OS=el DIST=7
+#      - env: OS=fedora DIST=24
+#      - env: OS=fedora DIST=25
+#      - env: OS=ubuntu DIST=precise
+#      - env: OS=ubuntu DIST=trusty
+#      - env: OS=ubuntu DIST=xenial
+#      - env: OS=debian DIST=wheezy
+#      - env: OS=debian DIST=jessie
+#      - env: OS=debian DIST=stretch
+
+script:
+  - git describe --long
+  - git clone https://github.com/packpack/packpack.git packpack
+  - packpack/packpack
+
+before_deploy:
+  - ls -l build/
+
+deploy:
+  # Deploy packages to PackageCloud
+  - provider: packagecloud
+    username: tarantool
+    repository: "1_7"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      branch: master
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+  - provider: packagecloud
+    username: tarantool
+    repository: "1_8"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      branch: master
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+
+notifications:
+  email:
+    recipients:
+      - build@tarantool.org
+    on_success: change
+    on_failure: always
