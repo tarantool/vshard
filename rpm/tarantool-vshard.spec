@@ -1,11 +1,11 @@
-Name: tarantool-shard
+Name: tarantool-vshard
 Version: 0.1.0
 Release: 1%{?dist}
 Summary: The new generation of sharding based on virtual buckets
 Group: Applications/Databases
 License: BSD
 URL: https://github.com/tarantool/vshard
-Source0: https://github.com/tarantool/vshard/archive/%{version}/shard-%{version}.tar.gz
+Source0: https://github.com/tarantool/vshard/archive/%{version}/vshard-%{version}.tar.gz
 BuildArch: noarch
 BuildRequires: cmake >= 2.8
 BuildRequires: gcc >= 4.5
