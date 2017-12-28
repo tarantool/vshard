@@ -82,16 +82,15 @@ end
 --
 -- Helper for replicaset_call
 --
-local function replicaset_call_tail(replicaset, pstatus, status, ...)
+local function replicaset_call_tail(replicaset, func, pstatus, status, ...)
     if not pstatus then
         log.error("Exception during calling '%s' on '%s': %s", func,
                   replicaset.master.uuid, status)
         return nil, {
-            status = codes.BOX_ERROR,
+            code = codes.BOX_ERROR,
             error = status
         }
     end
-    log.info("xxx: %s", require('json').encode({...}))
     if status == nil then
         status = nil -- Workaround for `not msgpack.NULL` magic.
     end
@@ -111,7 +110,8 @@ local function replicaset_call(replicaset, func, args)
     if conn == nil then
         return nil, err
     end
-    return replicaset_call_tail(replicaset, pcall(conn.call, conn, func, args))
+    return replicaset_call_tail(replicaset, func,
+                                pcall(conn.call, conn, func, args))
 end
 
 --
