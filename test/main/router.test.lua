@@ -65,22 +65,21 @@ test_run:cmd('start server storage_2_a')
 --
 -- gh-26: API to get netbox by bucket identifier.
 --
-util = require('util')
-util.check_error(vshard.router.bucket_route, vshard.consts.BUCKET_COUNT + 100)
-util.check_error(vshard.router.bucket_route, 'asdfg')
-util.check_error(vshard.router.bucket_route)
-conn = vshard.router.bucket_route(1)
+vshard.router.route(vshard.consts.BUCKET_COUNT + 100)
+vshard.router.route('asdfg')
+vshard.router.route()
+conn = vshard.router.route(1)
 conn.state
 -- Test missing master.
 rs_uuid = 'ac522f65-aa94-4134-9f64-51ee384f1a54'
 rs = vshard.router.internal.replicasets[rs_uuid]
 master = rs.master
 rs.master = nil
-util.check_error(vshard.router.bucket_route, 1)
+vshard.router.route(1)
 rs.master = master
 -- Test reconnect on bucker_route().
 rs:disconnect()
-conn = vshard.router.bucket_route(1)
+conn = vshard.router.route(1)
 conn:wait_connected()
 conn.state
 

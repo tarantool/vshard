@@ -149,20 +149,19 @@ end
 -- @param bucket_id Bucket identifier.
 -- @retval Netbox connection.
 --
-local function bucket_route(bucket_id)
+local function router_route(bucket_id)
     if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_route(bucket_id)')
+        error('Usage: router.route(bucket_id)')
     end
-    local result = bucket_resolve(bucket_id)
-    if result == nil then
-        error('Wrong bucket')
-    else
-        local conn, err = result:connect()
-        if conn then
-            return conn
-        end
-        error(string.format('Error during connecting: code = %d', err.code))
+    local replicaset, err = bucket_resolve(bucket_id)
+    if replicaset == nil then
+        return nil, err
     end
+    local conn, err = replicaset:connect()
+    if conn == nil then
+        return nil, err
+    end
+    return conn
 end
 
 --------------------------------------------------------------------------------
@@ -248,7 +247,7 @@ return {
     cfg = router_cfg;
     info = router_info;
     call = router_call;
-    bucket_route = bucket_route;
+    route = router_route;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
     internal = self;

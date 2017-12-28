@@ -219,6 +219,10 @@ Perform initial distribution of buckets across replicasets.
 
 Call function `func` on a shard which serves `bucket_id`,
 
+#### `netbox, err = vshard.router.route(bucket_id)`
+
+Return netbox object for specified `bucket_id`.
+
 **Parameters:**
 
 * `bucket_id` - bucket identifier
