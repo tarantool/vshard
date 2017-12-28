@@ -168,22 +168,21 @@ test_run:cmd('start server storage_2_a')
 --
 -- gh-26: API to get netbox by bucket identifier.
 --
-util = require('util')
+vshard.router.route(vshard.consts.BUCKET_COUNT + 100)
 ---
+- null
+- bucket_id: 3100
+  code: 10
 ...
-util.check_error(vshard.router.bucket_route, vshard.consts.BUCKET_COUNT + 100)
+util.check_error(vshard.router.route, 'asdfg')
 ---
-- Wrong bucket
+- 'Usage: router.route(bucket_id)'
 ...
-util.check_error(vshard.router.bucket_route, 'asdfg')
+util.check_error(vshard.router.route)
 ---
-- 'Usage: bucket_route(bucket_id)'
+- 'Usage: router.route(bucket_id)'
 ...
-util.check_error(vshard.router.bucket_route)
----
-- 'Usage: bucket_route(bucket_id)'
-...
-conn = vshard.router.bucket_route(1)
+conn = vshard.router.route(1)
 ---
 ...
 conn.state
@@ -203,9 +202,11 @@ master = rs.master
 rs.master = nil
 ---
 ...
-util.check_error(vshard.router.bucket_route, 1)
+vshard.router.route(1)
 ---
-- 'Error during connecting: code = 7'
+- null
+- code: 7
+  replicaset_uuid: <replicaset_2>
 ...
 rs.master = master
 ---
@@ -215,7 +216,7 @@ rs:disconnect()
 ---
 - true
 ...
-conn = vshard.router.bucket_route(1)
+conn = vshard.router.route(1)
 ---
 ...
 conn:wait_connected()

@@ -66,8 +66,8 @@ test_run:cmd('start server storage_2_a')
 -- gh-26: API to get netbox by bucket identifier.
 --
 vshard.router.route(vshard.consts.BUCKET_COUNT + 100)
-vshard.router.route('asdfg')
-vshard.router.route()
+util.check_error(vshard.router.route, 'asdfg')
+util.check_error(vshard.router.route)
 conn = vshard.router.route(1)
 conn.state
 -- Test missing master.
