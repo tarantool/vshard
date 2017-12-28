@@ -125,47 +125,36 @@ end
 --
 -- Check that an action of a specified mode can be applied to a
 -- bucket.
--- @param bucket Bucket tuple from _bucket. Can be nil, if not
---        found.
--- @param bucket_id Bucket identifier. Used in error object, if
---        @a bucket is nil.
+-- @param bucket_id Bucket identifier.
 -- @param mode 'Read' or 'write' mode.
 --
 -- @retval true Bucket can accept an action of a specified mode.
 -- @retval nil, error object Bucket can not accept the action.
 --
-local function bucket_check_mode(bucket, bucket_id, mode)
-    local errcode = nil
-    if bucket == nil or bucket_is_garbage(bucket) then
-        errcode = consts.WRONG_BUCKET
-    elseif bucket.status == consts.BUCKET.ACTIVE or
-       (bucket.status == consts.BUCKET.SENDING and mode == 'read') then
-        return true
-    else
-        assert(bucket.status == consts.BUCKET.SENDING or
-               bucket.status == consts.BUCKET.RECEIVING)
-        errcode = codes.TRANSFER_IS_IN_PROGRESS
-    end
-    return nil, {
-        code = errcode,
-        bucket_id = bucket_id,
-        destination = bucket and bucket.destination or nil
-    }
-end
-
 local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
-    if self.this_replicaset.master ~= self.this_replica then
-        -- Add redirect here
+    local bucket = box.space._bucket:get({bucket_id})
+    local errcode = nil
+    if bucket == nil or bucket_is_garbage(bucket) then
+        errcode = codes.WRONG_BUCKET
+    elseif (bucket.status == consts.BUCKET.SENDING and mode ~= 'read') then
+        errcode = codes.TRANSFER_IS_IN_PROGRESS
+    elseif bucket.status == consts.BUCKET.ACTIVE and mode ~= 'read' and
+           self.this_replicaset.master ~= self.this_replica then
+        errcode = codes.NON_MASTER
+    end
+    if errcode ~= nil then
         return nil, {
-            code = codes.NON_MASTER,
+            code = errcode,
             bucket_id = bucket_id,
+            destination = bucket and bucket.destination or nil
         }
     end
 
-    local bucket = box.space._bucket:get({bucket_id})
-    return bucket_check_mode(bucket, bucket_id, mode)
+    assert(bucket.status == consts.BUCKET.ACTIVE or
+           bucket.status == consts.BUCKET.SENDING and mode == 'read')
+    return true
 end
 
 --
@@ -178,7 +167,10 @@ local function bucket_stat(bucket_id)
     local bucket = box.space._bucket:get({bucket_id})
 
     if not bucket or bucket_is_garbage(bucket) then
-        return nil, {code = codes.WRONG_BUCKET, bucket_id = bucket_id}
+        return nil, {
+            code = codes.WRONG_BUCKET,
+            bucket_id = bucket_id,
+        }
     else
         return {
             id = bucket.id;
@@ -295,8 +287,7 @@ local function bucket_collect(bucket_id)
         error('Usage: bucket_collect(bucket_id)')
     end
 
-    local bucket = box.space._bucket:get({bucket_id})
-    local status, err = bucket_check_mode(bucket, bucket_id, 'read')
+    local status, err = bucket_check_state(bucket_id, 'read')
     if not status then
         return err
     end
@@ -343,8 +334,7 @@ local function bucket_send(bucket_id, destination)
         error('Usage: bucket_send(bucket_id, destination)')
     end
 
-    local bucket = box.space._bucket:get({bucket_id})
-    local status, err = bucket_check_mode(bucket, bucket_id, 'write')
+    local status, err = bucket_check_state(bucket_id, 'write')
     if not status then
         return err
     end
