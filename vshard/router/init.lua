@@ -152,6 +152,14 @@ local function router_route(bucket_id)
     return bucket_resolve(bucket_id)
 end
 
+--
+-- Return map of all replicasets.
+-- @retval See self.replicasets map.
+--
+local function router_route_all()
+    return self.replicasets
+end
+
 --------------------------------------------------------------------------------
 -- Failover
 --------------------------------------------------------------------------------
@@ -395,6 +403,7 @@ return {
     info = router_info;
     call = router_call;
     route = router_route;
+    route_all = router_route_all;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
     internal = self;

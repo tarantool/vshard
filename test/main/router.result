@@ -265,6 +265,23 @@ conn.state
 - active
 ...
 --
+-- gh-44: API to get connections to all replicasets.
+--
+map = vshard.router.route_all()
+---
+...
+uuids = {}
+---
+...
+for uuid, _ in pairs(map) do table.insert(uuids, uuid) end
+---
+...
+uuids
+---
+- - <replicaset_2>
+  - <replicaset_1>
+...
+--
 -- Function call
 --
 bucket_id = 1

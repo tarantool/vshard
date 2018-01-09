@@ -95,6 +95,14 @@ conn:wait_connected()
 conn.state
 
 --
+-- gh-44: API to get connections to all replicasets.
+--
+map = vshard.router.route_all()
+uuids = {}
+for uuid, _ in pairs(map) do table.insert(uuids, uuid) end
+uuids
+
+--
 -- Function call
 --
 
