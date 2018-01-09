@@ -72,7 +72,9 @@ test_run:grep_log('router_1', 'connected to ')
 --
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 ---
-- 'Bucket is unreachable: no route to bucket'
+- null
+- bucket_id: 1
+  code: 10
 ...
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 ---
@@ -129,7 +131,8 @@ vshard.router.call(1, 'read', 'echo', {123})
 -- Not ok to write sending bucket.
 util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 ---
-- Bucket transfer is in progress
+- null
+- {'bucket_id': 1, 'code': 8}
 ...
 test_run:cmd('switch storage_2_a')
 ---
@@ -158,8 +161,10 @@ test_run:cmd('stop server storage_2_a')
 ...
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 ---
-- 'Bucket is unreachable: replicaset''s "<replicaset_2>" master
-  is unreachable'
+- null
+- bucket_id: 1
+  code: 9
+  unreachable_uuid: <replicaset_2>
 ...
 test_run:cmd('start server storage_2_a')
 ---
@@ -283,7 +288,7 @@ space_data = {{1000, {{1}, {2}}}}
 vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
 ---
 - null
-- {'code': 1, 'box_error_args': [36, 1000]}
+- {'code': 1, 'error': 'Space ''1000'' does not exist'}
 ...
 --
 -- Monitoring
@@ -359,7 +364,8 @@ test_run:cmd("switch router_1")
 ...
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
-- Can't found master for <replicaset_2>
+- null
+- {'bucket_id': 1, 'code': 3}
 ...
 -- Reconfigure router and test that the WRITE request does work
 vshard.router.cfg(cfg)

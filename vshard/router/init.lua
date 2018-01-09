@@ -123,28 +123,17 @@ local function router_call(bucket_id, mode, func, args)
                 log.warn("Replica %s is not master for replicaset %s anymore,"..
                          "please update configuration!",
                           replicaset.master.uuid, replicaset.uuid)
-                error("Can't found master for "..tostring(replicaset.uuid))
-            elseif err.code == codes.BOX_ERROR then
-                -- Re-throw original error
-                error(err.error)
-            else
+            elseif err.code ~= codes.BOX_ERROR then
                 assert(false)
             end
+            return nil, err
         end
     until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
     if err then
-        if err.code == codes.TRANSFER_IS_IN_PROGRESS then
-            error('Bucket transfer is in progress')
-        elseif err.code == codes.NO_ROUTE_TO_BUCKET then
-            error('Bucket is unreachable: no route to bucket')
-        else
-            assert(err.code == codes.REPLICASET_IS_UNREACHABLE)
-            error(string.format('Bucket is unreachable: replicaset\'s "%s" '..
-                                'master is unreachable',
-                                err.unreachable_uuid))
-        end
+        return nil, err
     else
-        return box.error(box.error.TIMEOUT)
+        local _, boxerror = pcall(box.error, box.error.TIMEOUT)
+        return nil, { code = BOX_ERROR, boxerror }
     end
 end
 

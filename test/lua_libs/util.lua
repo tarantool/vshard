@@ -1,9 +1,9 @@
 local function check_error(func, ...)
-    local status, err = pcall(func, ...)
-    if status then
+    local pstatus, status, err = pcall(func, ...)
+    if pstatus then
         return status, err
     end
-    err = string.gsub(err, '.*/[a-z]+.lua.*[0-9]+: ', '')
+    err = string.gsub(status, '.*/[a-z]+.lua.*[0-9]+: ', '')
     return err
 end
 
