@@ -95,6 +95,11 @@ vshard.storage.call(1, 'read', 'customer_lookup', {1})
 vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 
 --
+-- Test not existing space in bucket data.
+--
+vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
+
+--
 -- Bucket transfer
 --
 vshard.storage.bucket_send(1, replicaset2_uuid)

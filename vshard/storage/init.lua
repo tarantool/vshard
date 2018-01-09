@@ -222,17 +222,22 @@ local function bucket_recv(bucket_id, from, data)
         }
     end
 
-    bucket = box.space._bucket:insert({bucket_id, consts.BUCKET.RECEIVING, from})
-
     box.begin()
-
+    bucket = box.space._bucket:insert({bucket_id, consts.BUCKET.RECEIVING,
+                                       from})
     -- Fill spaces with data
     for _, row in ipairs(data) do
         local space_id, space_data = row[1], row[2]
         local space = box.space[space_id]
         if space == nil then
-            box.error(box.error.NO_SUCH_SPACE, space_id)
-            assert(false)
+            -- Tarantool doesn't provide API to create box.error objects
+            -- https://github.com/tarantool/tarantool/issues/3031
+            local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
+                                      space_id)
+            return nil, {
+                code = codes.BOX_ERROR,
+                error = boxerror
+            }
         end
         for _, tuple in ipairs(space_data) do
             space:insert(tuple)
