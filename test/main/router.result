@@ -271,6 +271,21 @@ vshard.router.call(bucket_id + 1, 'read', 'customer_lookup', {1}) -- nothing
 - null
 ...
 --
+-- Test errors from router call.
+--
+new_bid = vshard.consts.BUCKET_COUNT + 1
+---
+...
+space_data = {{1000, {{1}, {2}}}}
+---
+...
+-- Insert in a not existing space - it must return box.error.
+vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
+---
+- null
+- {'code': 1, 'box_error_args': [36, 1000]}
+...
+--
 -- Monitoring
 --
 vshard.router.info().replicasets[1].master.state

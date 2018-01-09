@@ -105,13 +105,17 @@ local function router_call(bucket_id, mode, func, args)
     repeat
         replicaset, err = bucket_resolve(bucket_id)
         if replicaset then
-            local status, info =
+            local storage_call_status, call_status, call_error =
                 replicaset:call('vshard.storage.call',
                                 {bucket_id, mode, func, args})
-            if status then
-                return info
+            if storage_call_status then
+                if call_status == nil and call_error ~= nil then
+                    return call_status, call_error
+                else
+                    return call_status
+                end
             end
-            err = info
+            err = call_status
             if err.code == codes.WRONG_BUCKET or
                err.code == codes.TRANSFER_IS_IN_PROGRESS then
                 self.route_map[bucket_id] = nil
@@ -124,7 +128,7 @@ local function router_call(bucket_id, mode, func, args)
                 -- Re-throw original error
                 error(err.error)
             else
-                error("Unknown result code: "..tostring(err.code))
+                assert(false)
             end
         end
     until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
