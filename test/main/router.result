@@ -221,7 +221,7 @@ util.check_error(vshard.router.route)
 ---
 - 'Usage: router.route(bucket_id)'
 ...
-conn = vshard.router.route(1)
+conn = vshard.router.route(1).master.conn
 ---
 ...
 conn.state
@@ -241,12 +241,9 @@ master = rs.master
 rs.master = nil
 ---
 ...
-vshard.router.route(1)
+vshard.router.route(1).master
 ---
 - null
-- type: ShardingError
-  replicaset_uuid: <replicaset_2>
-  code: 6
 ...
 rs.master = master
 ---
@@ -256,7 +253,7 @@ rs:disconnect()
 ---
 - true
 ...
-conn = vshard.router.route(1)
+conn = vshard.router.route(1):connect()
 ---
 ...
 conn:wait_connected()

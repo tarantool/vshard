@@ -141,7 +141,7 @@ local function router_call(bucket_id, mode, func, args)
 end
 
 --
--- Get netbox connection by bucket identifier.
+-- Get replicaset object by bucket identifier.
 -- @param bucket_id Bucket identifier.
 -- @retval Netbox connection.
 --
@@ -149,15 +149,7 @@ local function router_route(bucket_id)
     if type(bucket_id) ~= 'number' then
         error('Usage: router.route(bucket_id)')
     end
-    local replicaset, err = bucket_resolve(bucket_id)
-    if replicaset == nil then
-        return nil, err
-    end
-    local conn, err = replicaset:connect()
-    if conn == nil then
-        return nil, err
-    end
-    return conn
+    return bucket_resolve(bucket_id)
 end
 
 --------------------------------------------------------------------------------

@@ -79,18 +79,18 @@ test_run:cmd('start server storage_2_a')
 vshard.router.route(vshard.consts.BUCKET_COUNT + 100)
 util.check_error(vshard.router.route, 'asdfg')
 util.check_error(vshard.router.route)
-conn = vshard.router.route(1)
+conn = vshard.router.route(1).master.conn
 conn.state
 -- Test missing master.
 rs_uuid = 'ac522f65-aa94-4134-9f64-51ee384f1a54'
 rs = vshard.router.internal.replicasets[rs_uuid]
 master = rs.master
 rs.master = nil
-vshard.router.route(1)
+vshard.router.route(1).master
 rs.master = master
 -- Test reconnect on bucker_route().
 rs:disconnect()
-conn = vshard.router.route(1)
+conn = vshard.router.route(1):connect()
 conn:wait_connected()
 conn.state
 
