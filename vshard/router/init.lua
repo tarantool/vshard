@@ -2,10 +2,9 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local consts = require('vshard.consts')
-local codes = require('vshard.codes')
+local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
-local util = require('vshard.util')
 
 -- Internal state
 local self = {}
@@ -46,15 +45,15 @@ local function bucket_discovery(bucket_id)
             elseif stat.status == consts.BUCKET.RECEIVING then
                 is_transfer_in_progress = true
             end
-        elseif err.code ~= codes.WRONG_BUCKET then
+        elseif err.code ~= lerror.code.WRONG_BUCKET then
             unreachable_uuid = replicaset.uuid
         end
     end
     local errcode = nil
     if unreachable_uuid then
-        errcode = codes.REPLICASET_IS_UNREACHABLE
+        errcode = lerror.code.REPLICASET_IS_UNREACHABLE
     elseif is_transfer_in_progress then
-        errcode = codes.TRANSFER_IS_IN_PROGRESS
+        errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
     else
         -- All replicasets were scanned, but a bucket was not
         -- found anywhere, so most likely it does not exist. It
@@ -62,14 +61,11 @@ local function bucket_discovery(bucket_id)
         -- bucket was found to be RECEIVING on one replicaset, and
         -- was not found on other replicasets (it was sent during
         -- discovery).
-        errcode = codes.NO_ROUTE_TO_BUCKET
+        errcode = lerror.code.NO_ROUTE_TO_BUCKET
     end
 
-    return nil, {
-        code = errcode,
-        bucket_id = bucket_id,
-        unreachable_uuid = unreachable_uuid,
-    }
+    return nil, lerror.vshard(errcode, {bucket_id = bucket_id,
+                                        unreachable_uuid = unreachable_uuid})
 end
 
 -- Resolve bucket id to replicaset uuid
@@ -116,15 +112,13 @@ local function router_call(bucket_id, mode, func, args)
                 end
             end
             err = call_status
-            if err.code == codes.WRONG_BUCKET or
-               err.code == codes.TRANSFER_IS_IN_PROGRESS then
+            if err.code == lerror.code.WRONG_BUCKET or
+               err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
                 self.route_map[bucket_id] = nil
-            elseif err.code == codes.NON_MASTER then
+            elseif err.code == lerror.code.NON_MASTER then
                 log.warn("Replica %s is not master for replicaset %s anymore,"..
                          "please update configuration!",
                           replicaset.master.uuid, replicaset.uuid)
-            elseif err.code ~= codes.BOX_ERROR then
-                assert(false)
             end
             return nil, err
         end
@@ -133,7 +127,7 @@ local function router_call(bucket_id, mode, func, args)
         return nil, err
     else
         local _, boxerror = pcall(box.error, box.error.TIMEOUT)
-        return nil, { code = BOX_ERROR, boxerror }
+        return nil, lerror.box(boxerror)
     end
 end
 

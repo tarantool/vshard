@@ -4,6 +4,10 @@ test_run = require('test_run').new()
 fiber = require('fiber')
 ---
 ...
+test_run:cmd("push filter 'line: *[0-9]+' to 'line: <line>'")
+---
+- true
+...
 REPLICASET_1 = { 'bad_uuid_1_a', 'bad_uuid_1_b' }
 ---
 ...
@@ -41,8 +45,12 @@ vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_send(1, replicaset_uuid[2])
 ---
 - null
-- code: 1
-  error: Connection closed
+- type: ClientError
+  code: 77
+  message: Connection closed
+  trace:
+  - file: builtin/box/net_box.lua
+    line: <line>
 ...
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID: expected ')
 ---
@@ -144,8 +152,12 @@ vshard.storage.bucket_force_create(2)
 vshard.storage.bucket_send(2, replicaset_uuid[2])
 ---
 - null
-- code: 1
-  error: Connection closed
+- type: ClientError
+  code: 77
+  message: Connection closed
+  trace:
+  - file: builtin/box/net_box.lua
+    line: <line>
 ...
 -- Close existing connection on a first error and log it.
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID: expected ') ~= nil
@@ -160,9 +172,10 @@ test_run:switch('bad_uuid_router')
 vshard.router.bucket_discovery(1)
 ---
 - null
-- bucket_id: 1
-  code: 9
+- type: ShardingError
   unreachable_uuid: ac522f65-aa94-4134-9f64-51ee384f1a54
+  code: 8
+  bucket_id: 1
 ...
 -- Ok to work with correct replicasets.
 vshard.router.bucket_discovery(2).uuid

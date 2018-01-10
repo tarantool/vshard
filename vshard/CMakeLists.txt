@@ -6,5 +6,5 @@ add_subdirectory(storage)
 add_subdirectory(router)
 
 # Install module
-install(FILES cfg.lua codes.lua consts.lua init.lua replicaset.lua util.lua
+install(FILES cfg.lua error.lua consts.lua init.lua replicaset.lua util.lua
         DESTINATION ${TARANTOOL_INSTALL_LUADIR}/vshard)

@@ -3,7 +3,7 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local consts = require('vshard.consts')
-local codes = require('vshard.codes')
+local lerror = require('vshard.error')
 local util = require('vshard.util')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
@@ -137,19 +137,17 @@ local function bucket_check_state(bucket_id, mode)
     local bucket = box.space._bucket:get({bucket_id})
     local errcode = nil
     if bucket == nil or bucket_is_garbage(bucket) then
-        errcode = codes.WRONG_BUCKET
+        errcode = lerror.code.WRONG_BUCKET
     elseif (bucket.status == consts.BUCKET.SENDING and mode ~= 'read') then
-        errcode = codes.TRANSFER_IS_IN_PROGRESS
+        errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
     elseif bucket.status == consts.BUCKET.ACTIVE and mode ~= 'read' and
            self.this_replicaset.master ~= self.this_replica then
-        errcode = codes.NON_MASTER
+        errcode = lerror.code.NON_MASTER
     end
     if errcode ~= nil then
-        return nil, {
-            code = errcode,
-            bucket_id = bucket_id,
-            destination = bucket and bucket.destination or nil
-        }
+        local dest = bucket and bucket.destination or nil
+        return nil, lerror.vshard(errcode, {bucket_id = bucket_id,
+                                            destination = dest})
     end
 
     assert(bucket.status == consts.BUCKET.ACTIVE or
@@ -167,10 +165,8 @@ local function bucket_stat(bucket_id)
     local bucket = box.space._bucket:get({bucket_id})
 
     if not bucket or bucket_is_garbage(bucket) then
-        return nil, {
-            code = codes.WRONG_BUCKET,
-            bucket_id = bucket_id,
-        }
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET,
+                                  {bucket_id = bucket_id})
     else
         return {
             id = bucket.id;
@@ -216,10 +212,8 @@ local function bucket_recv(bucket_id, from, data)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket ~= nil then
-        return nil, {
-            code = codes.BUCKET_ALREADY_EXISTS,
-            bucket_id = bucket_id
-        }
+        return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS,
+                                  {bucket_id = bucket_id})
     end
 
     box.begin()
@@ -234,10 +228,7 @@ local function bucket_recv(bucket_id, from, data)
             -- https://github.com/tarantool/tarantool/issues/3031
             local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
                                       space_id)
-            return nil, {
-                code = codes.BOX_ERROR,
-                error = boxerror
-            }
+            return nil, lerror.box(boxerror)
         end
         for _, tuple in ipairs(space_data) do
             space:insert(tuple)
@@ -294,7 +285,7 @@ local function bucket_collect(bucket_id)
 
     local status, err = bucket_check_state(bucket_id, 'read')
     if not status then
-        return err
+        return nil, err
     end
     return bucket_collect_internal(bucket_id)
 end
@@ -341,22 +332,18 @@ local function bucket_send(bucket_id, destination)
 
     local status, err = bucket_check_state(bucket_id, 'write')
     if not status then
-        return err
+        return nil, err
     end
     local replicaset = self.replicasets[destination]
     if replicaset == nil then
-        return nil, {
-            code = codes.NO_SUCH_REPLICASET,
-            replicaset_uuid = destination,
-        }
+        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET,
+                                  {replicaset_uuid = destination})
     end
 
     if destination == box.info.cluster.uuid then
-        return nil, {
-            code = codes.MOVE_TO_SELF,
-            bucket_id = bucket_id,
-            replicaset_uuid = replicaset_uuid,
-        }
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF,
+                                  {bucket_id = bucket_id,
+                                   replicaset_uuid = replicaset_uuid})
     end
 
     local data = bucket_collect_internal(bucket_id)

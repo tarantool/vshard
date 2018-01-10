@@ -470,8 +470,9 @@ vshard.storage.call(1, 'read', 'customer_lookup', {1})
 vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 ---
 - null
-- bucket_id: 100500
-  code: 2
+- type: ShardingError
+  bucket_id: 100500
+  code: 1
 ...
 --
 -- Test not existing space in bucket data.
@@ -479,8 +480,12 @@ vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
 ---
 - null
-- code: 1
-  error: Space '1000' does not exist
+- type: ClientError
+  code: 36
+  message: Space '1000' does not exist
+  trace:
+  - file: '[C]'
+    line: 4294967295
 ...
 --
 -- Bucket transfer

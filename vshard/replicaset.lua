@@ -23,7 +23,7 @@
 local log = require('log')
 local netbox = require('net.box')
 local consts = require('vshard.consts')
-local codes = require('vshard.codes')
+local lerror = require('vshard.error')
 
 --
 -- on_connect() trigger for net.box
@@ -52,10 +52,8 @@ end
 local function replicaset_connect(replicaset)
     local master = replicaset.master
     if master == nil then
-        return nil, {
-            code = codes.MISSING_MASTER,
-            replicaset_uuid = replicaset.uuid,
-        }
+        return nil, lerror.vshard(lerror.code.MISSING_MASTER,
+                                  {replicaset_uuid = replicaset.uuid})
     end
     local conn = master.conn
     if conn == nil or conn.state == 'closed' then
@@ -92,10 +90,7 @@ local function replicaset_call_tail(replicaset, func, pstatus, status, ...)
     if not pstatus then
         log.error("Exception during calling '%s' on '%s': %s", func,
                   replicaset.master.uuid, status)
-        return nil, {
-            code = codes.BOX_ERROR,
-            error = status
-        }
+        return nil, lerror.make(status)
     end
     if status == nil then
         status = nil -- Workaround for `not msgpack.NULL` magic.

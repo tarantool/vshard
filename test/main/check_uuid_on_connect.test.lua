@@ -1,5 +1,6 @@
 test_run = require('test_run').new()
 fiber = require('fiber')
+test_run:cmd("push filter 'line: *[0-9]+' to 'line: <line>'")
 
 REPLICASET_1 = { 'bad_uuid_1_a', 'bad_uuid_1_b' }
 REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
