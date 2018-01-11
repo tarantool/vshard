@@ -66,7 +66,7 @@ to deploy the cluster.
 
 A sample cluster configuration for **Storage** and **Router** can look like:
 
-```
+```Lua
 local cfg = {
     memtx_memory = 100 * 1024 * 1024,
     sharding = {
@@ -101,6 +101,58 @@ local cfg = {
 ```
 
 Field `sharding` defines logical topology of sharded Tarantool cluster.
+
+### Weights configuration
+
+A router sends all read-write request to a master replica only (with master = true in config). For read-only requests the sharding can use weights, if they are specified. The weights are used for failovering and for sending read-only requests not only to master replica, but to the 'nearest' available replica. Weights are used exactly to define distances between replicas in scope of a replicaset.
+
+You can use weights, for example, to define phisical distance between router and each replica in each replicaset - in such a case read-only requests are beeing sent to the literaly nearest replica.<br>
+Or by weights you can define, which replicas are more powerfull and can process more requests per second.
+
+The idea is to specify for each router and replica their zone, and fill matrix of relative zone weights. It allows to use different weights in different zones for the same zone.
+
+To define weights you can set `zone` attribute for each replica in the config above. For example:
+```Lua
+local cfg = {
+   sharding = {
+      ['...replicaset_uuid...'] = {
+         replicas = {
+            ['...replica_uuid...'] = {
+                 ...,
+                 zone = <number or string>
+            }
+         }
+      }
+   }
+}
+```
+And in `weights` attribute of `vshard.router.cfg` argument you can specify relative weights for each zone pair. Example:
+```Lua
+weights = {
+    [1] = {
+        [2] = 1, -- Zone 1 routers sees weight of zone 2 as 1.
+        [3] = 2, -- Weight of zone 3 as 2.
+        [4] = 3, -- ...
+    },
+    [2] = {
+        [1] = 10,
+        [2] = 0,
+        [3] = 10,
+        [4] = 20,
+    },
+    [3] = {
+        [1] = 100,
+        [2] = 200, -- Zone 3 routers sees weight of zone 2 as 200. Note
+                   -- that it is not equal to weight of zone 2 visible from
+                   -- zone 1.
+        [4] = 1000,
+    }
+}
+
+local cfg = vshard.router.cfg({weights = weights, sharding = ...})
+```
+The last requirement to allow weighted routing is specification `zone` parameter in `vshard.router.cfg`.
+
 All other fields are passed to box.cfg() as is without any modifications.
 
 Replicaset Parameters:
