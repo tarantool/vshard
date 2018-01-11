@@ -57,6 +57,8 @@ local function storage_schema_v1(username, password)
         'vshard.storage.bucket_send',
         'vshard.storage.bucket_recv',
         'vshard.storage.bucket_stat',
+        'vshard.storage.buckets_count',
+        'vshard.storage.buckets_info',
         'vshard.storage.rebalancer_request_state',
         'vshard.storage.rebalancer_apply_routes',
     }
@@ -1061,6 +1063,10 @@ end
 -- Monitoring
 --------------------------------------------------------------------------------
 
+local function storage_buckets_count()
+    return  box.space._bucket.index.pk:count()
+end
+
 local function storage_buckets_info()
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
 
@@ -1232,5 +1238,6 @@ return {
     cfg = storage_cfg;
     info = storage_info;
     buckets_info = storage_buckets_info;
+    buckets_count = storage_buckets_count;
     internal = self;
 }

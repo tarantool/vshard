@@ -189,6 +189,14 @@ local function cluster_bootstrap()
     local replicasets = {}
     for uuid, replicaset in pairs(self.replicasets) do
         table.insert(replicasets, replicaset)
+        local count, err = replicaset:call('vshard.storage.buckets_count', {})
+        if count == nil then
+            return nil, err
+        end
+        if count > 0 then
+            return nil, lerror.vshard(lerror.code.NON_EMPTY, {},
+                                      'Cluster is already bootstrapped')
+        end
     end
     local replicaset_count = #replicasets
     for bucket_id= 1, consts.BUCKET_COUNT do
@@ -198,10 +206,10 @@ local function cluster_bootstrap()
         local status, info =
             replicaset:call('vshard.storage.bucket_force_create', {bucket_id})
         if not status then
-            -- TODO: handle errors properly
-            error('Failed to bootstrap cluster: '..tostring(info))
+            return nil, info
         end
     end
+    return true
 end
 
 --------------------------------------------------------------------------------

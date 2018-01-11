@@ -57,6 +57,7 @@ return {
         TRANSFER_IS_IN_PROGRESS = 0x07,
         REPLICASET_IS_UNREACHABLE = 0x08,
         NO_ROUTE_TO_BUCKET = 0x09,
+        NON_EMPTY = 0x10,
     },
     lua = lua_error,
     box = box_error,

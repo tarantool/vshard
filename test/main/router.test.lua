@@ -33,6 +33,10 @@ test_run:grep_log('router_1', 'connected to ')
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 vshard.router.bootstrap()
+
+-- Second one should produce error
+vshard.router.bootstrap()
+
 --
 -- gh-48: more precise error messages about bucket unavailability.
 --
