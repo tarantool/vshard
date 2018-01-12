@@ -212,7 +212,7 @@ end
 --
 local function failover_is_candidate_connected(replicaset)
     local candidate = replicaset.failover_candidate
-    return candidate and candidate.conn and candidate.conn:is_connected()
+    return candidate and candidate:is_connected()
 end
 
 --

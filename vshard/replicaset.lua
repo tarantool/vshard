@@ -201,9 +201,9 @@ end
 -- long.
 --
 local function replicaset_down_failover_priority(replicaset)
-    local old_failover = replicaset.failover
-    assert(old_failover and old_failover.down_ts and
-           (not old_failover.conn or not old_failover.conn:is_connected()))
+    local old_replica = replicaset.failover
+    assert(old_replica and old_replica.down_ts and
+           not old_replica:is_connected())
     local new_failover = replicaset.failover.next_by_priority
     if new_failover then
         replicaset_make_replica_failover(replicaset, new_failover, 'failover')
@@ -288,7 +288,7 @@ local function replicaset_nearest_call(replicaset, func, args)
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
     local failover = replicaset.failover
-    if failover and failover.conn and failover.conn:is_connected() then
+    if failover and failover:is_connected() then
         local conn = failover.conn
         return replicaset_call_tail(failover.uuid, func,
                                     pcall(conn.call, conn, func, args,
@@ -327,6 +327,14 @@ local replicaset_mt = {
     __tostring = replicaset_tostring;
 }
 
+local replica_mt = {
+    __index = {
+        is_connected = function(replica)
+            return replica.conn and replica.conn:is_connected()
+        end
+    }
+}
+
 --
 -- Update/build replicasets from configuration
 --
@@ -348,8 +356,10 @@ local function buildall(sharding_cfg, existing_replicasets)
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
-            local new_replica = {uri = replica.uri, name = replica.name,
-                                 uuid = replica_uuid, zone = replica.zone}
+            local new_replica = setmetatable({
+                uri = replica.uri, name = replica.name, uuid = replica_uuid,
+                zone = replica.zone
+            }, replica_mt)
             local existing_rs = existing_replicasets[replicaset_uuid]
             if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then
                 new_replica.conn = existing_rs.replicas[replica_uuid].conn
