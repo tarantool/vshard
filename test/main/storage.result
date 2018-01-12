@@ -251,7 +251,7 @@ vshard.storage.info()
   replication:
     status: master
   alerts:
-  - ['LOW_REDUNDANCY', 'Only one replica is active.']
+  - ['LOW_REDUNDANCY', 'Only one replica is active']
 ...
 test_run:cmd("stop server storage_2_b")
 ---
@@ -282,8 +282,8 @@ vshard.storage.info()
   replication:
     status: master
   alerts:
-  - ['REPLICA_IS_DOWN', 'Replica <storage_2_b> isn''t active ']
-  - ['UNREACHABLE_REPLICASET', 'There is no active replicas.']
+  - ['REPLICA_IS_DOWN', 'Replica <storage_2_b> isn''t active']
+  - ['REPLICASET_IS_UNREACHABLE', 'There is no active replicas']
 ...
 test_run:cmd("start server storage_2_b")
 ---
@@ -345,7 +345,7 @@ vshard.storage.info()
   replication:
     status: master
   alerts:
-  - ['LOW_REDUNDANCY', 'Only one replica is active.']
+  - ['LOW_REDUNDANCY', 'Only one replica is active']
 ...
 _ = test_run:cmd("switch storage_1_a")
 ---

@@ -46,21 +46,75 @@ local function make_error(e)
    end
 end
 
-return {
-    code = {
-        WRONG_BUCKET = 0x01,
-        NON_MASTER = 0x02,
-        BUCKET_ALREADY_EXISTS = 0x03,
-        NO_SUCH_REPLICASET = 0x04,
-        MOVE_TO_SELF = 0x05,
-        MISSING_MASTER = 0x06,
-        TRANSFER_IS_IN_PROGRESS = 0x07,
-        REPLICASET_IS_UNREACHABLE = 0x08,
-        NO_ROUTE_TO_BUCKET = 0x09,
-        NON_EMPTY = 0x10,
+local error_code = {
+    -- Error codes. Some of them are used for alerts too.
+    WRONG_BUCKET = 1,
+    NON_MASTER = 2,
+    BUCKET_ALREADY_EXISTS = 3,
+    NO_SUCH_REPLICASET = 4,
+    MOVE_TO_SELF = 5,
+    MISSING_MASTER = 6,
+    TRANSFER_IS_IN_PROGRESS = 7,
+    REPLICASET_IS_UNREACHABLE = 8,
+    NO_ROUTE_TO_BUCKET = 9,
+    NON_EMPTY = 10,
+
+    -- Alert codes.
+    UNREACHABLE_MASTER = 11,
+    OUT_OF_SYNC = 12,
+    HIGH_REPLICATION_LAG = 13,
+    REPLICA_IS_DOWN = 14,
+    LOW_REDUNDANCY = 15,
+    INVALID_REBALANCING = 16,
+}
+
+local error_message_template = {
+    [error_code.MISSING_MASTER] = {
+         name = 'MISSING_MASTER',
+         msg = 'Master is not configured for this replicaset'
     },
+    [error_code.UNREACHABLE_MASTER] = {
+        name = 'UNREACHABLE_MASTER',
+        msg = 'Master is unreachable: %s'
+    },
+    [error_code.OUT_OF_SYNC] = {
+        name = 'OUT_OF_SYNC',
+        msg = 'Replica is out of sync'
+    },
+    [error_code.HIGH_REPLICATION_LAG] = {
+        name = 'HIGH_REPLICATION_LAG',
+        msg = 'High replication lag: %f'
+    },
+    [error_code.REPLICA_IS_DOWN] = {
+        name = 'REPLICA_IS_DOWN',
+        msg = "Replica %s isn't active"
+    },
+    [error_code.REPLICASET_IS_UNREACHABLE] = {
+        name = 'REPLICASET_IS_UNREACHABLE',
+        msg = 'There is no active replicas'
+    },
+    [error_code.LOW_REDUNDANCY] = {
+        name = 'LOW_REDUNDANCY',
+        msg = 'Only one replica is active'
+    },
+    [error_code.INVALID_REBALANCING] = {
+        name = 'INVALID_REBALANCING',
+        msg = 'Sending and receiving buckets at same time is not allowed'
+    },
+}
+
+local function make_alert(code, ...)
+    local format = error_message_template[code]
+    assert(format)
+    local r = {format.name, string.format(format.msg, ...)}
+    return setmetatable(r, { __serialize = 'seq' })
+end
+
+return {
+    code = error_code,
     lua = lua_error,
     box = box_error,
     vshard = vshard_error,
     make = make_error,
+    alert = make_alert,
 }

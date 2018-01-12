@@ -1085,10 +1085,6 @@ local function storage_buckets_info()
     return ibuckets
 end
 
-local function compact(t)
-    return setmetatable(t, { __serialize = 'seq' })
-end
-
 local function storage_info()
     local state = {
         alerts = {},
@@ -1096,11 +1092,10 @@ local function storage_info()
         bucket = {},
         status = consts.STATUS.GREEN,
     }
+    local code = lerror.code
+    local alert = lerror.alert
     if self.this_replicaset.master == nil then
-        table.insert(state.alerts, compact({
-            'MISSING_MASTER',
-            'Master is not configured for this replicaset.'
-        }))
+        table.insert(state.alerts, alert(code.MISSING_MASTER))
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
     if self.this_replicaset.master ~= self.this_replica then
@@ -1111,10 +1106,8 @@ local function storage_info()
             state.replication.status = replica.upstream.status
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
-                table.insert(state.alerts, compact({
-                    'UNREACHABLE_MASTER',
-                    'Master is unreachable: '..replica.upstream.status
-                }))
+                table.insert(state.alerts, alert(code.UNREACHABLE_MASTER,
+                                                 replica.upstream.status))
                 if replica.upstream.idle > consts.REPLICATION_THRESHOLD_FAIL then
                     state.status = math.max(state.status, consts.STATUS.RED)
                 elseif replica.upstream.idle > consts.REPLICATION_THRESHOLD_HARD then
@@ -1127,22 +1120,15 @@ local function storage_info()
 
             state.replication.lag = replica.upstream.lag
             if state.replication.lag >= consts.REPLICATION_THRESHOLD_FAIL then
-                table.insert(state.alerts, compact({
-                    'OUT_OF_SYNC',
-                    'Replica is out of sync.'
-                }))
+                table.insert(state.alerts, alert(code.OUT_OF_SYNC))
                 state.status = math.max(state.status, consts.STATUS.RED)
             elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_HARD then
-                table.insert(state.alerts, compact({
-                    'HIGH_REPLICATION_LAG',
-                    'High replication lag: ' .. tostring(state.replication.lag)
-                }))
+                table.insert(state.alerts, alert(code.HIGH_REPLICATION_LAG,
+                                                 state.replication.lag))
                 state.status = math.max(state.status, consts.STATUS.ORANGE)
             elseif state.replication.lag >= consts.REPLICATION_THRESHOLD_SOFT then
-                table.insert(state.alerts, compact({
-                    'HIGH_REPLICATION_LAG',
-                    'High replication lag: ' .. tostring(state.replication.lag)
-                }))
+                table.insert(state.alerts, alert(code.HIGH_REPLICATION_LAG,
+                                                 state.replication.lag))
                 state.status = math.max(state.status, consts.STATUS.YELLOW)
             end
             ::cont::
@@ -1153,10 +1139,8 @@ local function storage_info()
         for id, replica in pairs(box.info.replication) do
             if replica.uuid ~= self.this_replica.uuid then
                 if replica.downstream == nil then
-                    table.insert(state.alerts, compact({
-                        'REPLICA_IS_DOWN',
-                        string.format('Replica %s isn\'t active ', replica.uuid)
-                    }))
+                    table.insert(state.alerts, alert(code.REPLICA_IS_DOWN,
+                                                     replica.uuid))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
                 else
                     redundancy = redundancy + 1
@@ -1164,16 +1148,10 @@ local function storage_info()
             end
         end
         if redundancy == 0 then
-            table.insert(state.alerts, compact({
-                'UNREACHABLE_REPLICASET',
-                'There is no active replicas.'
-            }))
+            table.insert(state.alerts, alert(code.REPLICASET_IS_UNREACHABLE))
             state.status = math.max(state.status, consts.STATUS.RED)
         elseif redundancy == 1 then
-            table.insert(state.alerts, compact({
-                'LOW_REDUNDANCY',
-                'Only one replica is active.'
-            }))
+            table.insert(state.alerts, alert(code.LOW_REDUNDANCY))
             state.status = math.max(state.status, consts.STATUS.ORANGE)
         end
     end
@@ -1188,10 +1166,7 @@ local function storage_info()
         --Some buckets are receiving and some buckets are sending at same time,
         --this may be a balancer issue, alert it.
         --
-        table.insert(state.alerts, compact({
-            'INVALID_REBALANCING',
-            'Sending and receiving buckets at same time.'
-        }))
+        table.insert(state.alerts, alert(lerror.code.INVALID_REBALANCING))
         state.status = math.max(state.status, consts.STATUS.YELLOW)
     end
 

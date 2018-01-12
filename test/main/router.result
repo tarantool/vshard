@@ -113,7 +113,7 @@ vshard.router.bootstrap()
 ---
 - null
 - type: ShardingError
-  code: 16
+  code: 10
   message: Cluster is already bootstrapped
 ...
 --
