@@ -25,8 +25,8 @@ A Tarantool sharded cluster consists of the following components:
 
 A minimal viable sharded cluster should consists of:
 
-- Two or more replicaset of two or more **Storage** instances
-- One or more **Router** instances
+- One or more replication sets consisted of two or more **Storage** instances;
+- One or more **Router** instances.
 
 The number of **Storage** instances in a replicaset defines the redundancy
 factor of the data. Recommended value is 3 or more. The number of routers
@@ -97,12 +97,13 @@ local cfg = {
             },
         }, -- replicaset #1
     }, -- sharding
+    weights = ... -- See details below.
 }
 ```
 
 Field `sharding` defines logical topology of sharded Tarantool cluster.
 
-### Weights configuration
+### Replicas weight configuration
 
 A router sends all read-write request to a master replica only (with master = true in config). For read-only requests the sharding can use weights, if they are specified. The weights are used for failovering and for sending read-only requests not only to master replica, but to the 'nearest' available replica. Weights are used exactly to define distances between replicas in scope of a replicaset.
 
@@ -153,28 +154,35 @@ local cfg = vshard.router.cfg({weights = weights, sharding = ...})
 ```
 The last requirement to allow weighted routing is specification `zone` parameter in `vshard.router.cfg`.
 
+### Rebalancer configuration
+
+The sharding has builtin rebalancer, which periodically wakes up and moves data from one node to another by buckets. It takes all tuples from all spaces on a node with the same bucket id and moves to a more free node.
+
+To help rebalancer with its work you can specify replicaset weights. The weights are not the same weights as replica ones, defined in the section above. The bigger replicaset weight, the more buckets it can store. You can consider weights as relative data amount on a replicaset. For example, if one replicaset has weight 100 and another has 200, then the second will store twice more buckets against the first one.
+
+By default, all weights of all replicasets are equal.
+
+You can use weights, for example, to store more data on a replicasets with more memory space, or to store more data on hot replicasets. It depends on your application.
+
 All other fields are passed to box.cfg() as is without any modifications.
 
-Replicaset Parameters:
+**Replicaset Parameters**:
 
-- `[UUID]` - replaceset unique identifier, generate random one
-   using `uuidgen(1)`.
+* `[UUID] - string` - replaceset unique identifier, generate random one using `uuidgen(1)`;
+* `replicas - table` - a map of replicas with key = replica UUID and value = instance (see below details);
+* `weight - number` - rebalancing weight - the less it is, the less buckets it stores.
 
-Instance Parameters:
+**Instance Parameters**:
 
-- `[UUID]` - instance unique identifier, generate random one
-   using `uuidgen(1)`.
-- `uri` - Uniform Resource Identifier of remote instance
-          with optional login and password.
-- `name` - unique identifier of remote instance from filename
-
-(e.g. the name of your instance file without `.lua` suffix).
-- `master` - if true then replica is *active* and should accept
-             WRITE` requests
+- `[UUID] - string` - instance unique identifier, generate random one using `uuidgen(1)`;
+- `uri - string` - Uniform Resource Identifier of remote instance with **required** login and password;
+- `name - string` - identifier of remote instance from filename (can be not unique, but it is recommended to use unique names);
+- `zone - string or number` - replica zone (see weighted routing in the section 'Replicas weight configuration');
+- `master - boolean` - true, if a replica is master in its replicaset. You can define 0 or 1 masters for each replicaset. It accepts all write requests.
 
 On routers call `vshard.router.cfg(cfg)`:
 
-```
+```Lua
 cfg.listen = 3300
 
 -- Start the database with sharding
@@ -184,7 +192,7 @@ vshard.router.cfg(cfg)
 
 On storages call `vshard.storage.cfg(cfg, <INSTANCE_UUID>)`:
 
-```
+```Lua
 -- Get instance name
 local MY_UUID = "de0ea826-e71d-4a82-bbf3-b04a6413e417"
 
@@ -209,7 +217,7 @@ spaces and tuples.
 
 Spaces should be defined your storage application using `box.once()`:
 
-```
+```Lua
 box.once("testapp:schema:1", function()
     local customer = box.schema.space.create('customer')
     customer:format({
@@ -245,7 +253,7 @@ spaces if needed.
 All DML operations with data should be performed via `router`. The
 only operation is supported by `router` is `CALL` via `bucket_id`:
 
-```
+```Lua
 result = vshard.router.call(bucket_id, mode, func, args)
 ```
 
@@ -273,20 +281,11 @@ Call function `func` on a shard which serves `bucket_id`,
 
 #### `netbox, err = vshard.router.route(bucket_id)`
 
-Return netbox object for specified `bucket_id`.
+Return replicaset object for specified `bucket_id`.
 
-**Parameters:**
+#### `replicaset, err = vshard.router.routeall()`
 
-* `bucket_id` - bucket identifier
-* `mode` - `read` or `write`
-* `func` - function name
-* `args` - array of arguments to func
-
-**Returns:** original return value from `func` or nil and error object.
-Error object has type attribute equal to 'LuajitError', 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
-* `LuajitError` - returned on lua assertions, syntax errors, luajit OOM etc. It has optional attribute `message` with human readable error description;
-* `ShardingError` - returned on errors, specific for sharding: replicaset unavailability, master absense, wrong bucket id etc. It has attribute `code` with one of values from vshard.error.code, optional `message` with human readable error description, and other attributes, specific for concrete error code;
-* Other errors: see tarantool errors.
+Return all available replicaset objects in the map of type: `{UUID = replicaset}`.
 
 #### `info = vshard.router.info()`
 
@@ -308,6 +307,29 @@ vshard.router.info()
       uuid: 810d85ef-4ce4-4066-9896-3c352fec9e64
 ...
 ```
+
+**Parameters:**
+
+* `bucket_id` - bucket identifier
+* `mode` - `read` or `write`
+* `func` - function name
+* `args` - array of arguments to func
+
+**Returns:** original return value from `func` or nil and error object.
+Error object has type attribute equal to 'LuajitError', 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
+* `LuajitError` - returned on lua assertions, syntax errors, luajit OOM etc. It has optional attribute `message` with human readable error description;
+* `ShardingError` - returned on errors, specific for sharding: replicaset unavailability, master absense, wrong bucket id etc. It has attribute `code` with one of values from vshard.error.code, optional `message` with human readable error description, and other attributes, specific for concrete error code;
+* Other errors: see tarantool errors.
+
+`route()` and `routeall()` returns replicaset objects. Replicaset has two methods:
+
+#### `replicaset.callro(func, args)`
+
+Call a function `func` on a nearest available replica (distances are defined using `replica.zone` and `cfg.weights` matrix - see sections above) with a specified arguments. It is recommended to call only read-only functions using `callro()`, because a function can be executed not on a master.
+
+#### `replicaset.callrw(func, args)`
+
+Same as `callro()`, but a call guaranteed to be executed on a master.
 
 ## Storage public API
 
