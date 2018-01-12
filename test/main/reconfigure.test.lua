@@ -13,7 +13,7 @@ test_run:cmd('create server router_1 with script="main/router_1.lua", wait=True,
 test_run:cmd('start server router_1')
 
 test_run:switch('default')
-cfg = require'devcfg'
+cfg = require'localcfg'
 rs1_id = 'cbf06940-0790-498b-948d-042b62cf3d29'
 s1_2_id = '3de2e3e1-9ebe-4d0d-abb1-26d301b84633'
 rs2_id = 'ac522f65-aa94-4134-9f64-51ee384f1a54'

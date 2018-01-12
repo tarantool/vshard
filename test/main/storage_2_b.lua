@@ -1,1 +1,1 @@
-../../storage.lua
+../../example/storage.lua

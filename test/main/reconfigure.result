@@ -35,7 +35,7 @@ test_run:switch('default')
 ---
 - true
 ...
-cfg = require'devcfg'
+cfg = require'localcfg'
 ---
 ...
 rs1_id = 'cbf06940-0790-498b-948d-042b62cf3d29'

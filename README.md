@@ -189,7 +189,7 @@ On storages call `vshard.storage.cfg(cfg, <INSTANCE_UUID>)`:
 local MY_UUID = "de0ea826-e71d-4a82-bbf3-b04a6413e417"
 
 -- Call a configuration provider
-local cfg = require('devcfg')
+local cfg = require('localcfg')
 
 -- Start the database with sharding
 vshard = require('vshard')
@@ -428,9 +428,10 @@ Receive `bucket_id` from remote replicaset.
 
 ### Quick Start
 
-Type `make` to run the development cluster:
+Change directory to `example/` and type `make` to run the development cluster:
 
 ```bash
+# cd example/
 # make
 tarantoolctl start storage_1_a
 Starting instance storage_1_a...

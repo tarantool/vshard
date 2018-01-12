@@ -23,8 +23,4 @@ logcat:
 clean:
 	rm -rf data/
 
-test:
-	test -d test/test-run || git submodule update --init --recursive
-	cd test && ./test-run.py
-
 .PHONY: console test deploy clean
