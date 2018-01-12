@@ -39,7 +39,7 @@ function wait_state(state)
 	end
 end
 
-function failover_order()
+function priority_order()
 	local ret = {}
 	for _, uuid in pairs(rs_uuid) do
 		local rs = vshard.router.internal.replicasets[uuid]

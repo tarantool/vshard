@@ -38,28 +38,28 @@ test_run:cmd('switch default')
 
 --
 -- On router 1 test the following things:
--- * correct failover order (order of zones for router_1 from
+-- * correct priority order (order of zones for router_1 from
 --   zone 1);
--- * basic failover functions (use failover for 'read' requests
---   instead of master);
--- * failover down priority if a current failover connection is
---   not available;
--- * failover up priority if the best failover is available again;
--- * replicaset uses master connection, if a failover's one is not
---   available before call();
--- * failover is not down, when trying to connect to the replica
---   with less weight.
+-- * use nearest replica for 'read' requests instead of master;
+-- * down nearest replica priority if a current connection is not
+--   available;
+-- * up nearest replica priority if the best one is available
+--   again;
+-- * replicaset uses master connection, if the nearest's one is
+--   not available before call();
+-- * current nearest connection is not down, when trying to
+--   connect to the replica with less weight.
 --
--- On other routers test failovering order only.
+-- On other routers test priority order only.
 --
 create_router('router_1')
 test_run:switch('router_1')
 vshard.router.cfg(cfg)
-failover_order()
+priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
-wait_state('New failover server "127.0.0.1:3304')
+wait_state('New replica "127.0.0.1:3304')
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_d')
 -- Not 0 - 'read' echo was called here.
@@ -74,82 +74,82 @@ vshard.router.call(1, 'write', 'echo', {123})
 test_run:switch('box_1_a')
 echo_count
 
--- Ensure that failover_up_ts is updated periodically.
+-- Ensure that replica_up_ts is updated periodically.
 test_run:switch('router_1')
 rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
-old_up_ts = rs1.failover_up_ts
-while rs1.failover_up_ts == old_up_ts do fiber.sleep(0.1) end
-rs1.failover_up_ts - old_up_ts >= vshard.consts.FAILOVER_UP_TIMEOUT
+old_up_ts = rs1.replica_up_ts
+while rs1.replica_up_ts == old_up_ts do fiber.sleep(0.1) end
+rs1.replica_up_ts - old_up_ts >= vshard.consts.FAILOVER_UP_TIMEOUT
 
--- Down box_1_d to trigger down failover priority to box_1_b.
--- After box_1_b becomes failover, revive box_1_d (best failover
+-- Down box_1_d to trigger down replica priority to box_1_b.
+-- After box_1_b becomes replica, revive box_1_d (best read
 -- replica). The correct failover fiber must reconnect back to
 -- box_1_d.
 test_run:cmd('stop server box_1_d')
 -- Down_ts must be set in on_disconnect() trigger.
-while rs1.failover.down_ts == nil do fiber.sleep(0.1) end
+while rs1.replica.down_ts == nil do fiber.sleep(0.1) end
 -- Try to execute read-only request - it must use master
--- connection, because a failover's one is not available.
+-- connection, because a replica's one is not available.
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_a')
 echo_count
 test_run:switch('router_1')
--- New failover replica is box_1_b.
-while rs1.failover.name ~= 'box_1_b' do fiber.sleep(0.1) end
-rs1.failover.down_ts == nil
-rs1.failover_up_ts ~= nil
-test_run:grep_log('router_1', 'New failover server "127.0.0.1:3302"')
+-- New replica is box_1_b.
+while rs1.replica.name ~= 'box_1_b' do fiber.sleep(0.1) end
+rs1.replica.down_ts == nil
+rs1.replica_up_ts ~= nil
+test_run:grep_log('router_1', 'New replica "127.0.0.1:3302"')
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:cmd('switch box_1_b')
 -- Ensure the 'read' echo was executed on box_1_b - nearest
--- available failover replica.
+-- available replica.
 echo_count
 test_run:switch('router_1')
 
 -- Once per FAILOVER_UP_TIMEOUT a router tries to reconnect to the
--- best failover replica.
-while rs1.failover_candidate == nil or rs1.failover_candidate.down_ts == nil do fiber.sleep(0.1) end
--- Check that the original failover is used, while a failover
--- candidate tries to connnect.
+-- best replica.
+while rs1.candidate == nil or rs1.candidate.down_ts == nil do fiber.sleep(0.1) end
+-- Check that the original replica is used, while a candidate
+-- tries to connnect.
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_b')
 echo_count
 test_run:switch('router_1')
 
--- Revive the best failover. A router must reconnect to it in
+-- Revive the best replica. A router must reconnect to it in
 -- FAILOVER_UP_TIMEOUT seconds.
 test_run:cmd('start server box_1_d')
-while rs1.failover.name ~= 'box_1_d' do fiber.sleep(0.1) end
-test_run:grep_log('router_1', 'New failover server "127.0.0.1:3304"')
+while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
+test_run:grep_log('router_1', 'New replica "127.0.0.1:3304"')
 
--- Ensure the master connection is used as failover's one instead
+-- Ensure the master connection is used as replica's one instead
 -- of creation of a new connection to the same host.
 test_run:cmd('stop server box_1_b')
 test_run:cmd('stop server box_1_c')
 test_run:cmd('stop server box_1_d')
-while rs1.failover.name ~= 'box_1_a' do fiber.sleep(0.1) end
-rs1.failover.conn == rs1.master.conn
+while rs1.replica.name ~= 'box_1_a' do fiber.sleep(0.1) end
+rs1.replica.conn == rs1.master.conn
 --
--- Ensure the failover candidate downs its priority until mets
--- a current failover.
+-- Ensure the candidate downs its priority until mets a current
+-- replica.
 --
-while not rs1.failover_candidate or rs1.failover_candidate.name ~= 'box_1_d' do fiber.sleep(0.1) end
+while not rs1.candidate or rs1.candidate.name ~= 'box_1_d' do fiber.sleep(0.1) end
 ts1 = fiber.time()
-while rs1.failover_candidate.name ~= 'box_1_b' do fiber.sleep(0.1) end
+while rs1.candidate.name ~= 'box_1_b' do fiber.sleep(0.1) end
 ts2 = fiber.time()
--- Ensure the failover candidate is updated more often than once
--- per UP_TIMEOUT seconds.
+-- Ensure the candidate is updated more often than once per
+-- UP_TIMEOUT seconds.
 ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 ts1 = ts2
-while rs1.failover_candidate.name ~= 'box_1_c' do fiber.sleep(0.1) end
+while rs1.candidate.name ~= 'box_1_c' do fiber.sleep(0.1) end
 ts2 = fiber.time()
 ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 
 test_run:cmd('start server box_1_b with wait=False, wait_load=False')
 test_run:cmd('start server box_1_c with wait=False, wait_load=False')
 test_run:cmd('start server box_1_d with wait=False, wait_load=False')
-while rs1.failover.name ~= 'box_1_d' do fiber.sleep(0.1) end
--- Failover connection has been changed, but the master was not
+while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
+-- Replica's connection has been changed, but the master was not
 -- closed regardless of that they were equal.
 rs1.master.conn:is_connected()
 
@@ -158,7 +158,7 @@ test_run:switch('default')
 create_router('router_2')
 test_run:switch('router_2')
 vshard.router.cfg(cfg)
-failover_order()
+priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
@@ -167,7 +167,7 @@ test_run:switch('default')
 create_router('router_3')
 test_run:switch('router_3')
 vshard.router.cfg(cfg)
-failover_order()
+priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
@@ -176,7 +176,7 @@ test_run:switch('default')
 create_router('router_4')
 test_run:switch('router_4')
 vshard.router.cfg(cfg)
-failover_order()
+priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]

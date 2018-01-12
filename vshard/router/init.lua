@@ -164,18 +164,19 @@ end
 -- Failover
 --------------------------------------------------------------------------------
 --
--- Fiber to maintain failover connections.
+-- Fiber to maintain replica connections.
 --
 self.failover_fiber = nil
 
 --
--- Replicaset must fall its failover connection to lower priority,
+-- Replicaset must fall its replica connection to lower priority,
 -- if the current one is down too long.
 --
 local function failover_need_down_priority(replicaset, curr_ts)
-    return replicaset.failover and replicaset.failover.down_ts and
-           curr_ts - replicaset.failover.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
-           and replicaset.failover.next_by_priority
+    local r = replicaset.replica
+    return r and r.down_ts and
+           curr_ts - r.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
+           and r.next_by_priority
 end
 
 --
@@ -186,37 +187,36 @@ end
 -- candidate must try a replica next by priority.
 --
 local function failover_need_update_candidate(replicaset, curr_ts)
-    -- First attempt to connect to failover.
-    if not replicaset.failover_up_ts then
+    local up_ts = replicaset.replica_up_ts
+    -- First attempt to connect to replica.
+    if not up_ts then
         return true
     end
-    -- Try to reconnect to the best failover replica once per
-    -- UP_TIMEOUT.
-    if curr_ts - replicaset.failover_up_ts >= consts.FAILOVER_UP_TIMEOUT then
+    -- Try to reconnect to the best replica once per UP_TIMEOUT.
+    if curr_ts - up_ts >= consts.FAILOVER_UP_TIMEOUT then
         return true
     end
     -- Candidate can not connect to a replica. Try next by
-    -- priority, if it is not current failover. Failover candidate
-    -- always must have weight <= current failover weight.
-    local candidate = replicaset.failover_candidate
+    -- priority, if it is not current replica. Candidate always
+    -- must have weight <= current replica weight.
+    local candidate = replicaset.candidate
     return candidate and
            curr_ts - candidate.down_ts >= consts.FAILOVER_DOWN_TIMEOUT and
            candidate.next_by_priority and
-           candidate.next_by_priority ~= replicaset.failover
+           candidate.next_by_priority ~= replicaset.replica
 end
 
 --
--- Check that a failover candidate is connected to its replica. In
--- such a case it becames new failover, because its weight <=
--- current one.
+-- Check that a candidate is connected to its replica. In such a
+-- case it becames new replica, because its weight <= current one.
 --
 local function failover_is_candidate_connected(replicaset)
-    local candidate = replicaset.failover_candidate
+    local candidate = replicaset.candidate
     return candidate and candidate:is_connected()
 end
 
 --
--- Collect UUIDs of replicasets, priority of whose failover
+-- Collect UUIDs of replicasets, priority of whose replica
 -- connections must be updated.
 --
 local function failover_collect_to_update()
@@ -233,22 +233,21 @@ local function failover_collect_to_update()
 end
 
 --
--- Failover background function. Failover connection is the
--- connection to the nearest available server. Failover is hold
--- for each replicaset. This function periodically scans
--- replicasets and their failover connections. And some of them
--- appear to be disconnected or connected not to optimal failover.
+-- Failover background function. Replica connection is the
+-- connection to the nearest available server. Replica connection
+-- is hold for each replicaset. This function periodically scans
+-- replicasets and their replica connections. And some of them
+-- appear to be disconnected or connected not to optimal replica.
 --
--- If a failover connection is disconnected too long (more than
+-- If a connection is disconnected too long (more than
 -- FAILOVER_DOWN_TIMEOUT), this function tries to connect to the
 -- server with the lower priority. Priorities are specified in
 -- weight matrix in config.
 --
--- If a current failover connection has no the highest failover
--- priority, then this function periodically (once per
--- FAILOVER_UP_TIMEOUT) tries to reconnect to the best failover
--- replica. When the connection is established, it replaces the
--- original failover.
+-- If a current replica connection has no the highest priority,
+-- then this function periodically (once per FAILOVER_UP_TIMEOUT)
+-- tries to reconnect to the best replica. When the connection is
+-- established, it replaces the original replica.
 --
 local function failover_f()
     log.info('Start failover fiber')
@@ -264,7 +263,7 @@ local function failover_f()
         local uuid_to_update = failover_collect_to_update()
         if #uuid_to_update == 0 then
             if not prev_was_ok then
-                log.info('All failover connections are ok')
+                log.info('All replicas are ok')
                 prev_was_ok = true
             end
             lfiber.sleep(min_timeout)
@@ -283,19 +282,19 @@ local function failover_f()
                 lfiber.yield()
                 goto continue
             end
-            local old_failover = rs.failover
+            local old_replica = rs.replica
             if failover_is_candidate_connected(rs) then
-                rs:set_candidate_as_failover()
+                rs:set_candidate_as_replica()
             end
             if failover_need_update_candidate(rs, curr_ts) then
-                rs:update_failover_candidate()
+                rs:update_candidate()
             end
             if failover_need_down_priority(rs, curr_ts) then
-                rs:down_failover_priority()
+                rs:down_replica_priority()
             end
-            if old_failover ~= rs.failover then
-                log.info('New failover server "%s:%d" for replicaset "%s"',
-                         rs.failover.conn.host, rs.failover.conn.port, rs.uuid)
+            if old_replica ~= rs.replica then
+                log.info('New replica "%s:%d" for replicaset "%s"',
+                         rs.replica.conn.host, rs.replica.conn.port, rs.uuid)
             end
         end
         log.info('Failovering step is finished. Schedule next after %f '..
@@ -332,7 +331,7 @@ local function router_cfg(cfg)
     -- Force net.box connection on cfg()
     for _, replicaset in pairs(self.replicasets) do
         replicaset:connect()
-        replicaset:update_failover_candidate()
+        replicaset:update_candidate()
     end
     if self.failover_fiber == nil then
         lfiber.create(failover_f)

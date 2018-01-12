@@ -29,10 +29,10 @@ test_run:grep_log('router_1', 'connected to ')
 rs1 = vshard.router.internal.replicasets[replicasets[1]]
 rs2 = vshard.router.internal.replicasets[replicasets[2]]
 fiber = require('fiber')
-while not rs1.failover or not rs2.failover do fiber.sleep(0.1) end
+while not rs1.replica or not rs2.replica do fiber.sleep(0.1) end
 -- With no zones the nearest server is master.
-rs1.failover == rs1.master
-rs2.failover == rs2.master
+rs1.replica == rs1.master
+rs2.replica == rs2.master
 
 --
 -- Initial distribution
