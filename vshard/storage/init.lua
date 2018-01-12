@@ -1094,8 +1094,9 @@ local function storage_info()
     }
     local code = lerror.code
     local alert = lerror.alert
+    local this_uuid = self.this_replicaset.uuid
     if self.this_replicaset.master == nil then
-        table.insert(state.alerts, alert(code.MISSING_MASTER))
+        table.insert(state.alerts, alert(code.MISSING_MASTER, this_uuid))
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
     if self.this_replicaset.master ~= self.this_replica then
@@ -1107,6 +1108,7 @@ local function storage_info()
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
                 table.insert(state.alerts, alert(code.UNREACHABLE_MASTER,
+                                                 this_uuid,
                                                  replica.upstream.status))
                 if replica.upstream.idle > consts.REPLICATION_THRESHOLD_FAIL then
                     state.status = math.max(state.status, consts.STATUS.RED)
@@ -1148,7 +1150,8 @@ local function storage_info()
             end
         end
         if redundancy == 0 then
-            table.insert(state.alerts, alert(code.REPLICASET_IS_UNREACHABLE))
+            table.insert(state.alerts, alert(code.REPLICASET_IS_UNREACHABLE,
+                                             this_uuid))
             state.status = math.max(state.status, consts.STATUS.RED)
         elseif redundancy == 1 then
             table.insert(state.alerts, alert(code.LOW_REDUNDANCY))

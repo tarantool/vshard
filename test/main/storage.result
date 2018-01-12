@@ -210,7 +210,8 @@ vshard.storage.info()
     status: disconnected
     idle: <idle>
   alerts:
-  - ['UNREACHABLE_MASTER', 'Master is unreachable: disconnected']
+  - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_2>
+      is unreachable: disconnected']
 ...
 test_run:cmd("start server storage_2_a")
 ---
@@ -283,7 +284,7 @@ vshard.storage.info()
     status: master
   alerts:
   - ['REPLICA_IS_DOWN', 'Replica <storage_2_b> isn''t active']
-  - ['REPLICASET_IS_UNREACHABLE', 'There is no active replicas']
+  - ['REPLICASET_IS_UNREACHABLE', 'There is no active replicas in replicaset <replicaset_2>']
 ...
 test_run:cmd("start server storage_2_b")
 ---

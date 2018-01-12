@@ -71,11 +71,11 @@ local error_code = {
 local error_message_template = {
     [error_code.MISSING_MASTER] = {
          name = 'MISSING_MASTER',
-         msg = 'Master is not configured for this replicaset'
+         msg = 'Master is not configured for replicaset %s'
     },
     [error_code.UNREACHABLE_MASTER] = {
         name = 'UNREACHABLE_MASTER',
-        msg = 'Master is unreachable: %s'
+        msg = 'Master of replicaset %s is unreachable: %s'
     },
     [error_code.OUT_OF_SYNC] = {
         name = 'OUT_OF_SYNC',
@@ -91,7 +91,7 @@ local error_message_template = {
     },
     [error_code.REPLICASET_IS_UNREACHABLE] = {
         name = 'REPLICASET_IS_UNREACHABLE',
-        msg = 'There is no active replicas'
+        msg = 'There is no active replicas in replicaset %s'
     },
     [error_code.LOW_REDUNDANCY] = {
         name = 'LOW_REDUNDANCY',
