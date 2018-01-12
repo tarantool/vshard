@@ -1094,7 +1094,7 @@ local function storage_info()
         alerts = {},
         replication = {},
         bucket = {},
-        status = 0,
+        status = consts.STATUS.GREEN,
     }
     if self.this_replicaset.master == nil then
         table.insert(state.alerts, compact({
