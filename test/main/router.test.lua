@@ -144,8 +144,31 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 -- Monitoring
 --
 
-vshard.router.info().replicasets[1].master.state
-vshard.router.info().replicasets[2].master.state
+-- All is ok, when all servers are up.
+vshard.router.info()
+
+-- Remove replica and master connections to trigger alert
+-- UNREACHABLE_REPLICASET.
+rs = vshard.router.internal.replicasets[replicasets[1]]
+master_conn = rs.master.conn
+replica_conn = rs.replica.conn
+rs.master.conn = nil
+rs.replica.conn = nil
+info = vshard.router.info()
+info.replicasets[rs.uuid]
+info.status
+info.alerts
+rs.master.conn = master_conn
+rs.replica.conn = replica_conn
+
+-- Trigger alert MISSING_MASTER by manual removal of master.
+master = rs.master
+rs.master = nil
+info = vshard.router.info()
+info.replicasets[rs.uuid]
+info.status
+info.alerts
+rs.master = master
 
 --
 -- Configuration: inconsistency master=true on storage and routers

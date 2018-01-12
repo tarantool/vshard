@@ -1141,7 +1141,7 @@ local function storage_info()
         for id, replica in pairs(box.info.replication) do
             if replica.uuid ~= self.this_replica.uuid then
                 if replica.downstream == nil then
-                    table.insert(state.alerts, alert(code.REPLICA_IS_DOWN,
+                    table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
                                                      replica.uuid))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
                 else
@@ -1150,7 +1150,7 @@ local function storage_info()
             end
         end
         if redundancy == 0 then
-            table.insert(state.alerts, alert(code.REPLICASET_IS_UNREACHABLE,
+            table.insert(state.alerts, alert(code.UNREACHABLE_REPLICASET,
                                              this_uuid))
             state.status = math.max(state.status, consts.STATUS.RED)
         elseif redundancy == 1 then

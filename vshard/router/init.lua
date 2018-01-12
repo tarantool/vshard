@@ -55,7 +55,7 @@ local function bucket_discovery(bucket_id)
     end
     local errcode = nil
     if unreachable_uuid then
-        errcode = lerror.code.REPLICASET_IS_UNREACHABLE
+        errcode = lerror.code.UNREACHABLE_REPLICASET
     elseif is_transfer_in_progress then
         errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
     else
@@ -375,22 +375,96 @@ end
 -- Monitoring
 --------------------------------------------------------------------------------
 
-local function router_info()
-    local ireplicaset = {}
-    for _, replicaset in pairs(self.replicasets) do
-        table.insert(ireplicaset, {
-            master = {
-                uri = replicaset.master.uri;
-                uuid = replicaset.master.conn and replicaset.master.conn.peer_uuid;
-                state = replicaset.master.conn and replicaset.master.conn.state;
-                error = replicaset.master.conn and replicaset.master.conn.error;
-            };
-        });
+--
+-- Collect info about a replicaset's replica with a specified
+-- name. Found alerts are appended to @an alerts table, if a
+-- replica does not exist or is unavailable. In a case of error
+-- @a errcolor is returned, and GREEN else.
+--
+local function replicaset_instance_info(replicaset, name, alerts, errcolor,
+                                        errcode_unreachable, params1,
+                                        errcode_missing, params2)
+    local info = {}
+    local replica = replicaset[name]
+    if replica then
+        info.uri = replica.uri
+        info.uuid = replica.uuid
+        if replica:is_connected() then
+            info.status = 'available'
+        else
+            info.status = 'unreachable'
+            if errcode_unreachable then
+                table.insert(alerts, lerror.alert(errcode_unreachable,
+                                                  unpack(params1)))
+                return info, errcolor
+            end
+        end
+    else
+        info.status = 'missing'
+        if errcode_missing then
+            table.insert(alerts, lerror.alert(errcode_missing, unpack(params2)))
+            return info, errcolor
+        end
     end
+    return info, consts.STATUS.GREEN
+end
 
-    return {
-        replicasets = ireplicaset;
+local function router_info()
+    local state = {
+        replicasets = {},
+        alerts = {},
+        status = consts.STATUS.GREEN,
     }
+    for rs_uuid, replicaset in pairs(self.replicasets) do
+        -- Replicaset info parameters:
+        -- * master instance info;
+        -- * replica instance info;
+        -- * replicaset uuid.
+        --
+        -- Instance info parameters:
+        -- * uri;
+        -- * uuid;
+        -- * status - available, unreachable, missing.
+        local rs_info = {uuid = replicaset.uuid}
+        state.replicasets[replicaset.uuid] = rs_info
+
+        -- Build master info.
+        local info, color =
+            replicaset_instance_info(replicaset, 'master', state.alerts,
+                                     consts.STATUS.ORANGE,
+                                     -- Master exists, but not
+                                     -- available.
+                                     lerror.code.UNREACHABLE_MASTER,
+                                     {replicaset.uuid, 'disconnected'},
+                                     -- Master does not exists.
+                                     lerror.code.MISSING_MASTER,
+                                     {replicaset.uuid})
+        state.status = math.max(state.status, color)
+        rs_info.master = info
+
+        -- Build replica info.
+        local uuid = replicaset.replica and replicaset.replica.uuid
+        info = replicaset_instance_info(replicaset, 'replica', state.alerts)
+        rs_info.replica = info
+        if replicaset.replica and
+           replicaset.replica ~= replicaset.priority_list[1] then
+            -- If the replica is not optimal, then some replicas
+            -- possibly are down.
+            local a = lerror.alert(lerror.code.SUBOPTIMAL_REPLICA,
+                                   replicaset.uuid)
+            table.insert(state.alerts, a)
+            state.status = math.max(state.status, consts.STATUS.YELLOW)
+        end
+
+        if rs_info.replica.status ~= 'available' and
+           rs_info.master.status ~= 'available' then
+            local a = lerror.alert(lerror.code.UNREACHABLE_REPLICASET,
+                                   replicaset.uuid)
+            table.insert(state.alerts, a)
+            state.status = consts.STATUS.RED
+        end
+    end
+    return state
 end
 
 --------------------------------------------------------------------------------

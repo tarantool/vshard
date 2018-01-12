@@ -343,13 +343,111 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 --
 -- Monitoring
 --
-vshard.router.info().replicasets[1].master.state
+-- All is ok, when all servers are up.
+vshard.router.info()
 ---
-- active
+- replicasets:
+    <replicaset_2>:
+      replica:
+        status: available
+        uri: storage:storage@127.0.0.1:3303
+        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      uuid: <replicaset_2>
+      master:
+        status: available
+        uri: storage:storage@127.0.0.1:3303
+        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+    <replicaset_1>:
+      replica:
+        status: available
+        uri: storage:storage@127.0.0.1:3301
+        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+      uuid: <replicaset_1>
+      master:
+        status: available
+        uri: storage:storage@127.0.0.1:3301
+        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  status: 0
+  alerts: []
 ...
-vshard.router.info().replicasets[2].master.state
+-- Remove replica and master connections to trigger alert
+-- UNREACHABLE_REPLICASET.
+rs = vshard.router.internal.replicasets[replicasets[1]]
 ---
-- active
+...
+master_conn = rs.master.conn
+---
+...
+replica_conn = rs.replica.conn
+---
+...
+rs.master.conn = nil
+---
+...
+rs.replica.conn = nil
+---
+...
+info = vshard.router.info()
+---
+...
+info.replicasets[rs.uuid]
+---
+- replica:
+    status: unreachable
+    uri: storage:storage@127.0.0.1:3301
+    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  uuid: <replicaset_1>
+  master:
+    status: unreachable
+    uri: storage:storage@127.0.0.1:3301
+    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+...
+info.status
+---
+- 3
+...
+info.alerts
+---
+- - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_1>
+      is unreachable: disconnected']
+  - ['UNREACHABLE_REPLICASET', 'There is no active replicas in replicaset <replicaset_1>']
+...
+rs.master.conn = master_conn
+---
+...
+rs.replica.conn = replica_conn
+---
+...
+-- Trigger alert MISSING_MASTER by manual removal of master.
+master = rs.master
+---
+...
+rs.master = nil
+---
+...
+info = vshard.router.info()
+---
+...
+info.replicasets[rs.uuid]
+---
+- replica:
+    status: available
+    uri: storage:storage@127.0.0.1:3301
+    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  uuid: <replicaset_1>
+  master:
+    status: missing
+...
+info.status
+---
+- 2
+...
+info.alerts
+---
+- - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
+...
+rs.master = master
+---
 ...
 --
 -- Configuration: inconsistency master=true on storage and routers

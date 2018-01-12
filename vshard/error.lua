@@ -55,7 +55,7 @@ local error_code = {
     MOVE_TO_SELF = 5,
     MISSING_MASTER = 6,
     TRANSFER_IS_IN_PROGRESS = 7,
-    REPLICASET_IS_UNREACHABLE = 8,
+    UNREACHABLE_REPLICASET = 8,
     NO_ROUTE_TO_BUCKET = 9,
     NON_EMPTY = 10,
 
@@ -63,9 +63,10 @@ local error_code = {
     UNREACHABLE_MASTER = 11,
     OUT_OF_SYNC = 12,
     HIGH_REPLICATION_LAG = 13,
-    REPLICA_IS_DOWN = 14,
+    UNREACHABLE_REPLICA = 14,
     LOW_REDUNDANCY = 15,
     INVALID_REBALANCING = 16,
+    SUBOPTIMAL_REPLICA = 17,
 }
 
 local error_message_template = {
@@ -85,12 +86,12 @@ local error_message_template = {
         name = 'HIGH_REPLICATION_LAG',
         msg = 'High replication lag: %f'
     },
-    [error_code.REPLICA_IS_DOWN] = {
-        name = 'REPLICA_IS_DOWN',
+    [error_code.UNREACHABLE_REPLICA] = {
+        name = 'UNREACHABLE_REPLICA',
         msg = "Replica %s isn't active"
     },
-    [error_code.REPLICASET_IS_UNREACHABLE] = {
-        name = 'REPLICASET_IS_UNREACHABLE',
+    [error_code.UNREACHABLE_REPLICASET] = {
+        name = 'UNREACHABLE_REPLICASET',
         msg = 'There is no active replicas in replicaset %s'
     },
     [error_code.LOW_REDUNDANCY] = {
@@ -101,6 +102,10 @@ local error_message_template = {
         name = 'INVALID_REBALANCING',
         msg = 'Sending and receiving buckets at same time is not allowed'
     },
+    [error_code.SUBOPTIMAL_REPLICA] = {
+        name = 'SUBOPTIMAL_REPLICA',
+        msg = 'A current read replica in replicaset %s is not optimal'
+    }
 }
 
 local function make_alert(code, ...)

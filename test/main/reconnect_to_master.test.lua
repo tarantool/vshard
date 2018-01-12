@@ -33,6 +33,12 @@ test_run:cmd("setopt delimiter ''");
 -- No master in replica set 1.
 is_disconnected()
 
+-- Wait until replica is connected to test alerts on unavailable
+-- master.
+fiber = require('fiber')
+while vshard.router.internal.replicasets[replicasets[1]].replica == nil do fiber.sleep(0.1) end
+vshard.router.info()
+
 -- Return master.
 _ = test_run:cmd('start server storage_1_a')
 fiber = require('fiber')
