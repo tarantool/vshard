@@ -1078,7 +1078,6 @@ local function storage_buckets_info()
             id = bucket.id;
             status = bucket.status;
             destination = bucket.destination;
-            is_dirty = bucket.is_dirty;
         }
     end
 
