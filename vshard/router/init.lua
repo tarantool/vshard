@@ -10,21 +10,36 @@ local lreplicaset = require('vshard.replicaset')
 local self = {
     errinj = {
         ERRINJ_FAILOVER_CHANGE_CFG = false,
-    }
+    },
+    -- Bucket map cache.
+    route_map = {},
+    route_map_size = 0,
+    --
+    -- All known replicasets used for bucket re-balancing
+    --
+    replicasets = nil,
 }
 
 --------------------------------------------------------------------------------
 -- Routing
 --------------------------------------------------------------------------------
 
---
--- All known replicasets used for bucket re-balancing
---
-self.replicasets = nil
+-- Set a replicaset by container of a bucket.
+local function bucket_set(bucket_id, replicaset)
+    assert(replicaset)
+    if self.route_map[bucket_id] == nil then
+        self.route_map_size = self.route_map_size + 1
+    end
+    self.route_map[bucket_id] = replicaset
+end
 
--- Bucket map cache
--- NOTE: it is should be good to store bucket map in memtx space
-self.route_map = {}
+-- Remove a bucket from the cache.
+local function bucket_reset(bucket_id)
+    if self.route_map[bucket_id] ~= nil then
+        self.route_map_size = self.route_map_size - 1
+        self.route_map[bucket_id] = nil
+    end
+end
 
 -- Search bucket in whole cluster
 local function bucket_discovery(bucket_id)
@@ -44,7 +59,7 @@ local function bucket_discovery(bucket_id)
                stat.status == consts.BUCKET.SENDING then
                 log.info("Discovered bucket %d on %s", bucket_id,
                          replicaset.uuid)
-                self.route_map[bucket_id] = replicaset
+                bucket_set(bucket_id, replicaset)
                 return replicaset
             elseif stat.status == consts.BUCKET.RECEIVING then
                 is_transfer_in_progress = true
@@ -123,7 +138,7 @@ local function router_call(bucket_id, mode, func, args)
             err = call_status
             if err.code == lerror.code.WRONG_BUCKET or
                err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
-                self.route_map[bucket_id] = nil
+                bucket_reset(bucket_id)
             elseif err.code == lerror.code.NON_MASTER then
                 log.warn("Replica %s is not master for replicaset %s anymore,"..
                          "please update configuration!",
@@ -318,6 +333,7 @@ local function router_cfg(cfg)
     self.replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
     -- TODO: update existing route map in-place
     self.route_map = {}
+    self.route_map_size = 0
     cfg.sharding = nil
     cfg.weights = nil
     cfg.zone = nil
