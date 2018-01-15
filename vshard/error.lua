@@ -70,6 +70,7 @@ local error_code = {
     LOW_REDUNDANCY = 15,
     INVALID_REBALANCING = 16,
     SUBOPTIMAL_REPLICA = 17,
+    UNKNOWN_BUCKETS = 18,
 }
 
 local error_message_template = {
@@ -108,6 +109,10 @@ local error_message_template = {
     [error_code.SUBOPTIMAL_REPLICA] = {
         name = 'SUBOPTIMAL_REPLICA',
         msg = 'A current read replica in replicaset %s is not optimal'
+    },
+    [error_code.UNKNOWN_BUCKETS] = {
+        name = 'UNKNOWN_BUCKETS',
+        msg = '%d buckets are not discovered',
     }
 }
 

@@ -187,6 +187,20 @@ test_run:cmd('switch router_1')
 - true
 ...
 -- Check unavailability of master of a replicaset.
+_ = vshard.router.bucket_discovery(2)
+---
+...
+_ = vshard.router.bucket_discovery(3)
+---
+...
+vshard.router.buckets_info(0, 3)
+---
+- - status: unknown
+  - uuid: <replicaset_1>
+    status: available_rw
+  - uuid: <replicaset_2>
+    status: available_rw
+...
 test_run:cmd('stop server storage_2_a')
 ---
 - true
@@ -198,6 +212,14 @@ util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
   unreachable_uuid: <replicaset_2>
   code: 8
   bucket_id: 1
+...
+vshard.router.buckets_info(0, 3)
+---
+- - status: unknown
+  - uuid: <replicaset_1>
+    status: available_rw
+  - uuid: <replicaset_2>
+    status: unreachable
 ...
 test_run:cmd('start server storage_2_a')
 ---
@@ -367,8 +389,14 @@ vshard.router.info()
         status: available
         uri: storage:storage@127.0.0.1:3301
         uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
-  status: 0
-  alerts: []
+  bucket:
+    unreachable: 0
+    available_ro: 0
+    unknown: 2997
+    available_rw: 3
+  status: 1
+  alerts:
+  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
 ...
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.
@@ -411,6 +439,7 @@ info.alerts
 - - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_1>
       is unreachable: disconnected']
   - ['UNREACHABLE_REPLICASET', 'There is no active replicas in replicaset <replicaset_1>']
+  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
 ...
 rs.master.conn = master_conn
 ---
@@ -445,9 +474,53 @@ info.status
 info.alerts
 ---
 - - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
+  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
 ...
 rs.master = master
 ---
+...
+buckets_info = vshard.router.buckets_info()
+---
+...
+#buckets_info
+---
+- 3000
+...
+buckets_info[1]
+---
+- uuid: <replicaset_2>
+  status: available_rw
+...
+buckets_info[2]
+---
+- uuid: <replicaset_1>
+  status: available_rw
+...
+vshard.router.buckets_info(0, 3)
+---
+- - uuid: <replicaset_2>
+    status: available_rw
+  - uuid: <replicaset_1>
+    status: available_rw
+  - uuid: <replicaset_2>
+    status: available_rw
+...
+vshard.router.buckets_info(vshard.consts.BUCKET_COUNT - 3)
+---
+- 3000:
+    status: unknown
+  2998:
+    status: unknown
+  2999:
+    status: unknown
+...
+util.check_error(vshard.router.buckets_info, '123')
+---
+- 'Usage: buckets_info(offset, limit)'
+...
+util.check_error(vshard.router.buckets_info, 123, '456')
+---
+- 'Usage: buckets_info(offset, limit)'
 ...
 --
 -- gh-51: discovery fiber.
@@ -490,6 +563,20 @@ test_run:grep_log('router_1', 'was 1, became 1500')
 ---
 - was 1, became 1500
 ...
+info = vshard.router.info()
+---
+...
+info.bucket
+---
+- unreachable: 0
+  available_ro: 0
+  unknown: 0
+  available_rw: 3000
+...
+info.alerts
+---
+- []
+...
 --
 -- Ensure the discovery procedure works continuously.
 --
@@ -513,6 +600,20 @@ calculate_known_buckets()
 ---
 - 2900
 ...
+info = vshard.router.info()
+---
+...
+info.bucket
+---
+- unreachable: 0
+  available_ro: 0
+  unknown: 100
+  available_rw: 2900
+...
+info.alerts
+---
+- - ['UNKNOWN_BUCKETS', '100 buckets are not discovered']
+...
 wait_discovery()
 ---
 ...
@@ -523,6 +624,20 @@ calculate_known_buckets()
 test_run:grep_log('router_1', 'was 1450, became 1500')
 ---
 - was 1450, became 1500
+...
+info = vshard.router.info()
+---
+...
+info.bucket
+---
+- unreachable: 0
+  available_ro: 0
+  unknown: 0
+  available_rw: 3000
+...
+info.alerts
+---
+- []
 ...
 --
 -- Configuration: inconsistency master=true on storage and routers

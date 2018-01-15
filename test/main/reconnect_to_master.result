@@ -150,12 +150,18 @@ vshard.router.info()
         status: unreachable
         uri: storage:storage@127.0.0.1:3301
         uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  bucket:
+    unreachable: 0
+    available_ro: 10
+    unknown: 2990
+    available_rw: 0
   status: 2
   alerts:
   - ['UNREACHABLE_MASTER', 'Master of replicaset cbf06940-0790-498b-948d-042b62cf3d29
       is unreachable: disconnected']
   - ['SUBOPTIMAL_REPLICA', 'A current read replica in replicaset cbf06940-0790-498b-948d-042b62cf3d29
       is not optimal']
+  - ['UNKNOWN_BUCKETS', '2990 buckets are not discovered']
 ...
 -- Return master.
 _ = test_run:cmd('start server storage_1_a')

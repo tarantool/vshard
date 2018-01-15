@@ -481,9 +481,17 @@ end
 local function router_info()
     local state = {
         replicasets = {},
+        bucket = {
+            available_ro = 0,
+            available_rw = 0,
+            unreachable = 0,
+            unknown = 0,
+        },
         alerts = {},
         status = consts.STATUS.GREEN,
     }
+    local bucket_info = state.bucket
+    local known_bucket_count = 0
     for rs_uuid, replicaset in pairs(self.replicasets) do
         -- Replicaset info parameters:
         -- * master instance info;
@@ -532,8 +540,83 @@ local function router_info()
             table.insert(state.alerts, a)
             state.status = consts.STATUS.RED
         end
+
+        -- Bucket info consists of three parameters:
+        -- * available_ro: how many buckets are known and
+        --                 available for read requests;
+        -- * available_rw: how many buckets are known and
+        --                 available for both read and write
+        --                 requests;
+        -- * unreachable: how many buckets are known, but are not
+        --                available for any requests;
+        -- * unknown: how many buckets are unknown - a router
+        --            doesn't know their replicasets.
+        known_bucket_count = known_bucket_count + replicaset.bucket_count
+        if rs_info.master.status ~= 'available' then
+            if rs_info.replica.status ~= 'available' then
+                bucket_info.unreachable = bucket_info.unreachable +
+                                          replicaset.bucket_count
+            else
+                bucket_info.available_ro = bucket_info.available_ro +
+                                           replicaset.bucket_count
+            end
+        else
+            bucket_info.available_rw = bucket_info.available_rw +
+                                       replicaset.bucket_count
+        end
+        -- No necessarity to update color - it is done above
+        -- during replicaset master and replica checking.
+        -- If a bucket is unreachable, then replicaset is
+        -- unreachable too and color already is red.
+    end
+    bucket_info.unknown = consts.BUCKET_COUNT - known_bucket_count
+    if bucket_info.unknown > 0 then
+        state.status = math.max(state.status, consts.STATUS.YELLOW)
+        table.insert(state.alerts, lerror.alert(lerror.code.UNKNOWN_BUCKETS,
+                                                bucket_info.unknown))
     end
     return state
+end
+
+--
+-- Build info about each bucket. Since a bucket map can be huge,
+-- the function provides API to get not entire bucket map, but a
+-- part.
+-- @param offset Offset in a bucket map to select from.
+-- @param limit Maximal bucket count in output.
+-- @retval Map of type {bucket_id = 'unknown'/replicaset_uuid}.
+--
+local function router_buckets_info(offset, limit)
+    if offset ~= nil and type(offset) ~= 'number' or
+       limit ~= nil and type(limit) ~= 'number' then
+        error('Usage: buckets_info(offset, limit)')
+    end
+    offset = offset or 0
+    limit = limit or consts.BUCKET_COUNT
+    local ret = {}
+    -- Use one string memory for all unknown buckets.
+    local available_rw = 'available_rw'
+    local available_ro = 'available_ro'
+    local unknown = 'unknown'
+    local unreachable = 'unreachable'
+    -- Collect limit.
+    local first = math.max(1, offset + 1)
+    local last = math.min(offset + limit, consts.BUCKET_COUNT)
+    for bucket_id = first, last do
+        local rs = self.route_map[bucket_id]
+        if rs then
+            if rs.master and rs.master:is_connected() then
+                ret[bucket_id] = {uuid = rs.uuid, status = available_rw}
+            elseif rs.replica and rs.replica:is_connected() then
+                ret[bucket_id] = {uuid = rs.uuid, status = available_ro}
+            else
+                ret[bucket_id] = {uuid = rs.uuid, status = unreachable}
+            end
+        else
+            ret[bucket_id] = {status = unknown}
+        end
+    end
+    return ret
 end
 
 --------------------------------------------------------------------------------
@@ -561,6 +644,7 @@ end
 return {
     cfg = router_cfg;
     info = router_info;
+    buckets_info = router_buckets_info;
     call = router_call;
     route = router_route;
     routeall = router_routeall;

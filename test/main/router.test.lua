@@ -69,8 +69,12 @@ box.space._bucket:delete({1})
 test_run:cmd('switch router_1')
 
 -- Check unavailability of master of a replicaset.
+_ = vshard.router.bucket_discovery(2)
+_ = vshard.router.bucket_discovery(3)
+vshard.router.buckets_info(0, 3)
 test_run:cmd('stop server storage_2_a')
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
+vshard.router.buckets_info(0, 3)
 test_run:cmd('start server storage_2_a')
 
 --
@@ -170,6 +174,16 @@ info.status
 info.alerts
 rs.master = master
 
+buckets_info = vshard.router.buckets_info()
+#buckets_info
+buckets_info[1]
+buckets_info[2]
+
+vshard.router.buckets_info(0, 3)
+vshard.router.buckets_info(vshard.consts.BUCKET_COUNT - 3)
+util.check_error(vshard.router.buckets_info, '123')
+util.check_error(vshard.router.buckets_info, 123, '456')
+
 --
 -- gh-51: discovery fiber.
 --
@@ -193,6 +207,9 @@ test_run:cmd("setopt delimiter ''");
 wait_discovery()
 calculate_known_buckets()
 test_run:grep_log('router_1', 'was 1, became 1500')
+info = vshard.router.info()
+info.bucket
+info.alerts
 
 --
 -- Ensure the discovery procedure works continuously.
@@ -206,9 +223,15 @@ for i = 1, 100 do
 end;
 test_run:cmd("setopt delimiter ''");
 calculate_known_buckets()
+info = vshard.router.info()
+info.bucket
+info.alerts
 wait_discovery()
 calculate_known_buckets()
 test_run:grep_log('router_1', 'was 1450, became 1500')
+info = vshard.router.info()
+info.bucket
+info.alerts
 
 --
 -- Configuration: inconsistency master=true on storage and routers
