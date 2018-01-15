@@ -172,8 +172,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 0
   replication:
@@ -202,8 +202,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 1
   replication:
@@ -245,8 +245,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 2
   replication:
@@ -276,8 +276,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 3
   replication:
@@ -308,8 +308,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 0
   replication:
@@ -339,8 +339,8 @@ vshard.storage.info()
   bucket:
     receiving: 0
     active: 2
+    total: 2
     garbage: 0
-    count: 2
     sending: 0
   status: 2
   replication:

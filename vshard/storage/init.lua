@@ -1159,7 +1159,7 @@ local function storage_info()
         end
     end
 
-    state.bucket.count = box.space._bucket.index.pk:count()
+    state.bucket.total = box.space._bucket.index.pk:count()
     state.bucket.active = box.space._bucket.index.status:count({consts.BUCKET.ACTIVE})
     state.bucket.garbage = box.space._bucket.index.status:count({consts.BUCKET.SENT})
     state.bucket.receiving = box.space._bucket.index.status:count({consts.BUCKET.RECEIVING})
