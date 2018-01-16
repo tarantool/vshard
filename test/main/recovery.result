@@ -1,0 +1,190 @@
+test_run = require('test_run').new()
+---
+...
+REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
+---
+...
+REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
+---
+...
+test_run:create_cluster(REPLICASET_1, 'main')
+---
+...
+test_run:create_cluster(REPLICASET_2, 'main')
+---
+...
+test_run:wait_fullmesh(REPLICASET_1)
+---
+...
+test_run:wait_fullmesh(REPLICASET_2)
+---
+...
+test_run:cmd("switch storage_1_a")
+---
+- true
+...
+vshard.storage.rebalancer_disable()
+---
+...
+rs2_uuid = replicasets[2]
+---
+...
+-- Create buckets sending to rs2 and restart - recovery must
+-- garbage some of them and activate others. Receiving buckets
+-- must be garbaged on bootstrap.
+_bucket = box.space._bucket
+---
+...
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, rs2_uuid}
+---
+- [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+_bucket:replace{2, vshard.consts.BUCKET.SENDING, rs2_uuid}
+---
+- [2, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+_bucket:replace{3, vshard.consts.BUCKET.RECEIVING, rs2_uuid}
+---
+- [3, 'receiving', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:cmd('switch storage_2_a')
+---
+- true
+...
+_bucket = box.space._bucket
+---
+...
+rs1_uuid = replicasets[1]
+---
+...
+_bucket:replace{1, vshard.consts.BUCKET.RECEIVING, rs1_uuid}
+---
+- [1, 'receiving', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+_bucket:replace{2, vshard.consts.BUCKET.ACTIVE, rs1_uuid}
+---
+- [2, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+_bucket:replace{3, vshard.consts.BUCKET.SENDING, rs1_uuid}
+---
+- [3, 'sending', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:cmd('stop server storage_1_a')
+---
+- true
+...
+test_run:cmd('start server storage_1_a')
+---
+- true
+...
+test_run:cmd('switch storage_1_a')
+---
+- true
+...
+fiber = require('fiber')
+---
+...
+vshard.storage.recovery_wakeup()
+---
+...
+_bucket = box.space._bucket
+---
+...
+_bucket:select{}
+---
+- - [1, 'active', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+  - [2, 'garbage', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+while _bucket:count() ~= 1 do fiber.sleep(0.1) end
+---
+...
+--
+-- Test a case, when a destination is down. The recovery fiber
+-- must restore buckets, when the destination is up.
+--
+rs2_uuid = replicasets[2]
+---
+...
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, rs2_uuid}
+---
+- [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:cmd('switch storage_2_a')
+---
+- true
+...
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE, rs1_uuid}
+---
+- [1, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:cmd('switch default')
+---
+- true
+...
+test_run:cmd('stop server storage_2_a')
+---
+- true
+...
+test_run:cmd('stop server storage_1_a')
+---
+- true
+...
+test_run:cmd('start server storage_1_a')
+---
+- true
+...
+test_run:cmd('switch storage_1_a')
+---
+- true
+...
+_bucket = box.space._bucket
+---
+...
+_bucket:select{}
+---
+- - [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+for i = 1, 10 do vshard.storage.recovery_wakeup() end
+---
+...
+_bucket:select{}
+---
+- - [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:cmd('start server storage_2_a')
+---
+- true
+...
+fiber = require('fiber')
+---
+...
+while _bucket:count() ~= 0 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
+---
+...
+_bucket:select{}
+---
+- []
+...
+test_run:cmd('switch storage_2_a')
+---
+- true
+...
+_bucket = box.space._bucket
+---
+...
+_bucket:select{}
+---
+- - [1, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+  - [2, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+  - [3, 'sending', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:cmd("switch default")
+---
+- true
+...
+test_run:drop_cluster(REPLICASET_2)
+---
+...
+test_run:drop_cluster(REPLICASET_1)
+---
+...

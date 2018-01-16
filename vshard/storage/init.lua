@@ -17,6 +17,12 @@ local self = {
     replicasets = nil,
     -- Fiber to remove garbage buckets data.
     garbage_collect_fiber = nil,
+    -- Bucket identifiers which are not active and are not being
+    -- sent - their status is unknown. Their state must be checked
+    -- periodically in recovery fiber.
+    buckets_to_recovery = {},
+    buckets_to_recovery_count = 0,
+    recovery_fiber = nil,
     -- Fiber to rebalance a cluster.
     rebalancer_fiber = nil,
     -- Fiber which applies routes one by one. Its presense and
@@ -69,6 +75,127 @@ local function storage_schema_v1(username, password)
     end
 
     box.snapshot()
+end
+
+--------------------------------------------------------------------------------
+-- Recovery
+--------------------------------------------------------------------------------
+
+--
+-- Check status of each bucket scheduled for recovery. Resolve
+-- status where possible.
+--
+local function recovery_step()
+    -- Buckets to became garbage. It is such buckets, that they
+    -- are in 'sending' state here, but 'active' on another
+    -- replicaset.
+    local garbage = {}
+    -- Bucket becames active, if it is sending here and is not
+    -- active on destination replicaset.
+    local active = {}
+    -- If a bucket status is resolved, it is deleted from
+    -- buckets_to_recovery map.
+    local recovered = {}
+    local _bucket = box.space._bucket
+    local new_count = 0
+    for bucket_id, _ in pairs(self.buckets_to_recovery) do
+        local bucket = _bucket:get{bucket_id}
+        if not bucket or bucket.status ~= consts.BUCKET.SENDING then
+            -- Possibly, a bucket was deleted or recovered by
+            -- an admin. Or recovery_f started not after
+            -- bootstrap, but after master change - in such a case
+            -- there can be receiving buckets, which are ok.
+            table.insert(recovered, bucket_id)
+            goto continue
+        end
+        local destination = self.replicasets[bucket.destination]
+        if not destination or not destination.master then
+            -- No replicaset master for a bucket. Wait until it
+            -- appears.
+            new_count = new_count + 1
+            goto continue
+        end
+        local remote_bucket, err =
+            destination:callrw('vshard.storage.bucket_stat', {bucket_id})
+        if not remote_bucket then
+            -- We can ignore other replicasets, because a bucket
+            -- could not be sent from destination further, on
+            -- another replicaset. It is guaranteed by rebalancer
+            -- algorithm, which is stopped, if there are 'sending'
+            -- buckets. And the current bucket is exactly
+            -- 'sending'.
+            new_count = new_count + 1
+            goto continue
+        end
+        table.insert(recovered, bucket_id)
+        if remote_bucket.status == consts.BUCKET.ACTIVE then
+            table.insert(garbage, bucket_id)
+        else
+            table.insert(active, bucket_id)
+        end
+::continue::
+    end
+    if #active > 0 or #garbage > 0 then
+        box.begin()
+        for _, id in pairs(active) do
+            _bucket:update({id}, {{'=', 2, consts.BUCKET.ACTIVE}})
+        end
+        for _, id in pairs(garbage) do
+            _bucket:update({id}, {{'=', 2, consts.BUCKET.GARBAGE}})
+        end
+        box.commit()
+    end
+    for _, id in pairs(recovered) do
+        self.buckets_to_recovery[id] = nil
+    end
+    self.buckets_to_recovery_count = new_count
+end
+
+--
+-- Make all 'receiving' buckets be 'garbage'. The procedure is
+-- called on instance start to garbage collect buckets, whose
+-- transmition was interrupted by the server down.
+--
+local function recovery_garbage_receiving_buckets()
+    local _bucket = box.space._bucket
+    local receiving_buckets =
+        _bucket.index.status:select{consts.BUCKET.RECEIVING}
+    if #receiving_buckets > 0 then
+        box.begin()
+        for _, bucket in pairs(receiving_buckets) do
+            _bucket:update({bucket.id}, {{'=', 2, consts.BUCKET.GARBAGE}})
+        end
+        box.commit()
+    end
+end
+
+--
+-- Background fiber to resolve status of buckets, whose 'sending'
+-- has failed due to tarantool or network problems.
+--
+local function recovery_f()
+    local _bucket = box.space._bucket
+    local sending_buckets = _bucket.index.status:select{consts.BUCKET.SENDING}
+    self.buckets_to_recovery = {}
+    for _, bucket in pairs(sending_buckets) do
+        self.buckets_to_recovery[bucket.id] = true
+    end
+    while true do
+        local ok, err = pcall(recovery_step)
+        if not ok then
+            log.error('Error during buckets recovery: %s', err)
+        end
+        lfiber.sleep(consts.RECOVERY_INTERVAL)
+    end
+end
+
+--
+-- Immediately wakeup recovery fiber, if exists.
+--
+local function recovery_wakeup()
+    if self.recovery_fiber then
+        self.recovery_fiber:wakeup()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -304,6 +431,11 @@ local function local_master_disable()
         self.garbage_collect_fiber = nil
         log.info("GC stopped")
     end
+    if self.recovery_fiber ~= nil then
+        self.recovery_fiber:cancel()
+        self.recovery_fiber = nil
+        log.info('Recovery stopped')
+    end
     -- Wait until replicas are synchronized before one another become a new master
     sync(consts.SYNC_TIMEOUT)
     log.info("Resigned from the replicaset master role")
@@ -317,9 +449,12 @@ local collect_garbage_f
 --
 local function local_master_enable()
     log.verbose("Taking on replicaset master role...")
+    recovery_garbage_receiving_buckets()
     -- Start background process to collect garbage.
     self.garbage_collect_fiber = lfiber.create(collect_garbage_f)
-    log.info("GC started")
+    log.info("GC is started")
+    self.recovery_fiber = lfiber.create(recovery_f)
+    log.info('Recovery is started')
     -- TODO: check current status
     log.info("Took on replicaset master role")
 end
@@ -1214,6 +1349,7 @@ return {
     rebalancer_apply_routes = rebalancer_apply_routes;
     rebalancer_disable = rebalancer_disable;
     rebalancer_enable = rebalancer_enable;
+    recovery_wakeup = recovery_wakeup;
     call = storage_call;
     cfg = storage_cfg;
     info = storage_info;
