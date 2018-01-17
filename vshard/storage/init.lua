@@ -484,18 +484,24 @@ local function bucket_send(bucket_id, destination)
     end
 
     local data = bucket_collect_internal(bucket_id)
+    -- In a case of OOM or exception below the recovery fiber must
+    -- handle the 'sending' bucket.
+    self.buckets_to_recovery[bucket_id] = true
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
 
     local status, err =
         replicaset:callrw('vshard.storage.bucket_recv',
                            {bucket_id, box.info.cluster.uuid, data})
     if not status then
-        -- Rollback bucket state.
-        box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        if err.type == 'ShardingError' then
+            -- Rollback bucket state.
+            box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+            self.buckets_to_recovery[bucket_id] = nil
+        end
         return status, err
     end
-
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
+    self.buckets_to_recovery[bucket_id] = nil
 
     return true
 end

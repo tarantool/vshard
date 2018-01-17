@@ -19,6 +19,10 @@ vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_send(1, replicaset_uuid[2])
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID: expected ')
 box.space._bucket:select{}
+-- Bucket sending fails, but it remains be 'sending'. It is
+-- because we do not known was request executed or not before
+-- connection was lost. Restore it to 'active' manualy.
+box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
 
 test_run:cmd('create server bad_uuid_router with script="main/bad_uuid_router.lua", wait=True, wait_load=True')
 test_run:cmd('start server bad_uuid_router')
