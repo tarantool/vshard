@@ -1,4 +1,5 @@
 local ffi = require('ffi')
+local json = require('json')
 
 --
 -- There are 3 error types:
@@ -14,15 +15,17 @@ local ffi = require('ffi')
 --   message.
 --
 local function lua_error(msg)
-    return { type = 'LuajitError', message = msg }
+    return setmetatable({ type = 'LuajitError', message = msg },
+                        {__tostring = json.encode})
 end
 
 local function box_error(original_error)
-    return original_error:unpack()
+    return setmetatable(original_error:unpack(), {__tostring = json.encode})
 end
 
 local function vshard_error(code, args, msg)
-    local ret = { type = 'ShardingError', code = code, message = msg }
+    local ret = setmetatable({type = 'ShardingError', code = code,
+                              message = msg}, {__tostring = json.encode})
     for k, v in pairs(args) do
         ret[k] = v
     end
