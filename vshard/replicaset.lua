@@ -67,6 +67,7 @@ local function netbox_on_connect(conn)
     end
     -- If a replica's connection has revived, then unset
     -- replica.down_ts - it is not down anymore.
+    assert(replica ~= nil)
     replica.down_ts = nil
     if replica == rs.priority_list[1] then
         -- Update replica_up_ts, if the current replica has the
@@ -143,6 +144,11 @@ local function replicaset_make_replica_read(replicaset, replica, read_name)
         -- is nullified in on_connect(), if the connection is
         -- established.
         replica.down_ts = fiber.time()
+    else
+        -- Unsed down_ts explicitly, because it could be candidate
+        -- earlier. And candidate in a case of failure sets
+        -- down_ts.
+        replica.down_ts = nil
     end
     if old_replica and old_replica ~= replicaset.master then
         assert(conn ~= old_replica.conn)
