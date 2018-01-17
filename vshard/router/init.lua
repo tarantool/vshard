@@ -171,7 +171,7 @@ end
 -- Return map of all replicasets.
 -- @retval See self.replicasets map.
 --
-local function router_route_all()
+local function router_routeall()
     return self.replicasets
 end
 
@@ -484,6 +484,24 @@ local function router_info()
 end
 
 --------------------------------------------------------------------------------
+-- Other
+--------------------------------------------------------------------------------
+
+local function router_sync(timeout)
+    if timeout ~= nil and type(timeout) ~= 'number' then
+        error('Usage: vshard.router.sync([timeout: number])')
+    end
+    for rs_uuid, replicaset in pairs(self.replicasets) do
+        local status, err = replicaset:callrw('vshard.storage.sync', {timeout})
+        if not status then
+            -- Add information about replicaset
+            err.replicaset = rs_uuid
+            return nil, err
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
 
@@ -492,7 +510,8 @@ return {
     info = router_info;
     call = router_call;
     route = router_route;
-    route_all = router_route_all;
+    routeall = router_routeall;
+    sync = router_sync;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
     internal = self;

@@ -56,6 +56,7 @@ local function storage_schema_v1(username, password)
     bucket:create_index('status', {parts = {'status'}, unique = false})
 
     local storage_api = {
+        'vshard.storage.sync',
         'vshard.storage.call',
         'vshard.storage.bucket_force_create',
         'vshard.storage.bucket_force_drop',
@@ -215,6 +216,10 @@ local function vclock_lesseq(vc1, vc2)
 end
 
 local function sync(timeout)
+    if timeout ~= nil and type(timeout) ~= 'number' then
+        error('Usage: vshard.storage.sync([timeout: number])')
+    end
+
     log.verbose("Synchronizing replicaset...")
     timeout = timeout or consts.SYNC_TIMEOUT
     local vclock = box.info.vclock
@@ -1335,7 +1340,6 @@ end
 -- Module definition
 --------------------------------------------------------------------------------
 
-self.sync = sync
 self.find_sharded_spaces = find_sharded_spaces
 self.find_garbage_bucket = find_garbage_bucket
 self.collect_garbage_step = collect_garbage_step
@@ -1345,6 +1349,7 @@ self.rebalancer_build_routes = rebalancer_build_routes
 self.rebalancer_calculate_metrics = rebalancer_calculate_metrics
 
 return {
+    sync = sync;
     bucket_force_create = bucket_force_create;
     bucket_force_drop = bucket_force_drop;
     bucket_collect = bucket_collect;

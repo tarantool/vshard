@@ -27,6 +27,7 @@ test_run:cmd("push filter '"..storage_2_a_uuid.."' to '<storage_2_a>'")
 test_run:cmd("push filter '"..storage_2_b_uuid.."' to '<storage_2_b>'")
 
 _ = test_run:cmd("switch storage_1_a")
+util = require('util')
 vshard.storage.rebalancer_disable()
 
 replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
@@ -34,7 +35,10 @@ replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]
 vshard.storage.info().replicasets[replicaset1_uuid] or vshard.storage.info()
 vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 
-vshard.storage.internal.sync()
+-- Sync API
+vshard.storage.sync()
+util.check_error(vshard.storage.sync, "xxx")
+vshard.storage.sync(100500)
 
 vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1)

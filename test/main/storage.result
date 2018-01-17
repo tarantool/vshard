@@ -82,6 +82,9 @@ test_run:cmd("push filter '"..storage_2_b_uuid.."' to '<storage_2_b>'")
 _ = test_run:cmd("switch storage_1_a")
 ---
 ...
+util = require('util')
+---
+...
 vshard.storage.rebalancer_disable()
 ---
 ...
@@ -103,7 +106,16 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
   master:
     uri: storage:storage@127.0.0.1:3303
 ...
-vshard.storage.internal.sync()
+-- Sync API
+vshard.storage.sync()
+---
+- true
+...
+util.check_error(vshard.storage.sync, "xxx")
+---
+- 'Usage: vshard.storage.sync([timeout: number])'
+...
+vshard.storage.sync(100500)
 ---
 - true
 ...

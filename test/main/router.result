@@ -267,7 +267,7 @@ conn.state
 --
 -- gh-44: API to get connections to all replicasets.
 --
-map = vshard.router.route_all()
+map = vshard.router.routeall()
 ---
 ...
 uuids = {}
@@ -522,6 +522,17 @@ vshard.router.cfg(cfg)
 vshard.router.call(1, 'write', 'echo', { 'hello world' })
 ---
 - hello world
+...
+-- Sync API
+vshard.router.sync()
+---
+...
+util.check_error(vshard.router.sync, "xxx")
+---
+- 'Usage: vshard.router.sync([timeout: number])'
+...
+vshard.router.sync(100500)
+---
 ...
 _ = test_run:cmd("switch default")
 ---

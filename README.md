@@ -287,6 +287,10 @@ Return replicaset object for specified `bucket_id`.
 
 Return all available replicaset objects in the map of type: `{UUID = replicaset}`.
 
+#### `vshard.router.sync(timeout)`
+
+Wait until all data are synchronized on replicas.
+
 #### `info = vshard.router.info()`
 
 Returns the current router status.
@@ -333,7 +337,7 @@ Same as `callro()`, but a call guaranteed to be executed on a master.
 
 ## Storage public API
 
-#### `info = vshard.storage.cfg(cfg, name)`
+#### `vshard.storage.cfg(cfg, name)`
 
 Configure the database and start sharding for instance `name`.
 
@@ -342,6 +346,10 @@ Configure the database and start sharding for instance `name`.
    table
 
 See examples above.
+
+#### `vshard.storage.sync(timeout)`
+
+Wait until all data are synchronized on replicas.
 
 #### `info = vshard.storage.info()`
 
