@@ -66,6 +66,7 @@ local function storage_schema_v1(username, password)
         'vshard.storage.bucket_stat',
         'vshard.storage.buckets_count',
         'vshard.storage.buckets_info',
+        'vshard.storage.buckets_discovery',
         'vshard.storage.rebalancer_request_state',
         'vshard.storage.rebalancer_apply_routes',
     }
@@ -423,6 +424,18 @@ local function bucket_collect(bucket_id)
         return nil, err
     end
     return bucket_collect_internal(bucket_id)
+end
+
+--
+-- Collect array of active bucket identifiers for discovery.
+--
+local function buckets_discovery()
+    local ret = {}
+    local status = box.space._bucket.index.status
+    for _, bucket in status:pairs({consts.BUCKET.ACTIVE}) do
+        table.insert(ret, bucket.id)
+    end
+    return ret
 end
 
 --
@@ -1361,7 +1374,6 @@ return {
     bucket_send = bucket_send;
     bucket_stat = bucket_stat;
     bucket_delete_garbage = bucket_delete_garbage;
-    rebalancer_request_state = rebalancer_request_state;
     rebalancer_wakeup = rebalancer_wakeup;
     rebalancer_apply_routes = rebalancer_apply_routes;
     rebalancer_disable = rebalancer_disable;
@@ -1372,5 +1384,7 @@ return {
     info = storage_info;
     buckets_info = storage_buckets_info;
     buckets_count = storage_buckets_count;
+    buckets_discovery = buckets_discovery;
+    rebalancer_request_state = rebalancer_request_state;
     internal = self;
 }

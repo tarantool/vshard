@@ -450,6 +450,81 @@ rs.master = master
 ---
 ...
 --
+-- gh-51: discovery fiber.
+--
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+function calculate_known_buckets()
+    local known_buckets = 0
+    for _, rs in pairs(vshard.router.internal.route_map) do
+        known_buckets = known_buckets + 1
+    end
+    return known_buckets
+end;
+---
+...
+function wait_discovery()
+    local known_buckets = 0
+    while known_buckets ~= vshard.consts.BUCKET_COUNT do
+        vshard.router.discovery_wakeup()
+        fiber.sleep(0.1)
+        known_buckets = calculate_known_buckets()
+    end
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+wait_discovery()
+---
+...
+calculate_known_buckets()
+---
+- 3000
+...
+test_run:grep_log('router_1', 'was 1, became 1500')
+---
+- was 1, became 1500
+...
+--
+-- Ensure the discovery procedure works continuously.
+--
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+for i = 1, 100 do
+    local rs = vshard.router.internal.route_map[i]
+    assert(rs)
+    rs.bucket_count = rs.bucket_count - 1
+    vshard.router.internal.route_map[i] = nil
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calculate_known_buckets()
+---
+- 2900
+...
+wait_discovery()
+---
+...
+calculate_known_buckets()
+---
+- 3000
+...
+test_run:grep_log('router_1', 'was 1450, became 1500')
+---
+- was 1450, became 1500
+...
+--
 -- Configuration: inconsistency master=true on storage and routers
 --
 -- This test case flips masters in replicasets without changing

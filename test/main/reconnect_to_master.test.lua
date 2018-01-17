@@ -10,6 +10,21 @@ test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
 test_run:wait_fullmesh(REPLICASET_1)
 test_run:wait_fullmesh(REPLICASET_2)
+
+--
+-- gh-51: discovery must work with replicas.
+-- Create 10 buckets and replicate them. Then start router and
+-- down master. Router discovery fiber must use replica to find
+-- buckets.
+--
+test_run:cmd('switch storage_1_a')
+_bucket = box.space._bucket
+for i = 1, 10 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+test_run:cmd('switch storage_1_b')
+_bucket = box.space._bucket
+fiber = require('fiber')
+while _bucket:count() ~= 10 do fiber.sleep(0.1) end
+
 test_run:cmd("create server router_1 with script='main/router_1.lua'")
 test_run:cmd("start server router_1")
 
@@ -27,8 +42,19 @@ function is_disconnected()
         end
     end
     return false
-end
+end;
+function count_known_buckets()
+    local known_buckets = 0
+    for _, id in pairs(vshard.router.internal.route_map) do
+        known_buckets = known_buckets + 1
+    end
+    return known_buckets
+end;
 test_run:cmd("setopt delimiter ''");
+count_known_buckets()
+fiber = require('fiber')
+-- Use replica to find buckets.
+while count_known_buckets() ~= 10 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 
 -- No master in replica set 1.
 is_disconnected()

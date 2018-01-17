@@ -355,7 +355,8 @@ local function buildall(sharding_cfg, existing_replicasets)
         local new_replicaset = setmetatable({
             replicas = {},
             uuid = replicaset_uuid,
-            weight = replicaset.weight
+            weight = replicaset.weight,
+            bucket_count = 0,
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do

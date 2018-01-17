@@ -13,33 +13,45 @@ local self = {
     },
     -- Bucket map cache.
     route_map = {},
-    route_map_size = 0,
     --
     -- All known replicasets used for bucket re-balancing
     --
     replicasets = nil,
+    --
+    -- Fiber to maintain replica connections.
+    --
+    failover_fiber = nil,
+    --
+    -- Fiber to discovery buckets in background.
+    --
+    discovery_fiber = nil,
 }
-
---------------------------------------------------------------------------------
--- Routing
---------------------------------------------------------------------------------
 
 -- Set a replicaset by container of a bucket.
 local function bucket_set(bucket_id, replicaset)
     assert(replicaset)
-    if self.route_map[bucket_id] == nil then
-        self.route_map_size = self.route_map_size + 1
+    local old_replicaset = self.route_map[bucket_id]
+    if old_replicaset then
+        old_replicaset.bucket_count = old_replicaset.bucket_count - 1
+    end
+    if replicaset ~= old_replicaset then
+        replicaset.bucket_count = replicaset.bucket_count + 1
     end
     self.route_map[bucket_id] = replicaset
 end
 
 -- Remove a bucket from the cache.
 local function bucket_reset(bucket_id)
-    if self.route_map[bucket_id] ~= nil then
-        self.route_map_size = self.route_map_size - 1
-        self.route_map[bucket_id] = nil
+    local replicaset = self.route_map[bucket_id]
+    if replicaset then
+        replicaset.bucket_count = replicaset.bucket_count - 1
     end
+    self.route_map[bucket_id] = nil
 end
+
+--------------------------------------------------------------------------------
+-- Discovery
+--------------------------------------------------------------------------------
 
 -- Search bucket in whole cluster
 local function bucket_discovery(bucket_id)
@@ -100,6 +112,46 @@ local function bucket_resolve(bucket_id)
         return nil, err
     end
     return replicaset
+end
+
+--
+-- Background fiber to perform discovery. It periodically scans
+-- replicasets one by one and updates route_map.
+--
+local function discovery_f()
+    lfiber.name('discovery_fiber')
+    log.info('Start discovery fiber')
+    self.discovery_fiber = lfiber.self()
+    while true do
+        for _, replicaset in pairs(self.replicasets) do
+            local active_buckets, err =
+                replicaset:callro('vshard.storage.buckets_discovery')
+            if not active_buckets then
+                log.error('Error during discovery replicaset "%s": %s',
+                          replicaset.uuid, err)
+            else
+                if #active_buckets ~= replicaset.bucket_count then
+                    log.info('Updated "%s" buckets: was %d, became %d',
+                             replicaset.uuid, replicaset.bucket_count,
+                             #active_buckets)
+                end
+                replicaset.bucket_count = #active_buckets
+                for _, bucket_id in pairs(active_buckets) do
+                    self.route_map[bucket_id] = replicaset
+                end
+            end
+            lfiber.sleep(consts.DISCOVERY_INTERVAL)
+        end
+    end
+end
+
+--
+-- Immediately wakeup discovery fiber if exists.
+--
+local function discovery_wakeup()
+    if self.discovery_fiber then
+        self.discovery_fiber:wakeup()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -178,11 +230,6 @@ end
 --------------------------------------------------------------------------------
 -- Failover
 --------------------------------------------------------------------------------
---
--- Fiber to maintain replica connections.
---
-self.failover_fiber = nil
-
 --
 -- Replicaset must fall its replica connection to lower priority,
 -- if the current one is down too long.
@@ -337,7 +384,6 @@ local function router_cfg(cfg)
     self.replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
     -- TODO: update existing route map in-place
     self.route_map = {}
-    self.route_map_size = 0
     cfg.sharding = nil
     cfg.weights = nil
     cfg.zone = nil
@@ -355,6 +401,9 @@ local function router_cfg(cfg)
     end
     if self.failover_fiber == nil then
         lfiber.create(failover_f)
+    end
+    if self.discovery_fiber == nil then
+        lfiber.create(discovery_f)
     end
 end
 
@@ -518,5 +567,6 @@ return {
     sync = router_sync;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
+    discovery_wakeup = discovery_wakeup;
     internal = self;
 }
