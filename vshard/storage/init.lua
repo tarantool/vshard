@@ -899,13 +899,15 @@ end
 --
 local function rebalancer_apply_routes_f(routes)
     log.info('Apply rebalancer routes')
+    local _status = box.space._bucket.index.status
+    assert(_status:count({consts.BUCKET.SENDING}) == 0)
+    assert(_status:count({consts.BUCKET.RECEIVING}) == 0)
     -- Can not assing it on fiber.create() like
     -- var = fiber.create(), because when it yields, we have no
     -- guarantee that an event loop does not contain events
     -- between this fiber and its creator.
     self.rebalancer_applier_fiber = lfiber.self()
-    local active_buckets =
-        box.space._bucket.index.status:select{consts.BUCKET.ACTIVE}
+    local active_buckets = _status:select{consts.BUCKET.ACTIVE}
     local i = 1
     for dst_uuid, bucket_count in pairs(routes) do
         assert(i + bucket_count - 1 <= #active_buckets)
