@@ -266,6 +266,7 @@ end
 --
 local function failover_f()
     log.info('Start failover fiber')
+    lfiber.name('vshard.failover')
     self.failover_fiber = lfiber.self()
     local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
                                  consts.FAILOVER_DOWN_TIMEOUT)

@@ -175,6 +175,7 @@ end
 -- has failed due to tarantool or network problems.
 --
 local function recovery_f()
+    lfiber.name('vshard.recovery')
     local _bucket = box.space._bucket
     local sending_buckets = _bucket.index.status:select{consts.BUCKET.SENDING}
     self.buckets_to_recovery = {}
@@ -696,6 +697,7 @@ end
 -- For each step detains see comments in code.
 --
 function collect_garbage_f()
+    lfiber.name('vshard.gc')
     -- Collector controller. Changes of _bucket increments
     -- bucket generation. Garbage collector has its own bucket
     -- generation which is <= actual. Garbage collection is
@@ -903,6 +905,7 @@ end
 -- Fiber function to apply routes as described below.
 --
 local function rebalancer_apply_routes_f(routes)
+    lfiber.name('vshard.rebalancer_applier')
     log.info('Apply rebalancer routes')
     local _status = box.space._bucket.index.status
     assert(_status:count({consts.BUCKET.SENDING}) == 0)
@@ -992,6 +995,7 @@ end
 -- smallest replicaset uuid and which is master.
 --
 local function rebalancer_f()
+    lfiber.name('vshard.rebalancer')
     while true do
 ::continue::
         while not self.is_rebalancer_active do
