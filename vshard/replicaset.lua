@@ -249,18 +249,30 @@ local function replicaset_disconnect(replicaset)
 end
 
 --
--- Helper for replicaset_master/nearest_call().
+-- Call a function on a replica using its connection. The typical
+-- usage is calls under storage.call, because of which there
+-- are no more than 3 return values. It is because storage.call
+-- returns:
+-- * true/nil for storage.call();
+-- * error object, if storage.call() was not ok, or called
+--   function retval;
+-- * error object, if called function has been failed, or nil
+--   else.
 --
-local function replicaset_call_tail(uuid, func, pstatus, status, ...)
-    if not pstatus then
-        log.error("Exception during calling '%s' on '%s': %s", func, uuid,
-                  status)
-        return nil, lerror.make(status)
+local function replica_call(replica, func, args)
+    local conn = replica.conn
+    local lua_status, storage_status, retval, error_object =
+        pcall(conn.call, conn, func, args, {timeout = consts.CALL_TIMEOUT})
+    if not lua_status then
+        log.error("Exception during calling '%s' on '%s': %s", func,
+                  replica.uuid, storage_status)
+        return nil, lerror.make(storage_status)
     end
-    if status == nil then
-        status = nil -- Workaround for `not msgpack.NULL` magic.
+    if storage_status == nil then
+        -- Workaround for `not msgpack.NULL` magic.
+        storage_status = nil
     end
-    return status, ...
+    return storage_status, retval, error_object
 end
 
 --
@@ -276,9 +288,7 @@ local function replicaset_master_call(replicaset, func, args)
     if conn == nil then
         return nil, err
     end
-    return replicaset_call_tail(replicaset.master.uuid, func,
-                                pcall(conn.call, conn, func, args,
-                                      {timeout = consts.CALL_TIMEOUT}))
+    return replica_call(replicaset.master, func, args)
 end
 
 --
@@ -293,9 +303,7 @@ local function replicaset_nearest_call(replicaset, func, args)
     local replica = replicaset.replica
     if replica and replica:is_connected() then
         local conn = replica.conn
-        return replicaset_call_tail(replica.uuid, func,
-                                    pcall(conn.call, conn, func, args,
-                                          {timeout = consts.CALL_TIMEOUT}))
+        return replica_call(replica, func, args)
     else
         return replicaset_master_call(replicaset, func, args)
     end
