@@ -164,7 +164,7 @@ end
 --
 local function router_call(bucket_id, mode, func, args)
     local replicaset, err
-    local tstart = lfiber.time()
+    local tend = lfiber.time() + consts.CALL_TIMEOUT_MIN
     if bucket_id > consts.BUCKET_COUNT or bucket_id < 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
@@ -179,7 +179,8 @@ local function router_call(bucket_id, mode, func, args)
         if replicaset then
             local storage_call_status, call_status, call_error =
                 replicaset[call](replicaset, 'vshard.storage.call',
-                                 {bucket_id, mode, func, args})
+                                 {bucket_id, mode, func, args},
+                                 {timeout = tend - lfiber.time()})
             if storage_call_status then
                 if call_status == nil and call_error ~= nil then
                     return call_status, call_error
@@ -198,7 +199,7 @@ local function router_call(bucket_id, mode, func, args)
             end
             return nil, err
         end
-    until not (lfiber.time() <= tstart + consts.CALL_TIMEOUT)
+    until lfiber.time() > tend
     if err then
         return nil, err
     else
@@ -458,6 +459,7 @@ local function replicaset_instance_info(replicaset, name, alerts, errcolor,
     if replica then
         info.uri = replica.uri
         info.uuid = replica.uuid
+        info.network_timeout = replica.net_timeout
         if replica:is_connected() then
             info.status = 'available'
         else
@@ -501,7 +503,10 @@ local function router_info()
         -- Instance info parameters:
         -- * uri;
         -- * uuid;
-        -- * status - available, unreachable, missing.
+        -- * status - available, unreachable, missing;
+        -- * network_timeout - timeout for requests, updated on
+        --   each 10 success and 2 failed requests. The greater
+        --   timeout, the worse network feels itself.
         local rs_info = {uuid = replicaset.uuid}
         state.replicasets[replicaset.uuid] = rs_info
 

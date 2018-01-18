@@ -13,6 +13,14 @@
 --             weight = number,
 --             down_ts = <timestamp of disconnect from the
 --                        replica>,
+--             net_timeout = <current network timeout for calls,
+--                            doubled on each network fail until
+--                            max value, and reset to minimal
+--                            value on each success>,
+--             net_sequential_ok = <count of sequential success
+--                                  requests to the replica>,
+--             net_sequential_fail = <count of sequential failed
+--                                    requests to the replica>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -249,6 +257,41 @@ local function replicaset_disconnect(replicaset)
 end
 
 --
+-- Handler for failed request to a replica. It increments count
+-- of sequentially failed requests. When it reaches 2, it
+-- increases network timeout twice.
+--
+local function replica_on_failed_request(replica)
+    replica.net_sequential_ok = 0
+    local val = replica.net_sequential_fail + 1
+    if val >= 2 then
+        local new_timeout = replica.net_timeout * 2
+        if new_timeout <= consts.CALL_TIMEOUT_MAX then
+            replica.net_timeout = new_timeout
+        end
+        replica.net_sequential_fail = 1
+    else
+        replica.net_sequential_fail = val
+    end
+end
+
+--
+-- Same, as above, but for success request. And when count of
+-- success requests reaches 10, the network timeout is decreased
+-- to minimal timeout.
+--
+local function replica_on_success_request(replica)
+    replica.net_sequential_fail = 0
+    local val = replica.net_sequential_ok + 1
+    if val >= 10 then
+        replica.net_timeout = consts.CALL_TIMEOUT_MIN
+        replica.net_sequential_ok = 1
+    else
+        replica.net_sequential_ok = val
+    end
+end
+
+--
 -- Call a function on a replica using its connection. The typical
 -- usage is calls under storage.call, because of which there
 -- are no more than 3 return values. It is because storage.call
@@ -258,21 +301,35 @@ end
 --   function retval;
 -- * error object, if called function has been failed, or nil
 --   else.
+-- @retval  true, ... The correct response is received.
+-- @retval false, ... Response is not received. It can be timeout
+--         or unexpectedly closed connection.
 --
-local function replica_call(replica, func, args)
+local function replica_call(replica, func, args, timeout)
+    assert(timeout)
     local conn = replica.conn
-    local lua_status, storage_status, retval, error_object =
-        pcall(conn.call, conn, func, args, {timeout = consts.CALL_TIMEOUT})
-    if not lua_status then
+    local net_status, storage_status, retval, error_object =
+        pcall(conn.call, conn, func, args, {timeout = timeout})
+    if not net_status then
+        -- Do not increase replica's network timeout, if the
+        -- requested one was less, than network's one. For
+        -- example, if replica's timeout was 30s, but an user
+        -- specified 1s and it was expired, then there is no
+        -- reason to increase network timeout.
+        if timeout >= replica.net_timeout then
+            replica_on_failed_request(replica)
+        end
         log.error("Exception during calling '%s' on '%s': %s", func,
                   replica.uuid, storage_status)
-        return nil, lerror.make(storage_status)
+        return false, nil, lerror.make(storage_status)
+    else
+        replica_on_success_request(replica)
     end
     if storage_status == nil then
         -- Workaround for `not msgpack.NULL` magic.
         storage_status = nil
     end
-    return storage_status, retval, error_object
+    return true, storage_status, retval, error_object
 end
 
 --
@@ -281,14 +338,16 @@ end
 -- @retval false, err on error
 -- @retval true, ... on success
 --
-local function replicaset_master_call(replicaset, func, args)
+local function replicaset_master_call(replicaset, func, args, opts)
+    assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    local conn, err = replicaset_connect(replicaset)
-    if conn == nil then
-        return nil, err
-    end
-    return replica_call(replicaset.master, func, args)
+    replicaset_connect(replicaset)
+    local timeout = opts and opts.timeout or replicaset.master.net_timeout
+    local net_status, storage_status, retval, error_object =
+        replica_call(replicaset.master, func, args, timeout)
+    -- Ignore net_status - master does not retry requests.
+    return storage_status, retval, error_object
 end
 
 --
@@ -297,15 +356,35 @@ end
 -- available now, then use master's connection - we can not wait
 -- until failover fiber will repair the nearest connection.
 --
-local function replicaset_nearest_call(replicaset, func, args)
+local function replicaset_nearest_call(replicaset, func, args, opts)
+    assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    local replica = replicaset.replica
-    if replica and replica:is_connected() then
-        local conn = replica.conn
-        return replica_call(replica, func, args)
+    local global_timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MAX
+    local net_status, storage_status, retval, error_object
+    local end_time = fiber.time() + global_timeout
+    while not net_status and global_timeout > 0 do
+        local replica = replicaset.replica
+        local conn
+        if replica and replica:is_connected() then
+            conn = replica.conn
+        else
+            conn = replicaset_connect(replicaset)
+            replica = replicaset.master
+        end
+        -- If network timeout of a replica is less, than global
+        -- timeout, then choose the replica's one. It allows to
+        -- make several attempts to execute request inside single
+        -- global timeout.
+        local call_timeout = math.min(global_timeout, replica.net_timeout)
+        net_status, storage_status, retval, error_object =
+            replica_call(replica, func, args, call_timeout)
+        global_timeout = end_time - fiber.time()
+    end
+    if not net_status then
+        return nil, lerror.make(storage_status)
     else
-        return replicaset_master_call(replicaset, func, args)
+        return storage_status, retval, error_object
     end
 end
 
@@ -370,7 +449,8 @@ local function buildall(sharding_cfg, existing_replicasets)
         for replica_uuid, replica in pairs(replicaset.replicas) do
             local new_replica = setmetatable({
                 uri = replica.uri, name = replica.name, uuid = replica_uuid,
-                zone = replica.zone
+                zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
+                net_sequential_ok = 0, net_sequential_fail = 0,
             }, replica_mt)
             local existing_rs = existing_replicasets[replicaset_uuid]
             if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then

@@ -5,6 +5,7 @@ require('strict').on()
 -- Get instance name
 local fio = require('fio')
 local NAME = fio.basename(arg[0], '.lua')
+local fiber = require('fiber')
 
 -- Check if we are running under test-run
 if os.getenv('ADMIN') then
@@ -58,6 +59,8 @@ box.once("testapp:schema:1", function()
     box.schema.role.grant('public', 'execute', 'function', 'customer_add')
     box.schema.func.create('echo')
     box.schema.role.grant('public', 'execute', 'function', 'echo')
+    box.schema.func.create('sleep')
+    box.schema.role.grant('public', 'execute', 'function', 'sleep')
 end)
 
 function customer_add(customer)
@@ -104,4 +107,8 @@ end
 
 function echo(...)
     return ...
+end
+
+function sleep(time)
+    fiber.sleep(time)
 end
