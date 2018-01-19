@@ -360,6 +360,7 @@ local function bucket_recv(bucket_id, from, data)
         local space_id, space_data = row[1], row[2]
         local space = box.space[space_id]
         if space == nil then
+            box.rollback()
             -- Tarantool doesn't provide API to create box.error objects
             -- https://github.com/tarantool/tarantool/issues/3031
             local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
