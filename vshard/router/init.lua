@@ -537,8 +537,9 @@ local function router_info()
         local uuid = replicaset.replica and replicaset.replica.uuid
         info = replicaset_instance_info(replicaset, 'replica', state.alerts)
         rs_info.replica = info
-        if replicaset.replica and
-           replicaset.replica ~= replicaset.priority_list[1] then
+        if not replicaset.replica or
+           (replicaset.replica and
+            replicaset.replica ~= replicaset.priority_list[1]) then
             -- If the replica is not optimal, then some replicas
             -- possibly are down.
             local a = lerror.alert(lerror.code.SUBOPTIMAL_REPLICA,

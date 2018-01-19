@@ -20,9 +20,7 @@ weights = {
     }
 }
 
-return {
-    weights = weights,
-    sharding = {
+sharding = {
         [rs[1]] = {
             replicas = {
                 [replica.box_1_a] = {
@@ -83,5 +81,54 @@ return {
             }
         }
     }
+
+-- Reverse weights in config.
+function reverse_weights()
+    weights[1] = {
+        [2] = 3,
+        [3] = 2,
+        [4] = 1
+    }
+    weights[2] = {
+        [1] = 10,
+        [2] = 0,
+        [3] = 10,
+        [4] = 10
+    }
+    weights[3] = {
+        [1] = 1000,
+        [2] = 200,
+        [4] = 100
+    }
+end
+
+local saved_replicas = {}
+function remove_some_replicas()
+    saved_replicas.box_1_a = sharding[rs[1]].replicas[replica.box_1_a]
+    saved_replicas.box_1_c = sharding[rs[1]].replicas[replica.box_1_c]
+    saved_replicas.box_2_a = sharding[rs[2]].replicas[replica.box_2_a]
+    saved_replicas.box_2_c = sharding[rs[2]].replicas[replica.box_2_c]
+    saved_replicas.box_3_a = sharding[rs[3]].replicas[replica.box_3_a]
+    saved_replicas.box_3_b = sharding[rs[3]].replicas[replica.box_3_b]
+    sharding[rs[1]].replicas[replica.box_1_a] = nil
+    sharding[rs[1]].replicas[replica.box_1_c] = nil
+    sharding[rs[2]].replicas[replica.box_2_a] = nil
+    sharding[rs[2]].replicas[replica.box_2_c] = nil
+    sharding[rs[3]].replicas[replica.box_3_a] = nil
+    sharding[rs[3]].replicas[replica.box_3_b] = nil
+end
+
+function add_some_replicas()
+    sharding[rs[1]].replicas[replica.box_1_a] = saved_replicas.box_1_a
+    sharding[rs[1]].replicas[replica.box_1_c] = saved_replicas.box_1_c
+    sharding[rs[2]].replicas[replica.box_2_a] = saved_replicas.box_2_a
+    sharding[rs[2]].replicas[replica.box_2_c] = saved_replicas.box_2_c
+    sharding[rs[3]].replicas[replica.box_3_a] = saved_replicas.box_3_a
+    sharding[rs[3]].replicas[replica.box_3_b] = saved_replicas.box_3_b
+end
+
+return {
+    weights = weights,
+    sharding = sharding
 }
 

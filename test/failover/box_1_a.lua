@@ -2,7 +2,7 @@
 -- Get instance name
 require('strict').on()
 local fio = require('fio')
-local NAME = fio.basename(arg[0], '.lua')
+NAME = fio.basename(arg[0], '.lua')
 test_run = require('test_run').new()
 require('console').listen(os.getenv('ADMIN'))
 
