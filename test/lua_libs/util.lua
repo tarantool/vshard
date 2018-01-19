@@ -23,7 +23,18 @@ local function shuffle_masters(cfg)
     end
 end
 
+function collect_timeouts(rs)
+    local timeouts = {}
+    for uuid, replica in pairs(rs.replicas) do
+        table.insert(timeouts, {ok = replica.net_sequential_ok,
+                    fail = replica.net_sequential_fail,
+                    timeout = replica.net_timeout})
+    end
+    return timeouts
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
+    collect_timeouts = collect_timeouts,
 }

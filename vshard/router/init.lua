@@ -162,9 +162,14 @@ end
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
 --
-local function router_call(bucket_id, mode, func, args)
+local function router_call(bucket_id, mode, func, args, opts)
+    if opts and (type(opts) ~= 'table' or
+                 (opts.timeout and type(opts.timeout) ~= 'number')) then
+        error('Usage: call(bucket_id, mode, func, args, opts)')
+    end
+    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
-    local tend = lfiber.time() + consts.CALL_TIMEOUT_MIN
+    local tend = lfiber.time() + timeout
     if bucket_id > consts.BUCKET_COUNT or bucket_id < 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
