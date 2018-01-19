@@ -275,7 +275,7 @@ All client's requests should be send to routers.
 
 Perform initial distribution of buckets across replicasets.
 
-#### `result = vshard.router.call(bucket_id, mode, func, args)`
+#### `result = vshard.router.call(bucket_id, mode, func, args, opts)`
 
 Call function `func` on a shard which serves `bucket_id`,
 
@@ -318,6 +318,7 @@ vshard.router.info()
 * `mode` - `read` or `write`
 * `func` - function name
 * `args` - array of arguments to func
+* `opts` - call options. Can contain only one parameter - `timeout` in seconds.
 
 **Returns:** original return value from `func` or nil and error object.
 Error object has type attribute equal to 'LuajitError', 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
@@ -327,11 +328,11 @@ Error object has type attribute equal to 'LuajitError', 'ShardingError' or one o
 
 `route()` and `routeall()` returns replicaset objects. Replicaset has two methods:
 
-#### `replicaset.callro(func, args)`
+#### `replicaset.callro(func, args, opts)`
 
 Call a function `func` on a nearest available replica (distances are defined using `replica.zone` and `cfg.weights` matrix - see sections above) with a specified arguments. It is recommended to call only read-only functions using `callro()`, because a function can be executed not on a master.
 
-#### `replicaset.callrw(func, args)`
+#### `replicaset.callrw(func, args, opts)`
 
 Same as `callro()`, but a call guaranteed to be executed on a master.
 
