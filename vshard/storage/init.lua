@@ -7,6 +7,7 @@ local lerror = require('vshard.error')
 local util = require('vshard.util')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
+local trigger = require('internal.trigger')
 
 -- Internal state
 local self = {
@@ -32,6 +33,10 @@ local self = {
     -- Internal flag to activate and deactivate rebalancer. Mostly
     -- for tests.
     is_rebalancer_active = true,
+    -- Triggers on master switch event. They are called right
+    -- before the event occurs.
+    on_master_enable = trigger.new('on_master_enable'),
+    on_master_disable = trigger.new('on_master_disable'),
     errinj = {
         ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
     }
@@ -444,6 +449,7 @@ end
 -- instance during configuration
 --
 local function local_master_disable()
+    self.on_master_disable:run()
     log.verbose("Resigning from the replicaset master role...")
     -- Stop garbage collecting
     if self.garbage_collect_fiber ~= nil then
@@ -468,6 +474,7 @@ local collect_garbage_f
 -- instance during configuration
 --
 local function local_master_enable()
+    self.on_master_enable:run()
     log.verbose("Taking on replicaset master role...")
     recovery_garbage_receiving_buckets()
     -- Start background process to collect garbage.
@@ -1388,4 +1395,6 @@ return {
     buckets_discovery = buckets_discovery;
     rebalancer_request_state = rebalancer_request_state;
     internal = self;
+    on_master_enable = self.on_master_enable;
+    on_master_disable = self.on_master_disable;
 }

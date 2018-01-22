@@ -35,9 +35,21 @@ test_run:cmd('switch storage_1_a')
 util = require('util')
 util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 
+--
+-- gh-59: provide trigger on master enable/disable.
+--
+disable_count = 0
+enable_count = 0
+function on_master_disable() disable_count = disable_count + 1 end
+function on_master_enable() enable_count = enable_count + 1 end
+vshard.storage.on_master_disable(on_master_disable)
+vshard.storage.on_master_enable(on_master_enable)
+
 -- test without master
 for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.replicas) do s.master = nil end end
 vshard.storage.cfg(cfg, box.info.uuid)
+
+disable_count
 
 test_run:cmd('switch default')
 
@@ -51,6 +63,7 @@ test_run:cmd('eval storage_3_a \'' .. cmd .. '\'')
 test_run:cmd('eval router_1 \'' .. cmd .. '\'')
 test_run:switch('storage_1_a')
 vshard.storage.cfg(cfg, names['storage_1_a'])
+enable_count
 
 test_run:switch('storage_2_a')
 vshard.storage.cfg(cfg, names['storage_2_a'])
