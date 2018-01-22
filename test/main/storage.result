@@ -98,13 +98,13 @@ vshard.storage.info().replicasets[replicaset1_uuid] or vshard.storage.info()
 ---
 - uuid: <replicaset_1>
   master:
-    uri: storage:storage@127.0.0.1:3301
+    uri: storage@127.0.0.1:3301
 ...
 vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
 ---
 - uuid: <replicaset_2>
   master:
-    uri: storage:storage@127.0.0.1:3303
+    uri: storage@127.0.0.1:3303
 ...
 -- Sync API
 vshard.storage.sync()
@@ -176,11 +176,11 @@ vshard.storage.info()
     <replicaset_2>:
       uuid: <replicaset_2>
       master:
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
   bucket:
     receiving: 0
     active: 2
@@ -206,11 +206,11 @@ vshard.storage.info()
     <replicaset_2>:
       uuid: <replicaset_2>
       master:
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
   bucket:
     receiving: 0
     active: 2
@@ -246,13 +246,13 @@ vshard.storage.info()
       uuid: <replicaset_2>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
         uuid: <storage_2_a>
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: <storage_1_a>
   bucket:
     receiving: 0
@@ -277,13 +277,13 @@ vshard.storage.info()
       uuid: <replicaset_2>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
         uuid: <storage_2_a>
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: <storage_1_a>
   bucket:
     receiving: 0
@@ -312,11 +312,11 @@ vshard.storage.info()
     <replicaset_2>:
       uuid: <replicaset_2>
       master:
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
   bucket:
     receiving: 0
     active: 2
@@ -340,13 +340,13 @@ vshard.storage.info()
       uuid: <replicaset_2>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3303
+        uri: storage@127.0.0.1:3303
         uuid: <storage_2_a>
     <replicaset_1>:
       uuid: <replicaset_1>
       master:
         state: active
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: <storage_1_a>
   bucket:
     receiving: 0

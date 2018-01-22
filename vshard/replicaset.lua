@@ -45,6 +45,7 @@ local netbox = require('net.box')
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local fiber = require('fiber')
+local luri = require('uri')
 
 --
 -- on_connect() trigger for net.box
@@ -394,7 +395,9 @@ end
 local function replicaset_tostring(replicaset)
     local uri = ''
     if replicaset.master then
-        uri = replicaset.master.uri
+        uri = luri.parse(replicaset.master.uri)
+        uri.password = nil
+        uri = luri.format(uri)
     end
     return string.format('Replicaset(uuid=%s, master=%s)',
                          replicaset.uuid, uri)

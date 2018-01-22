@@ -219,9 +219,9 @@ table.sort(uris)
 ...
 uris
 ---
-- - storage:storage@127.0.0.1:3301
-  - storage:storage@127.0.0.1:3304
-  - storage:storage@127.0.0.1:3306
+- - storage@127.0.0.1:3301
+  - storage@127.0.0.1:3304
+  - storage@127.0.0.1:3306
 ...
 box.cfg.replication
 ---
@@ -245,9 +245,9 @@ table.sort(uris)
 ...
 uris
 ---
-- - storage:storage@127.0.0.1:3301
-  - storage:storage@127.0.0.1:3304
-  - storage:storage@127.0.0.1:3306
+- - storage@127.0.0.1:3301
+  - storage@127.0.0.1:3304
+  - storage@127.0.0.1:3306
 ...
 box.cfg.replication
 ---
@@ -272,9 +272,9 @@ table.sort(uris)
 ...
 uris
 ---
-- - storage:storage@127.0.0.1:3301
-  - storage:storage@127.0.0.1:3304
-  - storage:storage@127.0.0.1:3306
+- - storage@127.0.0.1:3301
+  - storage@127.0.0.1:3304
+  - storage@127.0.0.1:3306
 ...
 box.cfg.replication
 ---
@@ -299,9 +299,9 @@ table.sort(uris)
 ...
 uris
 ---
-- - storage:storage@127.0.0.1:3301
-  - storage:storage@127.0.0.1:3304
-  - storage:storage@127.0.0.1:3306
+- - storage@127.0.0.1:3301
+  - storage@127.0.0.1:3304
+  - storage@127.0.0.1:3306
 ...
 box.cfg.replication
 ---
@@ -325,9 +325,9 @@ table.sort(uris)
 ...
 uris
 ---
-- - storage:storage@127.0.0.1:3301
-  - storage:storage@127.0.0.1:3304
-  - storage:storage@127.0.0.1:3306
+- - storage@127.0.0.1:3301
+  - storage@127.0.0.1:3304
+  - storage@127.0.0.1:3306
 ...
 test_run:switch('default')
 ---

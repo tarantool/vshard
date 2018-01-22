@@ -1347,10 +1347,13 @@ local function storage_info()
 
     local ireplicasets = {}
     for uuid, replicaset in pairs(self.replicasets) do
+        local uri = luri.parse(replicaset.master.uri)
+        uri.password = nil
+        uri = luri.format(uri)
         ireplicasets[uuid] = {
             uuid = uuid;
             master = {
-                uri = replicaset.master.uri;
+                uri = uri;
                 uuid = replicaset.master.conn and replicaset.master.conn.peer_uuid;
                 state = replicaset.master.conn and replicaset.master.conn.state;
                 error = replicaset.master.conn and replicaset.master.conn.error;

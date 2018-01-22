@@ -462,7 +462,10 @@ local function replicaset_instance_info(replicaset, name, alerts, errcolor,
     local info = {}
     local replica = replicaset[name]
     if replica then
-        info.uri = replica.uri
+        local uri = luri.parse(replica.uri)
+        uri.password = nil
+        uri = luri.format(uri)
+        info.uri = uri
         info.uuid = replica.uuid
         info.network_timeout = replica.net_timeout
         if replica:is_connected() then
