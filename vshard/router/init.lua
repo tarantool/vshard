@@ -184,6 +184,7 @@ local function router_call(bucket_id, mode, func, args, opts)
     repeat
         replicaset, err = bucket_resolve(bucket_id)
         if replicaset then
+::replicaset_is_found::
             local storage_call_status, call_status, call_error =
                 replicaset[call](replicaset, 'vshard.storage.call',
                                  {bucket_id, mode, func, args},
@@ -196,15 +197,55 @@ local function router_call(bucket_id, mode, func, args, opts)
                 end
             end
             err = call_status
-            if err.code == lerror.code.WRONG_BUCKET or
-               err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
+            if err.code == lerror.code.WRONG_BUCKET then
                 bucket_reset(bucket_id)
+                if err.destination then
+                    replicaset = self.replicasets[err.destination]
+                    if not replicaset then
+                        log.warn('Replicaset "%s" was not found, but received'..
+                                 ' from storage as destination - please '..
+                                 'update configuration', err.destination)
+                        -- Try to wait until the destination
+                        -- appears. A destination can disappear,
+                        -- if reconfiguration had been started,
+                        -- and while is not executed on router,
+                        -- but already is executed on storages.
+                        while lfiber.time() <= tend do
+                            lfiber.sleep(0.05)
+                            replicaset = self.replicasets[err.destination]
+                            if replicaset then
+                                goto replicaset_is_found
+                            end
+                        end
+                    else
+                        bucket_set(bucket_id, replicaset)
+                        -- Protect against infinite cycle in a
+                        -- case of broken cluster, when a bucket
+                        -- is sent on two replicasets to each
+                        -- other.
+                        if lfiber.time() <= tend then
+                            goto replicaset_is_found
+                        end
+                    end
+                    return nil, err
+                end
+            elseif err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
+                -- Do not repeat write requests, even if an error
+                -- is not timeout - these requests are repeated in
+                -- any case on client, if error.
+                assert(mode == 'write')
+                bucket_reset(bucket_id)
+                return nil, err
             elseif err.code == lerror.code.NON_MASTER then
+                -- Same, as above - do not wait and repeat.
+                assert(mode == 'write')
                 log.warn("Replica %s is not master for replicaset %s anymore,"..
                          "please update configuration!",
                           replicaset.master.uuid, replicaset.uuid)
+                return nil, err
+            else
+                return nil, err
             end
-            return nil, err
         end
     until lfiber.time() > tend
     if err then
