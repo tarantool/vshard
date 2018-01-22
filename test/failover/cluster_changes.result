@@ -77,7 +77,7 @@ vshard.router.info()
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3309
+        uri: storage@127.0.0.1:3309
         uuid: 7171703a-fec2-45c9-beac-9a8aa40dcf85
     739fe4fb-2850-4cde-9637-10150724c5eb:
       replica:
@@ -86,7 +86,7 @@ vshard.router.info()
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
       replica:
@@ -95,7 +95,7 @@ vshard.router.info()
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3305
+        uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
   bucket:
     unreachable: 0
@@ -122,37 +122,37 @@ vshard.router.info()
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3308
+        uri: storage@127.0.0.1:3308
         uuid: dbcf1aaa-4e50-4753-bf06-aaba76297624
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3309
+        uri: storage@127.0.0.1:3309
         uuid: 7171703a-fec2-45c9-beac-9a8aa40dcf85
     739fe4fb-2850-4cde-9637-10150724c5eb:
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3304
+        uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3305
+        uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3305
+        uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
   bucket:
     unreachable: 0
@@ -285,7 +285,7 @@ info
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3304
+        uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
@@ -294,7 +294,7 @@ info
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3306
+        uri: storage@127.0.0.1:3306
         uuid: e2ed64b7-5c3a-4878-9ced-b71a034bd67f
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master:
@@ -371,37 +371,37 @@ vshard.router.info()
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3308
+        uri: storage@127.0.0.1:3308
         uuid: dbcf1aaa-4e50-4753-bf06-aaba76297624
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3309
+        uri: storage@127.0.0.1:3309
         uuid: 7171703a-fec2-45c9-beac-9a8aa40dcf85
     739fe4fb-2850-4cde-9637-10150724c5eb:
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3304
+        uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3301
+        uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
       replica:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3305
+        uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master:
         network_timeout: 0.5
         status: available
-        uri: storage:storage@127.0.0.1:3305
+        uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
   bucket:
     unreachable: 0
