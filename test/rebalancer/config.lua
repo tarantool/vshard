@@ -31,6 +31,30 @@ sharding = {
     }
 }
 
+function add_replicaset()
+    sharding[rs[3]] = {
+        replicas = {
+            [replica.box_3_a] = {
+                uri = 'storage:storage@127.0.0.1:3305',
+                name = 'box_3_a',
+                master = true
+            },
+            [replica.box_3_b] = {
+                uri = 'storage:storage@127.0.0.1:3306',
+                name = 'box_3_b',
+            }
+        }
+    }
+end
+
+function remove_replicaset_first_stage()
+    sharding[rs[3]].weight = 0
+end
+
+function remove_replicaset_second_stage()
+    sharding[rs[3]] = nil
+end
+
 return {
     sharding = sharding
 }

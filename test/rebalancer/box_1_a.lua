@@ -5,10 +5,16 @@ local fio = require('fio')
 local NAME = fio.basename(arg[0], '.lua')
 local log = require('log')
 require('console').listen(os.getenv('ADMIN'))
+fiber = require('fiber')
+
+echo_count = 0
 
 vshard = require('vshard')
 names = require('names')
 cfg = require('config')
+if NAME == 'box_3_a' or NAME == 'box_3_b' then
+	add_replicaset()
+end
 vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 
 function init_schema()
@@ -23,8 +29,28 @@ function init_schema()
 end
 
 box.once('schema', function()
-    init_schema()
+	box.schema.func.create('do_replace')
+	box.schema.role.grant('public', 'execute', 'function', 'do_replace')
+	box.schema.func.create('do_select')
+	box.schema.role.grant('public', 'execute', 'function', 'do_select')
+	init_schema()
 end)
+
+function do_replace(...)
+	box.space.test:replace(...)
+	return true
+end
+
+function do_select(...)
+	return box.space.test:select(...)
+end
+
+function check_consistency()
+	for _, tuple in box.space.test:pairs() do
+		assert(box.space._bucket:get{tuple.bucket_id})
+	end
+	return true
+end
 
 function switch_rs1_master()
 	local replica_uuid = names.replica_uuid
