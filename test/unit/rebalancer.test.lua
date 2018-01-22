@@ -3,6 +3,7 @@ vshard = require('vshard')
 fiber = require('fiber')
 calc_metrics = vshard.storage.internal.rebalancer_calculate_metrics
 build_routes = vshard.storage.internal.rebalancer_build_routes
+calc_ethalon = require('vshard.replicaset').calculate_ethalon_balance
 consts = vshard.consts
 
 --
@@ -15,7 +16,9 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 30},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 100, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -29,7 +32,9 @@ replicasets = {
 	uuid3 = {bucket_count = 3, weight = 0},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 7, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 7)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -43,7 +48,9 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 500},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 300)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -57,7 +64,9 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 300)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -74,7 +83,9 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 3000, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 3000)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -92,5 +103,52 @@ get_state()
 
 _bucket:replace{1, consts.BUCKET.RECEIVING}
 get_state()
+
+--
+-- Other tests.
+--
+consts.BUCKET_COUNT = 100
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 50, weight = 1},
+	uuid2 = {bucket_count = 50, weight = 1},
+	uuid3 = {bucket_count = 0, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+
+consts.BUCKET_COUNT = 100
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 34, weight = 1},
+	uuid2 = {bucket_count = 34, weight = 1},
+	uuid3 = {bucket_count = 32, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+
+consts.BUCKET_COUNT = 100
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 13, weight = 1},
+	uuid2 = {bucket_count = 13, weight = 1},
+	uuid3 = {bucket_count = 13, weight = 1},
+	uuid4 = {bucket_count = 13, weight = 1},
+	uuid5 = {bucket_count = 13, weight = 1},
+	uuid6 = {bucket_count = 12, weight = 1},
+	uuid7 = {bucket_count = 12, weight = 1},
+	uuid8 = {bucket_count = 11, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
 
 _bucket:drop()

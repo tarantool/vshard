@@ -13,6 +13,9 @@ calc_metrics = vshard.storage.internal.rebalancer_calculate_metrics
 build_routes = vshard.storage.internal.rebalancer_build_routes
 ---
 ...
+calc_ethalon = require('vshard.replicaset').calculate_ethalon_balance
+---
+...
 consts = vshard.consts
 ---
 ...
@@ -34,7 +37,25 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets, 100, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 100)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 50
+    ethalon_bucket_count: 50
+    bucket_count: 100
+  uuid3:
+    weight: 30
+    ethalon_bucket_count: 30
+    bucket_count: 0
+  uuid2:
+    weight: 20
+    ethalon_bucket_count: 20
+    bucket_count: 0
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - 100
 ...
@@ -43,14 +64,17 @@ replicasets
 - uuid1:
     needed: -50
     weight: 50
+    ethalon_bucket_count: 50
     bucket_count: 100
   uuid3:
     needed: 30
     weight: 30
+    ethalon_bucket_count: 30
     bucket_count: 0
   uuid2:
     needed: 20
     weight: 20
+    ethalon_bucket_count: 20
     bucket_count: 0
 ...
 build_routes(replicasets)
@@ -77,30 +101,51 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets, 7, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 7)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 1
+    ethalon_bucket_count: 3
+    bucket_count: 2
+  uuid3:
+    weight: 0
+    ethalon_bucket_count: 0
+    bucket_count: 3
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 4
+    bucket_count: 2
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - inf
 ...
 replicasets
 ---
 - uuid1:
-    needed: 2
+    needed: 1
     weight: 1
+    ethalon_bucket_count: 3
     bucket_count: 2
   uuid3:
     needed: -3
     weight: 0
+    ethalon_bucket_count: 0
     bucket_count: 3
   uuid2:
     needed: 2
     weight: 1
+    ethalon_bucket_count: 4
     bucket_count: 2
 ...
 build_routes(replicasets)
 ---
 - uuid3:
-    uuid2: 1
-    uuid1: 2
+    uuid2: 2
+    uuid1: 1
 ...
 --
 -- Test big weights.
@@ -120,29 +165,50 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 300)
 ---
-- 133
 ...
 replicasets
 ---
 - uuid1:
-    needed: -14
     weight: 1000
+    ethalon_bucket_count: 85
+    bucket_count: 100
+  uuid3:
+    weight: 500
+    ethalon_bucket_count: 43
+    bucket_count: 100
+  uuid2:
+    weight: 2000
+    ethalon_bucket_count: 172
+    bucket_count: 100
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+---
+- 132.55813953488
+...
+replicasets
+---
+- uuid1:
+    needed: -15
+    weight: 1000
+    ethalon_bucket_count: 85
     bucket_count: 100
   uuid3:
     needed: -57
     weight: 500
+    ethalon_bucket_count: 43
     bucket_count: 100
   uuid2:
     needed: 72
     weight: 2000
+    ethalon_bucket_count: 172
     bucket_count: 100
 ...
 build_routes(replicasets)
 ---
 - uuid1:
-    uuid2: 14
+    uuid2: 15
   uuid3:
     uuid2: 57
 ...
@@ -164,7 +230,25 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 300)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 1
+    ethalon_bucket_count: 100
+    bucket_count: 100
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 100
+    bucket_count: 100
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 100
+    bucket_count: 100
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - 0
 ...
@@ -173,14 +257,17 @@ replicasets
 - uuid1:
     needed: 0
     weight: 1
+    ethalon_bucket_count: 100
     bucket_count: 100
   uuid3:
     needed: 0
     weight: 1
+    ethalon_bucket_count: 100
     bucket_count: 100
   uuid2:
     needed: 0
     weight: 1
+    ethalon_bucket_count: 100
     bucket_count: 100
 ...
 build_routes(replicasets)
@@ -208,7 +295,25 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets, 3000, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_ethalon(replicasets, 3000)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 1
+    ethalon_bucket_count: 1000
+    bucket_count: 1500
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 1000
+    bucket_count: 0
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 1000
+    bucket_count: 1500
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - 100
 ...
@@ -217,14 +322,17 @@ replicasets
 - uuid1:
     needed: -500
     weight: 1
+    ethalon_bucket_count: 1000
     bucket_count: 1500
   uuid3:
     needed: 100
     weight: 1
+    ethalon_bucket_count: 1000
     bucket_count: 0
   uuid2:
     needed: -500
     weight: 1
+    ethalon_bucket_count: 1000
     bucket_count: 1500
 ...
 build_routes(replicasets)
@@ -269,6 +377,233 @@ _bucket:replace{1, consts.BUCKET.RECEIVING}
 ...
 get_state()
 ---
+...
+--
+-- Other tests.
+--
+consts.BUCKET_COUNT = 100
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+replicasets = {
+	uuid1 = {bucket_count = 50, weight = 1},
+	uuid2 = {bucket_count = 50, weight = 1},
+	uuid3 = {bucket_count = 0, weight = 1},
+};
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calc_ethalon(replicasets, 100)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 50
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 0
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 34
+    bucket_count: 50
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+---
+- 100
+...
+replicasets
+---
+- uuid1:
+    needed: -17
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 50
+  uuid3:
+    needed: 33
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 0
+  uuid2:
+    needed: -16
+    weight: 1
+    ethalon_bucket_count: 34
+    bucket_count: 50
+...
+consts.BUCKET_COUNT = 100
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+replicasets = {
+	uuid1 = {bucket_count = 34, weight = 1},
+	uuid2 = {bucket_count = 34, weight = 1},
+	uuid3 = {bucket_count = 32, weight = 1},
+};
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calc_ethalon(replicasets, 100)
+---
+...
+replicasets
+---
+- uuid1:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 34
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 32
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 34
+    bucket_count: 34
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+---
+- 3.030303030303
+...
+replicasets
+---
+- uuid1:
+    needed: -1
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 34
+  uuid3:
+    needed: 1
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 32
+  uuid2:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 34
+    bucket_count: 34
+...
+consts.BUCKET_COUNT = 100
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+replicasets = {
+	uuid1 = {bucket_count = 13, weight = 1},
+	uuid2 = {bucket_count = 13, weight = 1},
+	uuid3 = {bucket_count = 13, weight = 1},
+	uuid4 = {bucket_count = 13, weight = 1},
+	uuid5 = {bucket_count = 13, weight = 1},
+	uuid6 = {bucket_count = 12, weight = 1},
+	uuid7 = {bucket_count = 12, weight = 1},
+	uuid8 = {bucket_count = 11, weight = 1},
+};
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calc_ethalon(replicasets, 100)
+---
+...
+replicasets
+---
+- uuid6:
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 12
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 13
+  uuid7:
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 12
+  uuid8:
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 11
+  uuid4:
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid1:
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid5:
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+...
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+---
+- 8.3333333333333
+...
+replicasets
+---
+- uuid6:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 12
+  uuid3:
+    needed: -1
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 13
+  uuid7:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 12
+  uuid8:
+    needed: 1
+    weight: 1
+    ethalon_bucket_count: 12
+    bucket_count: 11
+  uuid4:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid1:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid5:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
+  uuid2:
+    needed: 0
+    weight: 1
+    ethalon_bucket_count: 13
+    bucket_count: 13
 ...
 _bucket:drop()
 ---

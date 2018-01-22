@@ -31,6 +31,8 @@ test_run:wait_fullmesh(REPLICASET_2)
 test_run:switch('box_1_a')
 fiber = require('fiber')
 _bucket = box.space._bucket
+cfg.bucket_count = 200
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 
 --
 -- Test the rebalancer on not bootstraped cluster.
@@ -43,7 +45,6 @@ wait_rebalancer_state('Total active bucket count is not equal to total', test_ru
 -- per replicaset.
 --
 vshard.storage.rebalancer_disable()
-cfg.bucket_count = 200
 cfg.rebalancer_max_receiving = 10
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end

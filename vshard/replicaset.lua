@@ -33,6 +33,9 @@
 --      uuid = <replicaset_uuid>,
 --      weight = number,
 --      priority_list = <list of replicas, sorted by weight asc>,
+--      ethalon_bucket_count = <bucket count, that must be stored
+--                              on this replicaset to reach the
+--                              balance in a cluster>,
 --  }
 --
 -- replicasets = {
@@ -429,6 +432,41 @@ local replica_mt = {
 }
 
 --
+-- Calculate for each replicaset its ethalon bucket count.
+--
+local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
+    local weight_sum = 0
+    for _, replicaset in pairs(replicasets) do
+        weight_sum = weight_sum + (replicaset.weight or 1)
+    end
+    assert(weight_sum > 0)
+    local bucket_per_weight = bucket_count / weight_sum
+    local buckets_calculated = 0
+    for _, replicaset in pairs(replicasets) do
+        replicaset.ethalon_bucket_count =
+            math.ceil((replicaset.weight or 1) * bucket_per_weight)
+        buckets_calculated =
+            buckets_calculated + replicaset.ethalon_bucket_count
+    end
+    if buckets_calculated == bucket_count then
+        return
+    end
+    -- A situation is possible, when bucket_per_weight is not
+    -- integer. Lets spread this disbalance over cluster to
+    -- make for any replicaset pair
+    -- |replicaset_1 - replicaset_2| <= 1 - this difference is
+    -- admissible.
+    local buckets_rest = buckets_calculated - bucket_count
+    for _, replicaset in pairs(replicasets) do
+        replicaset.ethalon_bucket_count = replicaset.ethalon_bucket_count - 1
+        buckets_rest = buckets_rest - 1
+        if buckets_rest == 0 then
+            return
+        end
+    end
+end
+
+--
 -- Update/build replicasets from configuration
 --
 local function buildall(sharding_cfg, existing_replicasets)
@@ -500,9 +538,13 @@ local function buildall(sharding_cfg, existing_replicasets)
         new_replicaset.priority_list = priority_list
         new_replicasets[replicaset_uuid] = new_replicaset
     end
+    cluster_calculate_ethalon_balance(new_replicasets,
+                                      sharding_cfg.bucket_count or
+                                      consts.DEFAULT_BUCKET_COUNT)
     return new_replicasets
 end
 
 return {
     buildall = buildall;
+    calculate_ethalon_balance = cluster_calculate_ethalon_balance;
 }

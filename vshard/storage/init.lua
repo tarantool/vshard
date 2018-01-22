@@ -815,34 +815,24 @@ end
 --------------------------------------------------------------------------------
 --
 -- Calculate a set of metrics:
--- * bucket_count per weight unit;
 -- * maximal disbalance over all replicasets;
 -- * needed buckets for each replicaset.
 -- @param replicasets Map of type: {
 --     uuid = {bucket_count = number, weight = number},
 --     ...
 -- }
--- @param bucket_count Total bucket count in a cluster.
 -- @param max_receiving Maximal bucket count that can be received
 --        in parallel by a single master.
 --
 -- @retval Maximal disbalance over all replicasets.
 --
-local function rebalancer_calculate_metrics(replicasets, bucket_count,
-                                            max_receiving)
-    local weight_sum = 0
-    for _, replicaset in pairs(replicasets) do
-        weight_sum = weight_sum + replicaset.weight
-    end
-    assert(weight_sum ~= 0)
-    local bucket_per_weight = bucket_count / weight_sum
+local function rebalancer_calculate_metrics(replicasets, max_receiving)
     local max_disbalance = 0
     for _, replicaset in pairs(replicasets) do
-        local ethalon_bucket_count = replicaset.weight * bucket_per_weight
-        local needed = ethalon_bucket_count - replicaset.bucket_count
-        needed = math.ceil(needed)
-        if ethalon_bucket_count ~= 0 then
-            local disbalance = math.abs(needed) / ethalon_bucket_count * 100
+        local needed = replicaset.ethalon_bucket_count - replicaset.bucket_count
+        if replicaset.ethalon_bucket_count ~= 0 then
+            local disbalance =
+                math.abs(needed) / replicaset.ethalon_bucket_count * 100
             if disbalance > max_disbalance then
                 max_disbalance = disbalance
             end
@@ -1010,7 +1000,9 @@ local function rebalancer_download_states()
         total_bucket_active_count = total_bucket_active_count +
                                     bucket_active_count
         replicasets[uuid] = {bucket_count = bucket_active_count,
-                             weight = replicaset.weight or 1}
+                             weight = replicaset.weight or 1,
+                             ethalon_bucket_count =
+                                replicaset.ethalon_bucket_count}
     end
     if total_bucket_active_count == total_bucket_count then
         return replicasets
@@ -1043,8 +1035,7 @@ local function rebalancer_f()
             goto continue
         end
         local max_disbalance =
-            rebalancer_calculate_metrics(replicasets, total_bucket_count,
-                                         rebalancer_max_receiving)
+            rebalancer_calculate_metrics(replicasets, rebalancer_max_receiving)
         if max_disbalance <= rebalancer_disbalance_threshold then
             log.info('The cluster is balanced ok. Schedule next rebalancing '..
                      'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
