@@ -4,6 +4,8 @@ local write_fiber = 'none'
 local read_fiber = 'none'
 local bucket_count = 100
 
+local log = require('log')
+
 local function do_write_load()
 	while true do
 		local bucket = write_iterations % bucket_count + 1
@@ -23,9 +25,9 @@ local function do_read_load()
 		local bucket = read_iterations % bucket_count + 1
 		-- Read requests are repeated on replicaset level,
 		-- and here while loop is not necessary.
-		local tuples = vshard.router.call(bucket, 'read', 'do_select',
-						  {{read_iterations}},
-						  {timeout = 100})
+		local tuples, err =
+			vshard.router.call(bucket, 'read', 'do_select',
+					   {{read_iterations}}, {timeout = 100})
 		assert(tuples)
 		assert(#tuples == 1)
 		assert(tuples[1][1] == read_iterations)
