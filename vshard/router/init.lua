@@ -219,6 +219,7 @@ local function router_call(bucket_id, mode, func, args, opts)
                         end
                     else
                         bucket_set(bucket_id, replicaset)
+                        lfiber.yield()
                         -- Protect against infinite cycle in a
                         -- case of broken cluster, when a bucket
                         -- is sent on two replicasets to each
@@ -247,6 +248,7 @@ local function router_call(bucket_id, mode, func, args, opts)
                 return nil, err
             end
         end
+        lfiber.yield()
     until lfiber.time() > tend
     if err then
         return nil, err
