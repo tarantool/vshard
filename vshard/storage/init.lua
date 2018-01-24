@@ -10,6 +10,8 @@ local lreplicaset = require('vshard.replicaset')
 local trigger = require('internal.trigger')
 
 local total_bucket_count = 0
+local rebalancer_disbalance_threshold = 0
+local rebalancer_max_receiving = 0
 
 -- Internal state
 local self = {
@@ -821,10 +823,13 @@ end
 --     ...
 -- }
 -- @param bucket_count Total bucket count in a cluster.
+-- @param max_receiving Maximal bucket count that can be received
+--        in parallel by a single master.
 --
 -- @retval Maximal disbalance over all replicasets.
 --
-local function rebalancer_calculate_metrics(replicasets, bucket_count)
+local function rebalancer_calculate_metrics(replicasets, bucket_count,
+                                            max_receiving)
     local weight_sum = 0
     for _, replicaset in pairs(replicasets) do
         weight_sum = weight_sum + replicaset.weight
@@ -845,7 +850,7 @@ local function rebalancer_calculate_metrics(replicasets, bucket_count)
             max_disbalance = math.huge
         end
         assert(needed >= 0 or -needed <= replicaset.bucket_count)
-        replicaset.needed = math.min(consts.REBALANCER_MAX_RECEIVING, needed)
+        replicaset.needed = math.min(max_receiving, needed)
     end
     return max_disbalance
 end
@@ -1038,8 +1043,9 @@ local function rebalancer_f()
             goto continue
         end
         local max_disbalance =
-            rebalancer_calculate_metrics(replicasets, total_bucket_count)
-        if max_disbalance <= consts.REBALANCER_DISBALANCE_THRESHOLD then
+            rebalancer_calculate_metrics(replicasets, total_bucket_count,
+                                         rebalancer_max_receiving)
+        if max_disbalance <= rebalancer_disbalance_threshold then
             log.info('The cluster is balanced ok. Schedule next rebalancing '..
                      'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
@@ -1199,6 +1205,11 @@ local function storage_cfg(cfg, this_replica_uuid)
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
     total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
+    rebalancer_disbalance_threshold =
+        cfg.rebalancer_disbalance_threshold or
+        consts.DEFAULT_REBALANCER_DISBALANCE_THRESHOLD
+    rebalancer_max_receiving = cfg.rebalancer_max_receiving or
+                               consts.DEFAULT_REBALANCER_MAX_RECEIVING
     lcfg.prepare_for_box_cfg(cfg)
 
     local is_master = this_replicaset.master == this_replica

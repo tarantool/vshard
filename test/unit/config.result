@@ -276,3 +276,57 @@ cfg.bucket_count = 100
 lcfg.check(cfg)
 ---
 ...
+cfg.rebalancer_disbalance_threshold = -100
+---
+...
+check(cfg)
+---
+- Rebalancer disbalance threshold must be non-negative number
+...
+cfg.rebalancer_disbalance_threshold = '100'
+---
+...
+check(cfg)
+---
+- Rebalancer disbalance threshold must be non-negative number
+...
+cfg.rebalancer_disbalance_threshold = 0.5
+---
+...
+lcfg.check(cfg)
+---
+...
+cfg.rebalancer_max_receiving = -100
+---
+...
+check(cfg)
+---
+- Rebalancer max receiving bucket count must be positive integer
+...
+cfg.rebalancer_max_receiving = '100'
+---
+...
+check(cfg)
+---
+- Rebalancer max receiving bucket count must be positive integer
+...
+cfg.rebalancer_max_receiving = 0.5
+---
+...
+check(cfg)
+---
+- Rebalancer max receiving bucket count must be positive integer
+...
+cfg.rebalancer_max_receiving = 0
+---
+...
+check(cfg)
+---
+- Rebalancer max receiving bucket count must be positive integer
+...
+cfg.rebalancer_max_receiving = 10
+---
+...
+lcfg.check(cfg)
+---
+...

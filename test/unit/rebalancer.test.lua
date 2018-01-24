@@ -15,7 +15,7 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 30},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 100)
+calc_metrics(replicasets, 100, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -29,7 +29,7 @@ replicasets = {
 	uuid3 = {bucket_count = 3, weight = 0},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 7)
+calc_metrics(replicasets, 7, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -43,7 +43,7 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 500},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 300)
+calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
@@ -57,15 +57,15 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 300)
+calc_metrics(replicasets, 300, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 
 --
 -- gh-4: limit number of buckets receiving at once by node. In the
 -- test below a new replicaset is introduced and it needed 1000
--- buckets. But at once it can receive only
--- consts.REBALANCER_MAX_RECEIVING.
+-- buckets. But at once it can receive only specified in config
+-- ones.
 --
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
@@ -74,7 +74,7 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets, 3000)
+calc_metrics(replicasets, 3000, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 build_routes(replicasets)
 

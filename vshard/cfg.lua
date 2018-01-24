@@ -103,6 +103,19 @@ local function cfg_check(shard_cfg)
         math.floor(shard_cfg.bucket_count) ~= shard_cfg.bucket_count) then
         error('Bucket count must be positive integer')
     end
+    if shard_cfg.rebalancer_disbalance_threshold ~= nil then
+        local t = shard_cfg.rebalancer_disbalance_threshold
+        if type(t) ~= 'number' or t < 0 then
+            error('Rebalancer disbalance threshold must be non-negative number')
+        end
+    end
+    if shard_cfg.rebalancer_max_receiving ~= nil then
+        local t = shard_cfg.rebalancer_max_receiving
+        if type(t) ~= 'number' or t <= 0 or math.floor(t) ~= t then
+            error('Rebalancer max receiving bucket count must be '..
+                  'positive integer')
+        end
+    end
     local uuids = {}
     local uris = {}
     for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
@@ -132,6 +145,8 @@ local function prepare_for_box_cfg(cfg)
     cfg.weights = nil
     cfg.zone = nil
     cfg.bucket_count = nil
+    cfg.rebalancer_disbalance_threshold = nil
+    cfg.rebalancer_max_receiving = nil
 end
 
 return {

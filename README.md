@@ -70,6 +70,8 @@ A sample cluster configuration for **Storage** and **Router** can look like:
 local cfg = {
     memtx_memory = 100 * 1024 * 1024,
     bucket_count = 10000,
+    rebalancer_disbalance_threshold = 10,
+    rebalancer_max_receiving = 100,
     sharding = {
         ['cbf06940-0790-498b-948d-042b62cf3d29'] = { -- replicaset #1
             replicas = {
@@ -102,7 +104,13 @@ local cfg = {
 }
 ```
 
-Field `sharding` defines logical topology of sharded Tarantool cluster.
+* `sharding` defines logical topology of sharded Tarantool cluster;
+* `bucket_count` total bucket count in a cluster. **It can not be changed after bootstrap!**;
+* `rebalancer_disbalance_threshold` maximal bucket disbalance percents. Disbalance for each replicaset is calculated by formula: `|ethalon_bucket_count - real_bucket_count| / ethalon_bucket_count * 100`.
+* `rebalancer_max_receiving` maximal bucket count that can be received in parallel by single replicaset. This count must be limited, because else, when a new replicaset is added to a cluster, the rebalancer would send to it very big amount of buckets from existing replicasets - it produces heavy load on a new replicaset to apply all these buckets.
+
+Example of usage `rebalancer_max_receiving`:<br>
+Suppose it to be equal to 100, total bucket count is 1000 and there are 3 replicasets with 333, 333 and 334 buckets. When a new replicaset is added, each replicaset's ethalon bucket count becomes 250. And the new replicaset does not receive 250 buckets at once - it receives 100, 100 and 50 sequentialy instead.
 
 ### Replicas weight configuration
 

@@ -44,7 +44,7 @@ wait_rebalancer_state('Total active bucket count is not equal to total', test_ru
 --
 vshard.storage.rebalancer_disable()
 cfg.bucket_count = 200
-vshard.consts.REBALANCER_MAX_RECEIVING = 10
+cfg.rebalancer_max_receiving = 10
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
@@ -84,8 +84,9 @@ _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 --
 test_run:switch('box_1_a')
 -- Set threshold to 300%
-vshard.consts.REBALANCER_DISBALANCE_THRESHOLD = 300
+cfg.rebalancer_disbalance_threshold = 300
 vshard.storage.rebalancer_disable()
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 test_run:switch('box_2_a')
 _bucket:truncate()
@@ -96,7 +97,8 @@ vshard.storage.rebalancer_enable()
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 -- Return 1%.
-vshard.consts.REBALANCER_DISBALANCE_THRESHOLD = 0.01
+cfg.rebalancer_disbalance_threshold = 0.01
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 wait_rebalancer_state('Rebalance routes are sent', test_run)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
@@ -176,7 +178,7 @@ space:select{}
 -- (See point (8) in the test plan)
 --
 cfg.bucket_count = 200
-vshard.consts.REBALANCER_MAX_RECEIVING = 10
+cfg.rebalancer_max_receiving = 10
 switch_rs1_master()
 vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
 

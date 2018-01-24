@@ -114,3 +114,21 @@ cfg.bucket_count = 0
 check(cfg)
 cfg.bucket_count = 100
 lcfg.check(cfg)
+
+cfg.rebalancer_disbalance_threshold = -100
+check(cfg)
+cfg.rebalancer_disbalance_threshold = '100'
+check(cfg)
+cfg.rebalancer_disbalance_threshold = 0.5
+lcfg.check(cfg)
+
+cfg.rebalancer_max_receiving = -100
+check(cfg)
+cfg.rebalancer_max_receiving = '100'
+check(cfg)
+cfg.rebalancer_max_receiving = 0.5
+check(cfg)
+cfg.rebalancer_max_receiving = 0
+check(cfg)
+cfg.rebalancer_max_receiving = 10
+lcfg.check(cfg)
