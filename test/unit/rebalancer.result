@@ -19,9 +19,6 @@ consts = vshard.consts
 --
 -- Test adding two new replicasets.
 --
-consts.BUCKET_COUNT = 100
----
-...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -37,7 +34,7 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets)
+calc_metrics(replicasets, 100)
 ---
 - 100
 ...
@@ -65,9 +62,6 @@ build_routes(replicasets)
 --
 -- Test removing replicasets.
 --
-consts.BUCKET_COUNT = 7
----
-...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -83,7 +77,7 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets)
+calc_metrics(replicasets, 7)
 ---
 - inf
 ...
@@ -111,9 +105,6 @@ build_routes(replicasets)
 --
 -- Test big weights.
 --
-consts.BUCKET_COUNT = 300
----
-...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -129,7 +120,7 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets)
+calc_metrics(replicasets, 300)
 ---
 - 133
 ...
@@ -173,7 +164,7 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets)
+calc_metrics(replicasets, 300)
 ---
 - 0
 ...
@@ -202,9 +193,6 @@ build_routes(replicasets)
 -- buckets. But at once it can receive only
 -- consts.REBALANCER_MAX_RECEIVING.
 --
-consts.BUCKET_COUNT = 3000
----
-...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -220,7 +208,7 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
-calc_metrics(replicasets)
+calc_metrics(replicasets, 3000)
 ---
 - 100
 ...

@@ -8,7 +8,6 @@ consts = vshard.consts
 --
 -- Test adding two new replicasets.
 --
-consts.BUCKET_COUNT = 100
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
 	uuid1 = {bucket_count = 100, weight = 50},
@@ -16,14 +15,13 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 30},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets)
+calc_metrics(replicasets, 100)
 replicasets
 build_routes(replicasets)
 
 --
 -- Test removing replicasets.
 --
-consts.BUCKET_COUNT = 7
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
 	uuid1 = {bucket_count = 2, weight = 1},
@@ -31,14 +29,13 @@ replicasets = {
 	uuid3 = {bucket_count = 3, weight = 0},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets)
+calc_metrics(replicasets, 7)
 replicasets
 build_routes(replicasets)
 
 --
 -- Test big weights.
 --
-consts.BUCKET_COUNT = 300
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
 	uuid1 = {bucket_count = 100, weight = 1000},
@@ -46,7 +43,7 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 500},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets)
+calc_metrics(replicasets, 300)
 replicasets
 build_routes(replicasets)
 
@@ -60,7 +57,7 @@ replicasets = {
 	uuid3 = {bucket_count = 100, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets)
+calc_metrics(replicasets, 300)
 replicasets
 build_routes(replicasets)
 
@@ -70,7 +67,6 @@ build_routes(replicasets)
 -- buckets. But at once it can receive only
 -- consts.REBALANCER_MAX_RECEIVING.
 --
-consts.BUCKET_COUNT = 3000
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
 	uuid1 = {bucket_count = 1500, weight = 1},
@@ -78,7 +74,7 @@ replicasets = {
 	uuid3 = {bucket_count = 0, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
-calc_metrics(replicasets)
+calc_metrics(replicasets, 3000)
 replicasets
 build_routes(replicasets)
 

@@ -23,15 +23,12 @@ end;
 test_run:cmd("setopt delimiter ''");
 
 test_run:cmd('switch box_1_a')
-vshard.consts.BUCKET_COUNT = 90
 for i = 1, 30 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:cmd('switch box_2_a')
-vshard.consts.BUCKET_COUNT = 90
 for i = 31, 60 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:cmd('switch box_3_a')
-vshard.consts.BUCKET_COUNT = 90
 for i = 61, 90 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:cmd('switch default')

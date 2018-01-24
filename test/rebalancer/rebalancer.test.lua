@@ -36,15 +36,16 @@ _bucket = box.space._bucket
 -- Test the rebalancer on not bootstraped cluster.
 -- (See point (1) in the test plan)
 --
-wait_rebalancer_state('Total active bucket count is not equal to BUCKET_COUNT', test_run)
+wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
 
 --
 -- Fill the cluster with buckets saving the balance 100 buckets
 -- per replicaset.
 --
 vshard.storage.rebalancer_disable()
-vshard.consts.BUCKET_COUNT = 200
+cfg.bucket_count = 200
 vshard.consts.REBALANCER_MAX_RECEIVING = 10
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:switch('box_2_a')
@@ -174,7 +175,7 @@ space:select{}
 -- to a new location.
 -- (See point (8) in the test plan)
 --
-vshard.consts.BUCKET_COUNT = 200
+cfg.bucket_count = 200
 vshard.consts.REBALANCER_MAX_RECEIVING = 10
 switch_rs1_master()
 vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)

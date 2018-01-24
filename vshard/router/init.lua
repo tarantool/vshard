@@ -6,6 +6,8 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 
+local total_bucket_count = 0
+
 -- Internal state
 local self = {
     errinj = {
@@ -170,7 +172,7 @@ local function router_call(bucket_id, mode, func, args, opts)
     local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
     local tend = lfiber.time() + timeout
-    if bucket_id > consts.BUCKET_COUNT or bucket_id < 0 then
+    if bucket_id > total_bucket_count or bucket_id < 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
     local call
@@ -390,6 +392,7 @@ local function router_cfg(cfg)
     self.replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
     -- TODO: update existing route map in-place
     self.route_map = {}
+    total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
     lcfg.prepare_for_box_cfg(cfg)
 
     log.info("Calling box.cfg()...")
@@ -430,7 +433,7 @@ local function cluster_bootstrap()
         end
     end
     local replicaset_count = #replicasets
-    for bucket_id= 1, consts.BUCKET_COUNT do
+    for bucket_id= 1, total_bucket_count do
         local replicaset = replicasets[1 + (bucket_id - 1) % replicaset_count]
         assert(replicaset ~= nil)
         log.info("Distributing bucket %d to %s", bucket_id, replicaset)
@@ -580,7 +583,7 @@ local function router_info()
         -- If a bucket is unreachable, then replicaset is
         -- unreachable too and color already is red.
     end
-    bucket_info.unknown = consts.BUCKET_COUNT - known_bucket_count
+    bucket_info.unknown = total_bucket_count - known_bucket_count
     if bucket_info.unknown > 0 then
         state.status = math.max(state.status, consts.STATUS.YELLOW)
         table.insert(state.alerts, lerror.alert(lerror.code.UNKNOWN_BUCKETS,
@@ -603,7 +606,7 @@ local function router_buckets_info(offset, limit)
         error('Usage: buckets_info(offset, limit)')
     end
     offset = offset or 0
-    limit = limit or consts.BUCKET_COUNT
+    limit = limit or total_bucket_count
     local ret = {}
     -- Use one string memory for all unknown buckets.
     local available_rw = 'available_rw'
@@ -612,7 +615,7 @@ local function router_buckets_info(offset, limit)
     local unreachable = 'unreachable'
     -- Collect limit.
     local first = math.max(1, offset + 1)
-    local last = math.min(offset + limit, consts.BUCKET_COUNT)
+    local last = math.min(offset + limit, total_bucket_count)
     for bucket_id = first, last do
         local rs = self.route_map[bucket_id]
         if rs then

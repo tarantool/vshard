@@ -9,6 +9,8 @@ local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local trigger = require('internal.trigger')
 
+local total_bucket_count = 0
+
 -- Internal state
 local self = {
     --
@@ -818,15 +820,17 @@ end
 --     uuid = {bucket_count = number, weight = number},
 --     ...
 -- }
+-- @param bucket_count Total bucket count in a cluster.
+--
 -- @retval Maximal disbalance over all replicasets.
 --
-local function rebalancer_calculate_metrics(replicasets)
+local function rebalancer_calculate_metrics(replicasets, bucket_count)
     local weight_sum = 0
     for _, replicaset in pairs(replicasets) do
         weight_sum = weight_sum + replicaset.weight
     end
     assert(weight_sum ~= 0)
-    local bucket_per_weight = consts.BUCKET_COUNT / weight_sum
+    local bucket_per_weight = bucket_count / weight_sum
     local max_disbalance = 0
     for _, replicaset in pairs(replicasets) do
         local ethalon_bucket_count = replicaset.weight * bucket_per_weight
@@ -1003,10 +1007,10 @@ local function rebalancer_download_states()
         replicasets[uuid] = {bucket_count = bucket_active_count,
                              weight = replicaset.weight or 1}
     end
-    if total_bucket_active_count == consts.BUCKET_COUNT then
+    if total_bucket_active_count == total_bucket_count then
         return replicasets
     else
-        log.info('Total active bucket count is not equal to BUCKET_COUNT. '..
+        log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet.')
     end
 end
@@ -1033,7 +1037,8 @@ local function rebalancer_f()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
             goto continue
         end
-        local max_disbalance = rebalancer_calculate_metrics(replicasets)
+        local max_disbalance =
+            rebalancer_calculate_metrics(replicasets, total_bucket_count)
         if max_disbalance <= consts.REBALANCER_DISBALANCE_THRESHOLD then
             log.info('The cluster is balanced ok. Schedule next rebalancing '..
                      'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
@@ -1193,6 +1198,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     end
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
+    total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
     lcfg.prepare_for_box_cfg(cfg)
 
     local is_master = this_replicaset.master == this_replica

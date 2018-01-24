@@ -52,9 +52,6 @@ test_run:cmd('switch box_1_a')
 ---
 - true
 ...
-vshard.consts.BUCKET_COUNT = 90
----
-...
 for i = 1, 30 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---
 ...
@@ -62,18 +59,12 @@ test_run:cmd('switch box_2_a')
 ---
 - true
 ...
-vshard.consts.BUCKET_COUNT = 90
----
-...
 for i = 31, 60 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---
 ...
 test_run:cmd('switch box_3_a')
 ---
 - true
-...
-vshard.consts.BUCKET_COUNT = 90
----
 ...
 for i = 61, 90 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---

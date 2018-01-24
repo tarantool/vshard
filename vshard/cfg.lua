@@ -97,6 +97,12 @@ local function cfg_check(shard_cfg)
        type(shard_cfg.zone) ~= 'string' then
         error('Config zone must be either number or string')
     end
+    if shard_cfg.bucket_count ~= nil and
+       (type(shard_cfg.bucket_count) ~= 'number' or
+        shard_cfg.bucket_count <= 0 or
+        math.floor(shard_cfg.bucket_count) ~= shard_cfg.bucket_count) then
+        error('Bucket count must be positive integer')
+    end
     local uuids = {}
     local uris = {}
     for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
@@ -125,6 +131,7 @@ local function prepare_for_box_cfg(cfg)
     cfg.sharding = nil
     cfg.weights = nil
     cfg.zone = nil
+    cfg.bucket_count = nil
 end
 
 return {

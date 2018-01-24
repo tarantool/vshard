@@ -69,6 +69,7 @@ A sample cluster configuration for **Storage** and **Router** can look like:
 ```Lua
 local cfg = {
     memtx_memory = 100 * 1024 * 1024,
+    bucket_count = 10000,
     sharding = {
         ['cbf06940-0790-498b-948d-042b62cf3d29'] = { -- replicaset #1
             replicas = {
@@ -260,12 +261,12 @@ result = vshard.router.call(bucket_id, mode, func, args)
 vshard.router.call() routes result = func(unpack(args)) call to a shard
 which serves `bucket_id`.
 
-`bucket_id` is just a regular number in range 1..`BUCKET_COUNT`, where
-`BUCKET_COUNT` is defined in `vshard.consts.BUCKET_COUNT`. This number
-can be assigned in arbitrary way by client application. Sharded Tarantool
-cluster uses this number as an opaque unique identifier to distribute
-data across replicasets. It is guaranteed that all records with the same
-`bucket_id` will be stored on the same replicaset.
+`bucket_id` is just a regular number in range 1..`bucket_count`, where
+`bucket_count` is configuration parameter. This number can be assigned in
+arbitrary way by client application. Sharded Tarantool cluster uses this
+number as an opaque unique identifier to distribute data across replicasets. It
+is guaranteed that all records with the same `bucket_id` will be stored on the
+same replicaset.
 
 ## Router public API
 

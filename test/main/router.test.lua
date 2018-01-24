@@ -47,7 +47,7 @@ vshard.router.bootstrap()
 --
 -- gh-48: more precise error messages about bucket unavailability.
 --
-util.check_error(vshard.router.call, vshard.consts.BUCKET_COUNT + 1, 'read', 'echo', {123})
+util.check_error(vshard.router.call, vshard.consts.DEFAULT_BUCKET_COUNT + 1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, -1, 'read', 'echo', {123})
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
@@ -80,7 +80,7 @@ test_run:cmd('start server storage_2_a')
 --
 -- gh-26: API to get netbox by bucket identifier.
 --
-vshard.router.route(vshard.consts.BUCKET_COUNT + 100)
+vshard.router.route(vshard.consts.DEFAULT_BUCKET_COUNT + 100)
 util.check_error(vshard.router.route, 'asdfg')
 util.check_error(vshard.router.route)
 conn = vshard.router.route(1).master.conn
@@ -139,7 +139,7 @@ vshard.router.call(bucket_id + 1, 'read', 'customer_lookup', {1}) -- nothing
 --
 -- Test errors from router call.
 --
-new_bid = vshard.consts.BUCKET_COUNT + 1
+new_bid = vshard.consts.DEFAULT_BUCKET_COUNT + 1
 space_data = {{1000, {{1}, {2}}}}
 -- Insert in a not existing space - it must return box.error.
 vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
@@ -180,7 +180,7 @@ buckets_info[1]
 buckets_info[2]
 
 vshard.router.buckets_info(0, 3)
-vshard.router.buckets_info(vshard.consts.BUCKET_COUNT - 3)
+vshard.router.buckets_info(vshard.consts.DEFAULT_BUCKET_COUNT - 3)
 util.check_error(vshard.router.buckets_info, '123')
 util.check_error(vshard.router.buckets_info, 123, '456')
 
@@ -197,7 +197,7 @@ function calculate_known_buckets()
 end;
 function wait_discovery()
     local known_buckets = 0
-    while known_buckets ~= vshard.consts.BUCKET_COUNT do
+    while known_buckets ~= vshard.consts.DEFAULT_BUCKET_COUNT do
         vshard.router.discovery_wakeup()
         fiber.sleep(0.1)
         known_buckets = calculate_known_buckets()

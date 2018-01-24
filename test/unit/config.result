@@ -239,3 +239,40 @@ weights.zone1 = {[2] = 100}
 lcfg.check(cfg)
 ---
 ...
+--
+-- gh-62: allow to specify bucket_count, rebalancer settings.
+--
+cfg.bucket_count = -100
+---
+...
+check(cfg)
+---
+- Bucket count must be positive integer
+...
+cfg.bucket_count = '0'
+---
+...
+check(cfg)
+---
+- Bucket count must be positive integer
+...
+cfg.bucket_count = 100.5
+---
+...
+check(cfg)
+---
+- Bucket count must be positive integer
+...
+cfg.bucket_count = 0
+---
+...
+check(cfg)
+---
+- Bucket count must be positive integer
+...
+cfg.bucket_count = 100
+---
+...
+lcfg.check(cfg)
+---
+...
