@@ -1193,7 +1193,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     end
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
-    cfg.sharding = nil
+    lcfg.prepare_for_box_cfg(cfg)
 
     local is_master = this_replicaset.master == this_replica
     if is_master then

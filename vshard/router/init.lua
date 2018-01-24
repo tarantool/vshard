@@ -390,9 +390,7 @@ local function router_cfg(cfg)
     self.replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
     -- TODO: update existing route map in-place
     self.route_map = {}
-    cfg.sharding = nil
-    cfg.weights = nil
-    cfg.zone = nil
+    lcfg.prepare_for_box_cfg(cfg)
 
     log.info("Calling box.cfg()...")
     for k, v in pairs(cfg) do

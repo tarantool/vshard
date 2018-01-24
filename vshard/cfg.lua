@@ -118,7 +118,16 @@ local function cfg_check(shard_cfg)
     end
 end
 
+--
+-- Nullify non-box options.
+--
+local function prepare_for_box_cfg(cfg)
+    cfg.sharding = nil
+    cfg.weights = nil
+    cfg.zone = nil
+end
 
 return {
-    check = cfg_check
+    check = cfg_check,
+    prepare_for_box_cfg = prepare_for_box_cfg,
 }
