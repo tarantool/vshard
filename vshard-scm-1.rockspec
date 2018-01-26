@@ -1,4 +1,4 @@
-package = 'shard'
+package = 'vshard'
 version = 'scm-1'
 source  = {
     url    = 'git://github.com/tarantool/vshard.git',
@@ -10,7 +10,7 @@ description = {
     license  = 'BSD',
 }
 dependencies = {
-    'tarantool >= 1.7.6.116';
+    'tarantool >= 1.7.7';
 }
 build = {
     type = 'cmake';
