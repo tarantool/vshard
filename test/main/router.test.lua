@@ -151,8 +151,7 @@ test_run:cmd("setopt delimiter ''");
 --
 vshard.router.callrw(bucket_id, 'customer_add', {customer})
 vshard.router.callro(bucket_id, 'customer_lookup', {1})
-vshard.router.callro(bucket_id + 1, 'customer_lookup', {1}) -- nothing
-
+vshard.router.callro(bucket_id + 1500, 'customer_lookup', {1}) -- nothing
 
 --
 -- Test errors from router call.
@@ -195,9 +194,10 @@ rs.master = master
 buckets_info = vshard.router.buckets_info()
 #buckets_info
 buckets_info[1]
-buckets_info[2]
+buckets_info[1501]
 
 vshard.router.buckets_info(0, 3)
+vshard.router.buckets_info(1500, 3)
 vshard.router.buckets_info(vshard.consts.DEFAULT_BUCKET_COUNT - 3)
 util.check_error(vshard.router.buckets_info, '123')
 util.check_error(vshard.router.buckets_info, 123, '456')
@@ -246,7 +246,7 @@ info.bucket
 info.alerts
 wait_discovery()
 calculate_known_buckets()
-test_run:grep_log('router_1', 'was 1450, became 1500')
+test_run:grep_log('router_1', 'was 1400, became 1500')
 info = vshard.router.info()
 info.bucket
 info.alerts

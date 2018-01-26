@@ -358,15 +358,26 @@ local function bucket_stat(bucket_id)
 end
 
 --
--- Create bucket manually for initial bootstrap, tests or
--- emergency cases
+-- Create bucket range manually for initial bootstrap, tests or
+-- emergency cases. Buckets id, id + 1, id + 2, ..., id + count
+-- are inserted.
+-- @param first_bucket_id Identifier of a first bucket in a range.
+-- @param count Bucket range length to insert. By default is 1.
 --
-local function bucket_force_create(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_force_create(bucket_id)')
+local function bucket_force_create(first_bucket_id, count)
+    if type(first_bucket_id) ~= 'number' or
+       (count ~= nil and (type(count) ~= 'number' or
+                          math.floor(count) ~= count)) then
+        error('Usage: bucket_force_create(first_bucket_id, count)')
     end
+    count = count or 1
 
-    box.space._bucket:insert({bucket_id, consts.BUCKET.ACTIVE})
+    local _bucket = box.space._bucket
+    box.begin()
+    for i = first_bucket_id, first_bucket_id + count - 1 do
+        _bucket:insert({i, consts.BUCKET.ACTIVE})
+    end
+    box.commit()
     return true
 end
 

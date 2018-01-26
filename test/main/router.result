@@ -236,7 +236,7 @@ _ = vshard.router.bucket_discovery(3)
 vshard.router.buckets_info(0, 3)
 ---
 - - status: unknown
-  - uuid: <replicaset_1>
+  - uuid: <replicaset_2>
     status: available_rw
   - uuid: <replicaset_2>
     status: available_rw
@@ -256,8 +256,8 @@ util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 vshard.router.buckets_info(0, 3)
 ---
 - - status: unknown
-  - uuid: <replicaset_1>
-    status: available_rw
+  - uuid: <replicaset_2>
+    status: unreachable
   - uuid: <replicaset_2>
     status: unreachable
 ...
@@ -385,7 +385,7 @@ vshard.router.callro(bucket_id, 'customer_lookup', {1})
 - {'accounts': [{'account_id': 10, 'balance': 0, 'name': 'Credit Card'}, {'account_id': 11,
       'balance': 0, 'name': 'Debit Card'}], 'customer_id': 1, 'name': 'Customer 1'}
 ...
-vshard.router.callro(bucket_id + 1, 'customer_lookup', {1}) -- nothing
+vshard.router.callro(bucket_id + 1500, 'customer_lookup', {1}) -- nothing
 ---
 - null
 ...
@@ -431,11 +431,11 @@ vshard.router.info()
   bucket:
     unreachable: 0
     available_ro: 0
-    unknown: 2997
-    available_rw: 3
+    unknown: 2996
+    available_rw: 4
   status: 1
   alerts:
-  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
+  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
 ...
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.
@@ -476,7 +476,7 @@ info.alerts
 - - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_1>
       is unreachable: disconnected']
   - ['UNREACHABLE_REPLICASET', 'There is no active replicas in replicaset <replicaset_1>']
-  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
+  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
 ...
 rs.master.conn = master_conn
 ---
@@ -512,7 +512,7 @@ info.status
 info.alerts
 ---
 - - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
-  - ['UNKNOWN_BUCKETS', '2997 buckets are not discovered']
+  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
 ...
 rs.master = master
 ---
@@ -529,7 +529,7 @@ buckets_info[1]
 - uuid: <replicaset_2>
   status: available_rw
 ...
-buckets_info[2]
+buckets_info[1501]
 ---
 - uuid: <replicaset_1>
   status: available_rw
@@ -538,9 +538,19 @@ vshard.router.buckets_info(0, 3)
 ---
 - - uuid: <replicaset_2>
     status: available_rw
-  - uuid: <replicaset_1>
+  - uuid: <replicaset_2>
     status: available_rw
   - uuid: <replicaset_2>
+    status: available_rw
+...
+vshard.router.buckets_info(1500, 3)
+---
+- 1502:
+    status: unknown
+  1503:
+    status: unknown
+  1501:
+    uuid: <replicaset_1>
     status: available_rw
 ...
 vshard.router.buckets_info(vshard.consts.DEFAULT_BUCKET_COUNT - 3)
@@ -659,9 +669,9 @@ calculate_known_buckets()
 ---
 - 3000
 ...
-test_run:grep_log('router_1', 'was 1450, became 1500')
+test_run:grep_log('router_1', 'was 1400, became 1500')
 ---
-- was 1450, became 1500
+- was 1400, became 1500
 ...
 info = vshard.router.info()
 ---

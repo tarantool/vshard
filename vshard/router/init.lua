@@ -512,16 +512,19 @@ local function cluster_bootstrap()
                                       'Cluster is already bootstrapped')
         end
     end
-    local replicaset_count = #replicasets
-    for bucket_id= 1, total_bucket_count do
-        local replicaset = replicasets[1 + (bucket_id - 1) % replicaset_count]
-        assert(replicaset ~= nil)
-        log.info("Distributing bucket %d to %s", bucket_id, replicaset)
-        local status, info =
-            replicaset:callrw('vshard.storage.bucket_force_create',
-                              {bucket_id})
-        if not status then
-            return nil, info
+    local bucket_id = 1
+    for uuid, replicaset in pairs(self.replicasets) do
+        if replicaset.ethalon_bucket_count > 0 then
+            local ok, err =
+                replicaset:callrw('vshard.storage.bucket_force_create',
+                                  {bucket_id, replicaset.ethalon_bucket_count})
+            if not ok then
+                return nil, err
+            end
+            local next_bucket_id = bucket_id + replicaset.ethalon_bucket_count
+            log.info('Buckets from %d to %d are bootstrapped on "%s"',
+                     bucket_id, next_bucket_id - 1, uuid)
+            bucket_id = next_bucket_id
         end
     end
     return true
