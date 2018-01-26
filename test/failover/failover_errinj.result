@@ -58,9 +58,6 @@ vshard.router.internal.errinj.ERRINJ_FAILOVER_CHANGE_CFG = true
 wait_state('Configuration has changed, restart ')
 ---
 ...
-wait_state('All replicas are ok')
----
-...
 test_run:switch('default')
 ---
 - true

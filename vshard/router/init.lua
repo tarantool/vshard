@@ -386,8 +386,8 @@ local function failover_f()
             lfiber.sleep(min_timeout)
             goto continue
         end
-        prev_was_ok = false
         local curr_ts = lfiber.time()
+        local replica_is_changed = false
         for _, uuid in pairs(uuid_to_update) do
             local rs = self.replicasets[uuid]
             if self.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
@@ -395,6 +395,7 @@ local function failover_f()
                 self.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
             end
             if rs == nil then
+                prev_was_ok = false
                 log.info('Configuration has changed, restart failovering')
                 lfiber.yield()
                 goto continue
@@ -402,20 +403,31 @@ local function failover_f()
             local old_replica = rs.replica
             if failover_is_candidate_connected(rs) then
                 rs:set_candidate_as_replica()
+                replica_is_changed = true
             end
             if failover_need_update_candidate(rs, curr_ts) then
                 rs:update_candidate()
             end
             if failover_need_down_priority(rs, curr_ts) then
                 rs:down_replica_priority()
+                replica_is_changed = true
             end
             if old_replica ~= rs.replica then
                 log.info('New replica "%s:%d" for replicaset "%s"',
                          rs.replica.conn.host, rs.replica.conn.port, rs.uuid)
             end
         end
-        log.info('Failovering step is finished. Schedule next after %f '..
-                 'seconds', min_timeout)
+        prev_was_ok = not replica_is_changed
+        local logf
+        if replica_is_changed then
+            logf = log.info
+        else
+            -- In any case it is necessary to periodically log
+            -- failover heartbeat.
+            logf = log.verbose
+        end
+        logf('Failovering step is finished. Schedule next after %f seconds',
+             min_timeout)
         lfiber.sleep(min_timeout)
     end
 end
