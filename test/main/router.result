@@ -370,29 +370,21 @@ vshard.router.info()
 ---
 - replicasets:
     <replicaset_2>:
-      replica:
+      replica: &0
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
       uuid: <replicaset_2>
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3303
-        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      master: *0
     <replicaset_1>:
-      replica:
+      replica: &1
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3301
         uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
       uuid: <replicaset_1>
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3301
-        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+      master: *1
   bucket:
     unreachable: 0
     available_ro: 0
@@ -424,17 +416,13 @@ info = vshard.router.info()
 ...
 info.replicasets[rs.uuid]
 ---
-- replica:
+- replica: &0
     network_timeout: 0.5
     status: unreachable
     uri: storage@127.0.0.1:3301
     uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
   uuid: <replicaset_1>
-  master:
-    network_timeout: 0.5
-    status: unreachable
-    uri: storage@127.0.0.1:3301
-    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  master: *0
 ...
 info.status
 ---

@@ -131,17 +131,13 @@ vshard.router.info()
 ---
 - replicasets:
     ac522f65-aa94-4134-9f64-51ee384f1a54:
-      replica:
+      replica: &0
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
       uuid: ac522f65-aa94-4134-9f64-51ee384f1a54
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3303
-        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      master: *0
     cbf06940-0790-498b-948d-042b62cf3d29:
       replica:
         network_timeout: 0.5

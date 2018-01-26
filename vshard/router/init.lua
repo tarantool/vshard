@@ -577,8 +577,9 @@ local function router_info()
         rs_info.master = info
 
         -- Build replica info.
-        local uuid = replicaset.replica and replicaset.replica.uuid
-        info = replicaset_instance_info(replicaset, 'replica', state.alerts)
+        if replicaset.replica ~= replicaset.master then
+            info = replicaset_instance_info(replicaset, 'replica', state.alerts)
+        end
         rs_info.replica = info
         if not replicaset.replica or
            (replicaset.replica and
