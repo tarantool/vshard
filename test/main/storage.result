@@ -88,6 +88,69 @@ util = require('util')
 vshard.storage.rebalancer_disable()
 ---
 ...
+-- Ensure the trigger is called right after setting, and does not
+-- wait until reconfiguration.
+master_enabled = false
+---
+...
+master_disabled = false
+---
+...
+function on_master_enable() master_enabled = true end
+---
+...
+function on_master_disable() master_disabled = true end
+---
+...
+vshard.storage.on_master_enable(on_master_enable)
+---
+...
+vshard.storage.on_master_disable(on_master_disable)
+---
+...
+master_enabled
+---
+- true
+...
+master_disabled
+---
+- false
+...
+-- Test the same about master disabling.
+test_run:switch('storage_1_b')
+---
+- true
+...
+master_enabled = false
+---
+...
+master_disabled = false
+---
+...
+function on_master_enable() master_enabled = true end
+---
+...
+function on_master_disable() master_disabled = true end
+---
+...
+vshard.storage.on_master_enable(on_master_enable)
+---
+...
+vshard.storage.on_master_disable(on_master_disable)
+---
+...
+master_enabled
+---
+- false
+...
+master_disabled
+---
+- true
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
 replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
 ---
 ...

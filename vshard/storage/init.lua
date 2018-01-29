@@ -88,6 +88,28 @@ local function storage_schema_v1(username, password)
     box.snapshot()
 end
 
+local function this_is_master()
+    return self.this_replicaset and self.this_replicaset.master and
+           self.this_replica == self.this_replicaset.master
+end
+
+local function on_master_disable(...)
+    self.on_master_disable(...)
+    -- If a trigger is set after storage.cfg(), then notify an
+    -- user, that the current instance is not master.
+    if #{...} == 1 and not this_is_master() then
+        self.on_master_disable:run()
+    end
+end
+
+local function on_master_enable(...)
+    self.on_master_enable(...)
+    -- Same as above, but notify, that the instance is master.
+    if #{...} == 1 and this_is_master() then
+        self.on_master_enable:run()
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Recovery
 --------------------------------------------------------------------------------
@@ -1406,6 +1428,6 @@ return {
     buckets_discovery = buckets_discovery;
     rebalancer_request_state = rebalancer_request_state;
     internal = self;
-    on_master_enable = self.on_master_enable;
-    on_master_disable = self.on_master_disable;
+    on_master_enable = on_master_enable;
+    on_master_disable = on_master_disable;
 }

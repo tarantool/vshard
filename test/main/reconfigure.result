@@ -161,7 +161,7 @@ vshard.storage.cfg(cfg, names['storage_1_a'])
 ...
 enable_count
 ---
-- 1
+- 2
 ...
 test_run:switch('storage_2_a')
 ---
