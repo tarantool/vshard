@@ -57,6 +57,12 @@ replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
 replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]
 vshard.storage.info().replicasets[replicaset1_uuid] or vshard.storage.info()
 vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
+-- Try to call info on a replicaset with no master.
+rs1 = vshard.storage.internal.replicasets[replicaset1_uuid]
+saved_master = rs1.master
+rs1.master = nil
+vshard.storage.info()
+rs1.master = saved_master
 
 -- Sync API
 vshard.storage.sync()

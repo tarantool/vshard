@@ -1,5 +1,4 @@
 local log = require('log')
-local luri = require('uri')
 local lfiber = require('fiber')
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
@@ -518,10 +517,7 @@ local function replicaset_instance_info(replicaset, name, alerts, errcolor,
     local info = {}
     local replica = replicaset[name]
     if replica then
-        local uri = luri.parse(replica.uri)
-        uri.password = nil
-        uri = luri.format(uri)
-        info.uri = uri
+        info.uri = replica:safe_uri()
         info.uuid = replica.uuid
         info.network_timeout = replica.net_timeout
         if replica:is_connected() then

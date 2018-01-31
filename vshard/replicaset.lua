@@ -396,11 +396,11 @@ end
 -- Nice formatter for replicaset
 --
 local function replicaset_tostring(replicaset)
-    local uri = ''
+    local uri
     if replicaset.master then
-        uri = luri.parse(replicaset.master.uri)
-        uri.password = nil
-        uri = luri.format(uri)
+        uri = replicaset.master:safe_uri()
+    else
+        uri = ''
     end
     return string.format('Replicaset(uuid=%s, master=%s)',
                          replicaset.uuid, uri)
@@ -427,7 +427,12 @@ local replica_mt = {
     __index = {
         is_connected = function(replica)
             return replica.conn and replica.conn:is_connected()
-        end
+        end,
+        safe_uri = function(replica)
+            local uri = luri.parse(replica.uri)
+            uri.password = nil
+            return luri.format(uri)
+        end,
     }
 }
 

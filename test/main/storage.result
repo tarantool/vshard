@@ -169,6 +169,41 @@ vshard.storage.info().replicasets[replicaset2_uuid] or vshard.storage.info()
   master:
     uri: storage@127.0.0.1:3303
 ...
+-- Try to call info on a replicaset with no master.
+rs1 = vshard.storage.internal.replicasets[replicaset1_uuid]
+---
+...
+saved_master = rs1.master
+---
+...
+rs1.master = nil
+---
+...
+vshard.storage.info()
+---
+- replicasets:
+    <replicaset_2>:
+      uuid: <replicaset_2>
+      master:
+        uri: storage@127.0.0.1:3303
+    <replicaset_1>:
+      uuid: <replicaset_1>
+      master: missing
+  bucket:
+    receiving: 0
+    active: 0
+    total: 0
+    garbage: 0
+    sending: 0
+  status: 2
+  replication:
+    status: slave
+  alerts:
+  - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
+...
+rs1.master = saved_master
+---
+...
 -- Sync API
 vshard.storage.sync()
 ---

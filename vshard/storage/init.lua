@@ -1297,13 +1297,14 @@ local function storage_info()
     local code = lerror.code
     local alert = lerror.alert
     local this_uuid = self.this_replicaset.uuid
-    if self.this_replicaset.master == nil then
+    local this_master = self.this_replicaset.master
+    if this_master == nil then
         table.insert(state.alerts, alert(code.MISSING_MASTER, this_uuid))
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
-    if self.this_replicaset.master ~= self.this_replica then
+    if this_master and this_master ~= self.this_replica then
         for id, replica in pairs(box.info.replication) do
-            if replica.uuid ~= self.this_replicaset.master.uuid then
+            if replica.uuid ~= this_master.uuid then
                 goto cont
             end
             state.replication.status = replica.upstream.status
@@ -1337,7 +1338,7 @@ local function storage_info()
             end
             ::cont::
         end
-    else
+    elseif this_master then
         state.replication.status = 'master'
         local redundancy = 0
         for id, replica in pairs(box.info.replication) do
@@ -1359,6 +1360,8 @@ local function storage_info()
             table.insert(state.alerts, alert(code.LOW_REDUNDANCY))
             state.status = math.max(state.status, consts.STATUS.ORANGE)
         end
+    else
+        state.replication.status = 'slave'
     end
 
     state.bucket.total = box.space._bucket.index.pk:count()
@@ -1377,18 +1380,20 @@ local function storage_info()
 
     local ireplicasets = {}
     for uuid, replicaset in pairs(self.replicasets) do
-        local uri = luri.parse(replicaset.master.uri)
-        uri.password = nil
-        uri = luri.format(uri)
-        ireplicasets[uuid] = {
-            uuid = uuid;
-            master = {
-                uri = uri;
-                uuid = replicaset.master.conn and replicaset.master.conn.peer_uuid;
-                state = replicaset.master.conn and replicaset.master.conn.state;
-                error = replicaset.master.conn and replicaset.master.conn.error;
+        local master = replicaset.master
+        if not master then
+            ireplicasets[uuid] = {uuid = uuid, master = 'missing'}
+        else
+            local uri = master:safe_uri()
+            local conn = master.conn
+            ireplicasets[uuid] = {
+                uuid = uuid;
+                master = {
+                    uri = uri, uuid = conn and conn.peer_uuid,
+                    state = conn and conn.state, error = conn and conn.error,
+                };
             };
-        };
+        end
     end
     state.replicasets = ireplicasets
     return state
