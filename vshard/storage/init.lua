@@ -961,13 +961,15 @@ local function rebalancer_apply_routes_f(routes)
     local i = 1
     for dst_uuid, bucket_count in pairs(routes) do
         assert(i + bucket_count - 1 <= #active_buckets)
-        log.info('Send %d buckets to "%s"', bucket_count, dst_uuid)
+        log.info('Send %d buckets to %s', bucket_count,
+                 self.replicasets[dst_uuid])
         for j = i, i + bucket_count - 1 do
             local status, ret = pcall(bucket_send, active_buckets[j].id,
                                       dst_uuid)
             if not status or ret ~= true then
                 if not status then
-                    log.error('Error during rebalancer routes applying: %s', ret)
+                    log.error('Error during rebalancer routes applying: %s',
+                              ret)
                 end
                 log.info('Can not apply routes')
                 return
@@ -1081,7 +1083,7 @@ local function rebalancer_f()
                           {src_routes})
             if not status then
                 log.error('Error during routes appying on "%s": %s. '..
-                          'Try rebalance later', src_uuid, err)
+                          'Try rebalance later', rs, err)
                 lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
                 goto continue
             end
@@ -1189,12 +1191,12 @@ local function storage_cfg(cfg, this_replica_uuid)
     local this_replicaset
     local this_replica
     local new_replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
-    local min_master_uuid
+    local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
-            if (min_master_uuid == nil or replica_uuid < min_master_uuid) and
+            if (min_master == nil or replica_uuid < min_master.uuid) and
                rs.master == replica then
-                min_master_uuid = replica_uuid
+                min_master = replica
             end
             if replica_uuid == this_replica_uuid then
                 assert(this_replicaset == nil)
@@ -1249,7 +1251,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     -- Collect old net.box connections
     collectgarbage('collect')
-    if min_master_uuid == this_replica.uuid then
+    if min_master == this_replica then
         if not self.rebalancer_fiber then
             log.info('Run rebalancer')
             self.rebalancer_fiber = lfiber.create(rebalancer_f)
@@ -1259,7 +1261,7 @@ local function storage_cfg(cfg, this_replica_uuid)
             self.rebalancer_fiber:wakeup()
         end
     elseif self.rebalancer_fiber then
-        log.info('Rebalancer location has changed to "%s"', min_master_uuid)
+        log.info('Rebalancer location has changed to %s', min_master)
         self.rebalancer_fiber:cancel()
         self.rebalancer_fiber = nil
     end

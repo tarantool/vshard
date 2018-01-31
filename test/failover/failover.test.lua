@@ -56,7 +56,7 @@ priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
-wait_state('New replica "127.0.0.1:3304')
+wait_state('New replica box_1_d%(storage%@')
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_d')
 -- Not 0 - 'read' echo was called here.
@@ -95,7 +95,7 @@ test_run:switch('router_1')
 while rs1.replica.name ~= 'box_1_b' do fiber.sleep(0.1) end
 rs1.replica.down_ts == nil
 rs1.replica_up_ts ~= nil
-test_run:grep_log('router_1', 'New replica "127.0.0.1:3302"')
+test_run:grep_log('router_1', 'New replica box_1_b%(storage%@')
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:cmd('switch box_1_b')
 -- Ensure the 'read' echo was executed on box_1_b - nearest
@@ -117,7 +117,7 @@ test_run:switch('router_1')
 -- FAILOVER_UP_TIMEOUT seconds.
 test_run:cmd('start server box_1_d')
 while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
-test_run:grep_log('router_1', 'New replica "127.0.0.1:3304"')
+test_run:grep_log('router_1', 'New replica box_1_d%(storage%@')
 
 -- Ensure the master connection is used as replica's one instead
 -- of creation of a new connection to the same host.

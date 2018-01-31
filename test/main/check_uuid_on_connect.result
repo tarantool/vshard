@@ -30,9 +30,6 @@ test_run:switch('bad_uuid_1_a')
 ---
 - true
 ...
-fiber = require('fiber')
----
-...
 util = require('util')
 ---
 ...
@@ -52,9 +49,9 @@ vshard.storage.bucket_send(1, replicaset_uuid[2])
   - file: builtin/box/net_box.lua
     line: <line>
 ...
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID: expected ')
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%(storage%@')
 ---
-- 'Mismatch server UUID: expected '
+- Mismatch server UUID on replica bad_uuid_2_a(storage@
 ...
 box.space._bucket:select{}
 ---
@@ -79,8 +76,11 @@ test_run:switch('bad_uuid_router')
 ---
 - true
 ...
+fiber = require('fiber')
+---
+...
 -- Router failed to connect because of UUID mismatch.
-while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID: expected ') == nil do fiber.sleep(0.1) end
+while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID on replica bad_uuid_2_a') == nil do fiber.sleep(0.1) end
 ---
 ...
 --
@@ -167,7 +167,7 @@ vshard.storage.bucket_send(2, replicaset_uuid[2])
     line: <line>
 ...
 -- Close existing connection on a first error and log it.
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID: expected ') ~= nil
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a') ~= nil
 ---
 - true
 ...

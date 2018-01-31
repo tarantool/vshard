@@ -70,8 +70,7 @@ local function bucket_discovery(bucket_id)
         if stat then
             if stat.status == consts.BUCKET.ACTIVE or
                stat.status == consts.BUCKET.SENDING then
-                log.info("Discovered bucket %d on %s", bucket_id,
-                         replicaset.uuid)
+                log.info("Discovered bucket %d on %s", bucket_id, replicaset)
                 bucket_set(bucket_id, replicaset)
                 return replicaset
             elseif stat.status == consts.BUCKET.RECEIVING then
@@ -128,12 +127,11 @@ local function discovery_f()
             local active_buckets, err =
                 replicaset:callro('vshard.storage.buckets_discovery')
             if not active_buckets then
-                log.error('Error during discovery replicaset "%s": %s',
-                          replicaset.uuid, err)
+                log.error('Error during discovery %s: %s', replicaset, err)
             else
                 if #active_buckets ~= replicaset.bucket_count then
-                    log.info('Updated "%s" buckets: was %d, became %d',
-                             replicaset.uuid, replicaset.bucket_count,
+                    log.info('Updated %s buckets: was %d, became %d',
+                             replicaset, replicaset.bucket_count,
                              #active_buckets)
                 end
                 replicaset.bucket_count = #active_buckets
@@ -412,8 +410,7 @@ local function failover_f()
                 replica_is_changed = true
             end
             if old_replica ~= rs.replica then
-                log.info('New replica "%s:%d" for replicaset "%s"',
-                         rs.replica.conn.host, rs.replica.conn.port, rs.uuid)
+                log.info('New replica %s for %s', rs.replica, rs)
             end
         end
         prev_was_ok = not replica_is_changed

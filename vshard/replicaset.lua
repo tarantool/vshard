@@ -69,8 +69,8 @@ local function netbox_on_connect(conn)
         return
     end
     if conn.peer_uuid ~= replica.uuid then
-        log.info('Mismatch server UUID: expected "%s", but got "%s"',
-                 replica.uuid, conn.peer_uuid)
+        log.info('Mismatch server UUID on replica %s: expected "%s", but got '..
+                 '"%s"', replica, replica.uuid, conn.peer_uuid)
         conn:close()
         return
     end
@@ -323,8 +323,8 @@ local function replica_call(replica, func, args, timeout)
         if timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
-        log.error("Exception during calling '%s' on '%s': %s", func,
-                  replica.uuid, storage_status)
+        log.error("Exception during calling '%s' on '%s': %s", func, replica,
+                  storage_status)
         return false, nil, lerror.make(storage_status)
     else
         replica_on_success_request(replica)
@@ -396,14 +396,14 @@ end
 -- Nice formatter for replicaset
 --
 local function replicaset_tostring(replicaset)
-    local uri
+    local master
     if replicaset.master then
-        uri = replicaset.master:safe_uri()
+        master = replicaset.master
     else
-        uri = ''
+        master = 'missing'
     end
-    return string.format('Replicaset(uuid=%s, master=%s)',
-                         replicaset.uuid, uri)
+    return string.format('replicaset(uuid="%s", master=%s)', replicaset.uuid,
+                         master)
 end
 
 --
@@ -433,7 +433,10 @@ local replica_mt = {
             uri.password = nil
             return luri.format(uri)
         end,
-    }
+    },
+    __tostring = function(replica)
+        return replica.name..'('..replica:safe_uri()..')'
+    end,
 }
 
 --
