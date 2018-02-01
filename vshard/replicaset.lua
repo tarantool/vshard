@@ -56,32 +56,19 @@ local luri = require('uri')
 local function netbox_on_connect(conn)
     log.info("connected to %s:%s", conn.host, conn.port)
     local rs = conn.replicaset
-    local replica
-    if rs.replica and conn == rs.replica.conn then
-        replica = rs.replica
-    elseif rs.candidate and conn == rs.candidate.conn then
-        replica = rs.candidate
-    elseif rs.master and conn == rs.master.conn then
-        replica = rs.master
-    else
-        -- There can be some connections, left from the previous
-        -- config and still not garbage collected. Ignore them.
-        return
-    end
+    local replica = conn.replica
+    assert(replica ~= nil)
+    -- If a replica's connection has revived, then unset
+    -- replica.down_ts - it is not down anymore.
+    replica.down_ts = nil
     if conn.peer_uuid ~= replica.uuid then
         log.info('Mismatch server UUID on replica %s: expected "%s", but got '..
                  '"%s"', replica, replica.uuid, conn.peer_uuid)
         conn:close()
         return
     end
-    if replica ~= rs.replica and replica ~= rs.candidate then
-        return
-    end
-    -- If a replica's connection has revived, then unset
-    -- replica.down_ts - it is not down anymore.
-    assert(replica ~= nil)
-    replica.down_ts = nil
-    if replica == rs.priority_list[1] then
+    if (replica == rs.replica or replica == rs.candidate) and
+       replica == rs.priority_list[1] then
         -- Update replica_up_ts, if the current replica has the
         -- biggest priority. Really, it is not neccessary to
         -- increase replica connection priority, if the current
@@ -95,14 +82,10 @@ end
 --
 local function netbox_on_disconnect(conn)
     log.info("disconnected from %s:%s", conn.host, conn.port)
-    local rs = conn.replicaset
+    assert(conn.replica)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
-    if rs.replica and conn == rs.replica.conn then
-        rs.replica.down_ts = fiber.time()
-    elseif rs.candidate and conn == rs.candidate.conn then
-        rs.candidate.down_ts = fiber.time()
-    end
+    conn.replica.down_ts = fiber.time()
 end
 
 --
@@ -117,6 +100,7 @@ local function replicaset_connect_to_replica(replicaset, replica)
             reconnect_after = consts.RECONNECT_TIMEOUT,
             wait_connected = false
         })
+        conn.replica = replica
         conn.replicaset = replicaset
         conn:on_connect(netbox_on_connect)
         conn:on_disconnect(netbox_on_disconnect)
@@ -151,17 +135,6 @@ local function replicaset_make_replica_read(replicaset, replica, read_name)
     assert(old_replica ~= replica)
     local conn = replicaset_connect_to_replica(replicaset, replica)
     replicaset[read_name] = replica
-    if not conn:is_connected() then
-        -- A connection is not established - reset timestamp. It
-        -- is nullified in on_connect(), if the connection is
-        -- established.
-        replica.down_ts = fiber.time()
-    else
-        -- Unsed down_ts explicitly, because it could be candidate
-        -- earlier. And candidate in a case of failure sets
-        -- down_ts.
-        replica.down_ts = nil
-    end
     if old_replica and old_replica ~= replicaset.master then
         assert(conn ~= old_replica.conn)
         -- Each unused connection holds a worker fiber. Close them
@@ -487,6 +460,7 @@ local function buildall(sharding_cfg, existing_replicasets)
     else
         zone_weights = {}
     end
+    local curr_ts = fiber.time()
     for replicaset_uuid, replicaset in pairs(sharding_cfg.sharding) do
         local new_replicaset = setmetatable({
             replicas = {},
@@ -503,7 +477,11 @@ local function buildall(sharding_cfg, existing_replicasets)
             }, replica_mt)
             local existing_rs = existing_replicasets[replicaset_uuid]
             if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then
-                new_replica.conn = existing_rs.replicas[replica_uuid].conn
+                local old_replica = existing_rs.replicas[replica_uuid]
+                new_replica.conn = old_replica.conn
+                new_replica.down_ts = old_replica.down_ts
+            else
+                new_replica.down_ts = curr_ts
             end
             new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then
