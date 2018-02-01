@@ -100,19 +100,19 @@ util.check_error(vshard.router.bucket_id) -- invalid arguments
 ...
 vshard.router.bucket_id(1)
 ---
-- 476
+- 477
 ...
 vshard.router.bucket_id(2)
 ---
-- 400
+- 401
 ...
 vshard.router.bucket_id({2})
 ---
-- 400
+- 401
 ...
 vshard.router.bucket_id('2')
 ---
-- 400
+- 401
 ...
 vshard.router.bucket_count()
 ---
