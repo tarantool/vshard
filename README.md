@@ -296,6 +296,14 @@ Return replicaset object for specified `bucket_id`.
 
 Return all available replicaset objects in the map of type: `{UUID = replicaset}`.
 
+#### `bucket_id = vshard.router.bucket_id(key)`
+
+Calculate `bucket_id` using a simple built-in hash function:
+
+#### `bucket_count = vshard.router.bucket_count()`
+
+Return the bucket count configured by vshard.router.cfg().
+
 #### `vshard.router.sync(timeout)`
 
 Wait until all data are synchronized on replicas.

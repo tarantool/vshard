@@ -36,6 +36,17 @@ rs1.replica == rs1.master
 rs2.replica == rs2.master
 
 --
+-- bucket_id and bucket_count
+--
+
+vshard.router.bucket_id() -- invalid arguments
+vshard.router.bucket_id(1)
+vshard.router.bucket_id(2)
+vshard.router.bucket_id({2})
+vshard.router.bucket_id('2')
+vshard.router.bucket_count()
+
+--
 -- Initial distribution
 --
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})

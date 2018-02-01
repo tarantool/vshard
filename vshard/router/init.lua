@@ -3,6 +3,7 @@ local lfiber = require('fiber')
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
+local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 
 local total_bucket_count = 0
@@ -687,6 +688,17 @@ end
 -- Other
 --------------------------------------------------------------------------------
 
+local function router_bucket_id(key)
+    if key == nil then
+        error("Usage: vshard.router.bucket_id(key)")
+    end
+    return lhash.key_hash(key) % total_bucket_count
+end
+
+local function router_bucket_count()
+    return total_bucket_count
+end
+
 local function router_sync(timeout)
     if timeout ~= nil and type(timeout) ~= 'number' then
         error('Usage: vshard.router.sync([timeout: number])')
@@ -712,6 +724,8 @@ return {
     call = router_call;
     route = router_route;
     routeall = router_routeall;
+    bucket_id = router_bucket_id;
+    bucket_count = router_bucket_count;
     sync = router_sync;
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
