@@ -33,6 +33,15 @@ util.collect_timeouts(rs1)
 _ = rs1:callro('sleep', {min_timeout * 5}, {timeout = min_timeout * 100})
 util.collect_timeouts(rs1)
 
+--
+-- Ensure the luajit errors are not retried.
+--
+fiber = require('fiber')
+start = fiber.time()
+_, e = rs1:callro('raise_luajit_error', {}, {timeout = 10})
+string.match(e.message, 'assertion')
+fiber.time() - start < 1
+
 _ = test_run:cmd("switch default")
 test_run:cmd("stop server router_1")
 test_run:cmd("cleanup server router_1")

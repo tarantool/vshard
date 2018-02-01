@@ -357,6 +357,12 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
         net_status, storage_status, retval, error_object =
             replica_call(replica, func, args, call_timeout)
         global_timeout = end_time - fiber.time()
+        if not net_status and not storage_status and lerror.is_lua(retval) then
+            -- There is no sense to retry LuaJit errors, such as
+            -- assetions, not defined variables etc.
+            net_status = true
+            break
+        end
     end
     if not net_status then
         return nil, lerror.make(storage_status)

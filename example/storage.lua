@@ -61,6 +61,8 @@ box.once("testapp:schema:1", function()
     box.schema.role.grant('public', 'execute', 'function', 'echo')
     box.schema.func.create('sleep')
     box.schema.role.grant('public', 'execute', 'function', 'sleep')
+    box.schema.func.create('raise_luajit_error')
+    box.schema.role.grant('public', 'execute', 'function', 'raise_luajit_error')
 end)
 
 function customer_add(customer)
@@ -111,4 +113,8 @@ end
 
 function sleep(time)
     fiber.sleep(time)
+end
+
+function raise_luajit_error()
+    assert(1 == 2)
 end

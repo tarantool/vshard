@@ -96,6 +96,26 @@ util.collect_timeouts(rs1)
     ok: 1
     timeout: 4
 ...
+--
+-- Ensure the luajit errors are not retried.
+--
+fiber = require('fiber')
+---
+...
+start = fiber.time()
+---
+...
+_, e = rs1:callro('raise_luajit_error', {}, {timeout = 10})
+---
+...
+string.match(e.message, 'assertion')
+---
+- assertion
+...
+fiber.time() - start < 1
+---
+- true
+...
 _ = test_run:cmd("switch default")
 ---
 ...
