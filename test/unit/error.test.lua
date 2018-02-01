@@ -5,10 +5,6 @@ lerror = vshard.error
 --
 -- Test string representations of errors.
 --
-
-lua_error = lerror.lua('asserion failed')
-tostring(lua_error)
-
 ok, err = pcall(box.error, box.error.TIMEOUT)
 box_error = lerror.box(err)
 tostring(box_error)
@@ -19,3 +15,7 @@ tostring(vshard_error)
 log = require('log')
 log.info('Log error: %s', vshard_error)
 test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"')
+
+function raise_lua_err() assert(false) end
+ok, err = pcall(raise_lua_err)
+lerror.make(err)

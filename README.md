@@ -332,8 +332,7 @@ vshard.router.info()
 * `opts` - call options. Can contain only one parameter - `timeout` in seconds.
 
 **Returns:** original return value from `func` or nil and error object.
-Error object has type attribute equal to 'LuajitError', 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
-* `LuajitError` - returned on lua assertions, syntax errors, luajit OOM etc. It has optional attribute `message` with human readable error description;
+Error object has type attribute equal to 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
 * `ShardingError` - returned on errors, specific for sharding: replicaset unavailability, master absense, wrong bucket id etc. It has attribute `code` with one of values from vshard.error.code, optional `message` with human readable error description, and other attributes, specific for concrete error code;
 * Other errors: see tarantool errors.
 

@@ -2,10 +2,7 @@ local ffi = require('ffi')
 local json = require('json')
 
 --
--- There are 3 error types:
--- * lua error - it is created on assertions, syntax errors,
---   luajit OOM etc. It has attributes type = 'LuajitError' and
---   optional message;
+-- There are 2 error types:
 -- * box_error - it is created on tarantool errors: client error,
 --   oom error, socket error etc. It has type = one of tarantool
 --   error types, trace (file, line), message;
@@ -14,10 +11,6 @@ local json = require('json')
 --   'ShardingError', one of codes below and optional
 --   message.
 --
-local function lua_error(msg)
-    return setmetatable({ type = 'LuajitError', message = msg },
-                        {__tostring = json.encode})
-end
 
 local function box_error(original_error)
     return setmetatable(original_error:unpack(), {__tostring = json.encode})
@@ -37,16 +30,15 @@ end
 -- object.
 --
 local function make_error(e)
-   if type(e) == 'table' then
-       -- Custom error object, return as is
-       return e
-   elseif type(e) == 'cdata' and ffi.istype('struct error', e) then
-       -- box.error, return unpacked
-       return box_error(e)
-   else
-       -- Lua error, return wrapped
-       return lua_error(tostring(e))
-   end
+    if type(e) == 'cdata' and ffi.istype('struct error', e) then
+        -- box.error, return unpacked
+        return box_error(e)
+    elseif type(e) == 'string' then
+        local ok, err = pcall(box.error, box.error.PROC_LUA, e)
+        return box_error(err)
+    else
+        return e
+    end
 end
 
 local error_code = {
@@ -125,7 +117,6 @@ end
 
 return {
     code = error_code,
-    lua = lua_error,
     box = box_error,
     vshard = vshard_error,
     make = make_error,

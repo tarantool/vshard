@@ -10,13 +10,6 @@ lerror = vshard.error
 --
 -- Test string representations of errors.
 --
-lua_error = lerror.lua('asserion failed')
----
-...
-tostring(lua_error)
----
-- '{"type":"LuajitError","message":"asserion failed"}'
-...
 ok, err = pcall(box.error, box.error.TIMEOUT)
 ---
 ...
@@ -44,4 +37,19 @@ log.info('Log error: %s', vshard_error)
 test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"')
 ---
 - '"reason":"reason","code":11,"type":"ShardingError"'
+...
+function raise_lua_err() assert(false) end
+---
+...
+ok, err = pcall(raise_lua_err)
+---
+...
+lerror.make(err)
+---
+- type: ClientError
+  code: 32
+  message: '[string "function raise_lua_err() assert(false) end "]:1: assertion failed!'
+  trace:
+  - file: '[C]'
+    line: 4294967295
 ...
