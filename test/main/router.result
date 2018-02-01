@@ -94,9 +94,9 @@ rs2.replica == rs2.master
 --
 -- bucket_id and bucket_count
 --
-vshard.router.bucket_id() -- invalid arguments
+util.check_error(vshard.router.bucket_id) -- invalid arguments
 ---
-Usage: vshard.router.bucket_id(key)'
+- 'Usage: vshard.router.bucket_id(key)'
 ...
 vshard.router.bucket_id(1)
 ---
