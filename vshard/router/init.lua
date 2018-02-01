@@ -347,6 +347,49 @@ local function failover_collect_to_update()
 end
 
 --
+-- Detect not optimal or disconnected replicas. For not optimal
+-- try to update them to optimal, and down priority of
+-- disconnected replicas.
+-- @retval true A replica of an replicaset has been changed.
+--
+local function failover_step()
+    local uuid_to_update = failover_collect_to_update()
+    if #uuid_to_update == 0 then
+        return false
+    end
+    local curr_ts = lfiber.time()
+    local replica_is_changed = false
+    for _, uuid in pairs(uuid_to_update) do
+        local rs = self.replicasets[uuid]
+        if self.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
+            rs = nil
+            self.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
+        end
+        if rs == nil then
+            log.info('Configuration has changed, restart failovering')
+            lfiber.yield()
+            return true
+        end
+        local old_replica = rs.replica
+        if failover_is_candidate_connected(rs) then
+            rs:set_candidate_as_replica()
+            replica_is_changed = true
+        end
+        if failover_need_update_candidate(rs, curr_ts) then
+            rs:update_candidate()
+        end
+        if failover_need_down_priority(rs, curr_ts) then
+            rs:down_replica_priority()
+            replica_is_changed = true
+        end
+        if old_replica ~= rs.replica then
+            log.info('New replica %s for %s', rs.replica, rs)
+        end
+    end
+    return replica_is_changed
+end
+
+--
 -- Failover background function. Replica connection is the
 -- connection to the nearest available server. Replica connection
 -- is hold for each replicaset. This function periodically scans
@@ -375,44 +418,12 @@ local function failover_f()
     local prev_was_ok = false
     while true do
 ::continue::
-        local uuid_to_update = failover_collect_to_update()
-        if #uuid_to_update == 0 then
-            if not prev_was_ok then
-                log.info('All replicas are ok')
-                prev_was_ok = true
-            end
-            lfiber.sleep(min_timeout)
-            goto continue
-        end
-        local curr_ts = lfiber.time()
-        local replica_is_changed = false
-        for _, uuid in pairs(uuid_to_update) do
-            local rs = self.replicasets[uuid]
-            if self.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
-                rs = nil
-                self.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
-            end
-            if rs == nil then
-                prev_was_ok = false
-                log.info('Configuration has changed, restart failovering')
-                lfiber.yield()
-                goto continue
-            end
-            local old_replica = rs.replica
-            if failover_is_candidate_connected(rs) then
-                rs:set_candidate_as_replica()
-                replica_is_changed = true
-            end
-            if failover_need_update_candidate(rs, curr_ts) then
-                rs:update_candidate()
-            end
-            if failover_need_down_priority(rs, curr_ts) then
-                rs:down_replica_priority()
-                replica_is_changed = true
-            end
-            if old_replica ~= rs.replica then
-                log.info('New replica %s for %s', rs.replica, rs)
-            end
+        local ok, replica_is_changed = pcall(failover_step)
+        if not ok then
+            replica_is_changed = true
+            log.error('Error during failovering: %s', replica_is_changed)
+        elseif not prev_was_ok then
+            log.info('All replicas are ok')
         end
         prev_was_ok = not replica_is_changed
         local logf
