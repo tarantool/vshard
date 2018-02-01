@@ -703,7 +703,7 @@ local function router_bucket_id(key)
     if key == nil then
         error("Usage: vshard.router.bucket_id(key)")
     end
-    return lhash.key_hash(key) % total_bucket_count
+    return lhash.key_hash(key) % total_bucket_count + 1
 end
 
 local function router_bucket_count()
