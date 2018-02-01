@@ -6,8 +6,9 @@ REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 
 test_run:cmd('create server router_1 with script="main/router_1.lua", wait=True, wait_load=True')
 test_run:cmd('start server router_1')
@@ -77,9 +78,9 @@ vshard.router.cfg(cfg)
 test_run:cmd('switch default')
 
 REPLICASET_1 = {'storage_1_a'}
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
-test_run:wait_fullmesh(REPLICASET_3)
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
+util.wait_master(test_run, REPLICASET_3, 'storage_3_a')
 
 -- Check correctness on each replicaset.
 test_run:switch('storage_1_a')

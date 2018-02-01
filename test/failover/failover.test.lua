@@ -7,9 +7,10 @@ REPLICASET_3 = { 'box_3_a', 'box_3_b' }
 test_run:create_cluster(REPLICASET_1, 'failover')
 test_run:create_cluster(REPLICASET_2, 'failover')
 test_run:create_cluster(REPLICASET_3, 'failover')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
-test_run:wait_fullmesh(REPLICASET_3)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'box_1_a')
+util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+util.wait_master(test_run, REPLICASET_3, 'box_3_b')
 
 test_run:cmd("setopt delimiter ';'")
 function create_router(name)
@@ -28,7 +29,7 @@ for i = 1, 30 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 test_run:cmd('switch box_2_a')
 for i = 31, 60 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
-test_run:cmd('switch box_3_a')
+test_run:cmd('switch box_3_b')
 for i = 61, 90 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:cmd('switch default')

@@ -5,8 +5,9 @@ REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 
 test_run:switch('storage_1_a')
 vshard.storage.rebalancer_disable()

@@ -476,6 +476,7 @@ end
 --
 local function local_master_disable()
     self.on_master_disable:run()
+    box.cfg({read_only = true})
     log.verbose("Resigning from the replicaset master role...")
     -- Stop garbage collecting
     if self.garbage_collect_fiber ~= nil then
@@ -500,6 +501,7 @@ local collect_garbage_f
 -- instance during configuration
 --
 local function local_master_enable()
+    box.cfg({read_only = false})
     self.on_master_enable:run()
     log.verbose("Taking on replicaset master role...")
     recovery_garbage_receiving_buckets()
@@ -1185,7 +1187,7 @@ local function storage_cfg(cfg, this_replica_uuid)
         log.info("Starting configuration of replica %s", this_replica_uuid)
     end
 
-    local was_master = self.this_replicaset and
+    local was_master = self.this_replicaset ~= nil and
                        self.this_replicaset.master == self.this_replica
 
     local this_replicaset
@@ -1209,13 +1211,28 @@ local function storage_cfg(cfg, this_replica_uuid)
         error(string.format("Local replica %s wasn't found in config",
                             this_replica_uuid))
     end
+    local is_master = this_replicaset.master == this_replica
+    if is_master then
+        log.info('I am master')
+    end
 
+    -- Do not change 'read_only' option here - if a master is
+    -- disabled and there are triggers on master disable, then
+    -- they would not be able to modify anything, if 'read_only'
+    -- had been set here. 'Read_only' is set in
+    -- local_master_disable after triggers and is unset in
+    -- local_master_enable before triggers.
+    --
+    -- If a master role of the replica is not changed, then
+    -- 'read_only' can be set right here.
     cfg.listen = cfg.listen or this_replica.uri
-    if cfg.replication == nil then
+    if cfg.replication == nil and this_replicaset.master and not is_master then
+        cfg.replication = {this_replicaset.master.uri}
+    else
         cfg.replication = {}
-        for uuid, replica in pairs(this_replicaset.replicas) do
-            table.insert(cfg.replication, replica.uri)
-         end
+    end
+    if was_master == is_master then
+        cfg.read_only = not is_master
     end
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
@@ -1227,10 +1244,6 @@ local function storage_cfg(cfg, this_replica_uuid)
                                consts.DEFAULT_REBALANCER_MAX_RECEIVING
     lcfg.prepare_for_box_cfg(cfg)
 
-    local is_master = this_replicaset.master == this_replica
-    if is_master then
-        log.info('I am master')
-    end
     box.cfg(cfg)
     log.info("Box has been configured")
     self.replicasets = new_replicasets
@@ -1239,8 +1252,6 @@ local function storage_cfg(cfg, this_replica_uuid)
     local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
 
-    local is_master = self.this_replicaset and
-                      self.this_replicaset.master == self.this_replica
     if was_master and not is_master then
         local_master_disable()
     end

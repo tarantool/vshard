@@ -20,10 +20,13 @@ test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
 ---
 ...
-test_run:wait_fullmesh(REPLICASET_1)
+util = require('util')
 ---
 ...
-test_run:wait_fullmesh(REPLICASET_2)
+util.wait_master(test_run, REPLICASET_1, 'bad_uuid_1_a')
+---
+...
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 ---
 ...
 test_run:switch('bad_uuid_1_a')
@@ -110,7 +113,7 @@ test_run:cmd('start server bad_uuid_2_b')
 ---
 - true
 ...
-test_run:wait_fullmesh(REPLICASET_2)
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a_repaired')
 ---
 ...
 test_run:switch('bad_uuid_1_a')
@@ -145,7 +148,7 @@ test_run:cmd('start server bad_uuid_2_b with wait=False, wait_load=False')
 ---
 - true
 ...
-test_run:wait_fullmesh(REPLICASET_2)
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 ---
 ...
 test_run:switch('bad_uuid_1_a')

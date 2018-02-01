@@ -7,9 +7,10 @@ REPLICASET_3 = { 'box_3_a', 'box_3_b' }
 test_run:create_cluster(REPLICASET_1, 'failover')
 test_run:create_cluster(REPLICASET_2, 'failover')
 test_run:create_cluster(REPLICASET_3, 'failover')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
-test_run:wait_fullmesh(REPLICASET_3)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'box_1_a')
+util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+util.wait_master(test_run, REPLICASET_3, 'box_3_b')
 
 test_run:cmd('create server router_1 with script="failover/router_1.lua"')
 test_run:cmd('start server router_1')

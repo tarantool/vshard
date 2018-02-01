@@ -10,8 +10,9 @@ REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 
 replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
 replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]

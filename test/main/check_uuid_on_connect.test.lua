@@ -7,8 +7,9 @@ REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'main')
 test_run:create_cluster(REPLICASET_2, 'main')
-test_run:wait_fullmesh(REPLICASET_1)
-test_run:wait_fullmesh(REPLICASET_2)
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'bad_uuid_1_a')
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 
 test_run:switch('bad_uuid_1_a')
 util = require('util')
@@ -42,7 +43,7 @@ REPLICASET_2 = { 'bad_uuid_2_a_repaired', 'bad_uuid_2_b' }
 test_run:cmd('create server bad_uuid_2_a_repaired with script="main/bad_uuid_2_a_repaired.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_a_repaired')
 test_run:cmd('start server bad_uuid_2_b')
-test_run:wait_fullmesh(REPLICASET_2)
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a_repaired')
 
 test_run:switch('bad_uuid_1_a')
 -- Send is ok - now UUID of bad_uuid_2_a is correct.
@@ -56,7 +57,7 @@ test_run:drop_cluster(REPLICASET_2)
 REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
 test_run:cmd('start server bad_uuid_2_a with wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_b with wait=False, wait_load=False')
-test_run:wait_fullmesh(REPLICASET_2)
+util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 
 test_run:switch('bad_uuid_1_a')
 vshard.storage.bucket_force_create(2)
