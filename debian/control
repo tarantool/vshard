@@ -3,7 +3,7 @@ Priority: optional
 Section: database
 Maintainer: Roman Tsisyk <roman@tarantool.org>
 Build-Depends: debhelper (>= 9),
-               tarantool (>= 1.7.6.116),
+               tarantool (>= 1.7.7.202),
                tarantool-dev (>= 1.7.6.116),
                libmsgpuck-dev (>= 1.0.0)
 Standards-Version: 3.9.6

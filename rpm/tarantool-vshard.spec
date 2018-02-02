@@ -12,7 +12,7 @@ BuildRequires: gcc >= 4.5
 BuildRequires: tarantool >= 1.7.6.116
 BuildRequires: tarantool-devel >= 1.7.6.116
 BuildRequires: msgpuck-devel >= 1.0.0
-Requires: tarantool >= 1.7.6.116
+Requires: tarantool >= 1.7.7.202
 
 # For tests
 %if (0%{?fedora} >= 22 || 0%{?rhel} >= 7)
