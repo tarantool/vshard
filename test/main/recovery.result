@@ -179,7 +179,56 @@ _bucket:select{}
 ---
 - - [1, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
   - [2, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
-  - [3, 'sending', 'cbf06940-0790-498b-948d-042b62cf3d29']
+  - [3, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+--
+-- Test a case when a bucket is sending in one place and garbage
+-- or sent or deleted on a destination.
+--
+_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, replicasets[1]}
+---
+- [1, 'garbage', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, replicasets[2]}
+---
+- [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:cmd('stop server storage_2_a')
+---
+- true
+...
+test_run:cmd('stop server storage_1_a')
+---
+- true
+...
+test_run:cmd('start server storage_1_a')
+---
+- true
+...
+test_run:cmd('start server storage_2_a')
+---
+- true
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+_bucket = box.space._bucket
+---
+...
+fiber = require('fiber')
+---
+...
+while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
+---
 ...
 test_run:cmd("switch default")
 ---

@@ -131,7 +131,12 @@ local function recovery_step()
     local recovered = {}
     local _bucket = box.space._bucket
     local new_count = 0
+    local is_empty = true
     for bucket_id, _ in pairs(self.buckets_to_recovery) do
+        if is_empty then
+            log.info('Starting buckets recovery step')
+        end
+        is_empty = false
         local bucket = _bucket:get{bucket_id}
         if not bucket or bucket.status ~= consts.BUCKET.SENDING then
             -- Possibly, a bucket was deleted or recovered by
@@ -150,7 +155,13 @@ local function recovery_step()
         end
         local remote_bucket, err =
             destination:callrw('vshard.storage.bucket_stat', {bucket_id})
-        if not remote_bucket then
+        -- If a bucket is not found with WRONG_BUCKET errcode,
+        -- then it either does not exist on destination (possibly,
+        -- the bucket is garbage collected), or is in garbage
+        -- state (GC is in progress). In both cases it can be
+        -- restored here as active.
+        if not remote_bucket and (not err or err.type ~= 'ShardingError' or
+           err.code ~= lerror.code.WRONG_BUCKET) then
             -- We can ignore other replicasets, because a bucket
             -- could not be sent from destination further, on
             -- another replicaset. It is guaranteed by rebalancer
@@ -161,12 +172,15 @@ local function recovery_step()
             goto continue
         end
         table.insert(recovered, bucket_id)
-        if remote_bucket.status == consts.BUCKET.ACTIVE then
+        if remote_bucket and remote_bucket.status == consts.BUCKET.ACTIVE then
             table.insert(garbage, bucket_id)
         else
             table.insert(active, bucket_id)
         end
 ::continue::
+    end
+    if not is_empty then
+        log.info('Finish bucket recovery step')
     end
     if #active > 0 or #garbage > 0 then
         box.begin()
@@ -1034,7 +1048,8 @@ local function rebalancer_download_states()
         return replicasets
     else
         log.info('Total active bucket count is not equal to total. '..
-                 'Possibly a boostrap is not finished yet.')
+                 'Possibly a boostrap is not finished yet. Expected %d, but '..
+                 'found %d', total_bucket_count, total_bucket_active_count)
     end
 end
 

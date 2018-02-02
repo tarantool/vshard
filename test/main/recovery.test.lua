@@ -63,6 +63,23 @@ test_run:cmd('switch storage_2_a')
 _bucket = box.space._bucket
 _bucket:select{}
 
+--
+-- Test a case when a bucket is sending in one place and garbage
+-- or sent or deleted on a destination.
+--
+_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, replicasets[1]}
+test_run:switch('storage_1_a')
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, replicasets[2]}
+test_run:switch('default')
+test_run:cmd('stop server storage_2_a')
+test_run:cmd('stop server storage_1_a')
+test_run:cmd('start server storage_1_a')
+test_run:cmd('start server storage_2_a')
+test_run:switch('storage_1_a')
+_bucket = box.space._bucket
+fiber = require('fiber')
+while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
+
 test_run:cmd("switch default")
 
 test_run:drop_cluster(REPLICASET_2)
