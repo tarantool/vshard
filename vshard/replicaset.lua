@@ -450,7 +450,7 @@ end
 --
 -- Update/build replicasets from configuration
 --
-local function buildall(sharding_cfg, existing_replicasets)
+local function buildall(sharding_cfg)
     local new_replicasets = {}
     local weights = sharding_cfg.weights
     local zone = sharding_cfg.zone
@@ -474,15 +474,8 @@ local function buildall(sharding_cfg, existing_replicasets)
                 uri = replica.uri, name = replica.name, uuid = replica_uuid,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
+                down_ts = curr_ts,
             }, replica_mt)
-            local existing_rs = existing_replicasets[replicaset_uuid]
-            if existing_rs ~= nil and existing_rs.replicas[replica_uuid] then
-                local old_replica = existing_rs.replicas[replica_uuid]
-                new_replica.conn = old_replica.conn
-                new_replica.down_ts = old_replica.down_ts
-            else
-                new_replica.down_ts = curr_ts
-            end
             new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then
                 new_replicaset.master = new_replica
@@ -530,7 +523,37 @@ local function buildall(sharding_cfg, existing_replicasets)
     return new_replicasets
 end
 
+--
+-- Wait for masters connection during RECONNECT_TIMEOUT seconds.
+--
+local function wait_masters_connect(replicasets)
+    for _, rs in pairs(replicasets) do
+        if rs.master then
+            rs.master.conn:wait_connected(consts.RECONNECT_TIMEOUT)
+        end
+    end
+end
+
+--
+-- Close all connections of all replicas.
+--
+local function destroy(replicasets)
+    for _, rs in pairs(replicasets) do
+        if rs.master and rs.master.conn then
+            rs.master.conn:close()
+        end
+        if rs.replica and rs.replica.conn then
+            rs.replica.conn:close()
+        end
+        if rs.candidate and rs.candidate.conn then
+            rs.candidate.conn:close()
+        end
+    end
+end
+
 return {
-    buildall = buildall;
-    calculate_ethalon_balance = cluster_calculate_ethalon_balance;
+    buildall = buildall,
+    calculate_ethalon_balance = cluster_calculate_ethalon_balance,
+    destroy = destroy,
+    wait_masters_connect = wait_masters_connect,
 }

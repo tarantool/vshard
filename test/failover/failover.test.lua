@@ -53,11 +53,11 @@ test_run:cmd('switch default')
 create_router('router_1')
 test_run:switch('router_1')
 vshard.router.cfg(cfg)
+while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
 priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
-wait_state('New replica box_1_d%(storage%@')
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_d')
 -- Not 0 - 'read' echo was called here.

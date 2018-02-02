@@ -102,6 +102,9 @@ test_run:switch('router_1')
 vshard.router.cfg(cfg)
 ---
 ...
+while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
+---
+...
 priority_order()
 ---
 - - - 1
@@ -125,9 +128,6 @@ vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
 ---
 - true
-...
-wait_state('New replica box_1_d%(storage%@')
----
 ...
 vshard.router.call(1, 'read', 'echo', {123})
 ---

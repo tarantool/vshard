@@ -448,33 +448,38 @@ end
 local function router_cfg(cfg)
     cfg = table.deepcopy(cfg)
     lcfg.check(cfg)
-    if self.replicasets == nil then
+    local old_replicasets = self.replicasets
+    if not old_replicasets then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
-    self.replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
+    local new_replicasets = lreplicaset.buildall(cfg)
     -- TODO: update existing route map in-place
     self.route_map = {}
     total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
     lcfg.prepare_for_box_cfg(cfg)
-
+    -- Force net.box connection on cfg()
+    for _, replicaset in pairs(new_replicasets) do
+        replicaset:connect()
+        replicaset:update_candidate()
+    end
+    lreplicaset.wait_masters_connect(new_replicasets)
     log.info("Calling box.cfg()...")
     for k, v in pairs(cfg) do
         log.info({[k] = v})
     end
     box.cfg(cfg)
     log.info("Box has been configured")
-    -- Force net.box connection on cfg()
-    for _, replicaset in pairs(self.replicasets) do
-        replicaset:connect()
-        replicaset:update_candidate()
-    end
+    self.replicasets = new_replicasets
     if self.failover_fiber == nil then
         lfiber.create(failover_f)
     end
     if self.discovery_fiber == nil then
         lfiber.create(discovery_f)
+    end
+    if old_replicasets then
+        lreplicaset.destroy(old_replicasets)
     end
 end
 

@@ -1181,7 +1181,8 @@ local function storage_cfg(cfg, this_replica_uuid)
     if cfg.weights or cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
-    if self.replicasets ~= nil then
+    local old_replicasets = self.replicasets
+    if old_replicasets then
         log.info("Starting reconfiguration of replica %s", this_replica_uuid)
     else
         log.info("Starting configuration of replica %s", this_replica_uuid)
@@ -1192,7 +1193,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg, self.replicasets or {})
+    local new_replicasets = lreplicaset.buildall(cfg)
     local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
@@ -1260,8 +1261,6 @@ local function storage_cfg(cfg, this_replica_uuid)
         local_master_enable()
     end
 
-    -- Collect old net.box connections
-    collectgarbage('collect')
     if min_master == this_replica then
         if not self.rebalancer_fiber then
             log.info('Run rebalancer')
@@ -1275,6 +1274,9 @@ local function storage_cfg(cfg, this_replica_uuid)
         log.info('Rebalancer location has changed to %s', min_master)
         self.rebalancer_fiber:cancel()
         self.rebalancer_fiber = nil
+    end
+    if old_replicasets then
+        lreplicaset.destroy(old_replicasets)
     end
 end
 
