@@ -207,12 +207,29 @@ while vshard.router.info().bucket.available_rw ~= vshard.consts.DEFAULT_BUCKET_C
 fiber.sleep(10 - (fiber.time() - start))
 ---
 ...
-vshard.router.info()
+info = vshard.router.info()
+---
+...
+-- Do not show concrete timeouts. They are not stable.
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+for _, rs in pairs(info.replicasets) do
+    rs.replica.network_timeout = 'number'
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+info
 ---
 - replicasets:
     ffdfc117-5089-40a8-99f5-0aa914aa2275:
       replica: &0
-        network_timeout: 0.5
+        network_timeout: number
         status: available
         uri: storage@127.0.0.1:3305
         uuid: ad40a200-730e-401a-9400-30dbd96dedbd
@@ -220,7 +237,7 @@ vshard.router.info()
       master: *0
     3e9bdda9-ce19-4f9f-b630-116f5dbc7fef:
       replica: &1
-        network_timeout: 0.5
+        network_timeout: number
         status: available
         uri: storage@127.0.0.1:3307
         uuid: 535df17b-c325-466c-9320-77f1190c749c
@@ -228,7 +245,7 @@ vshard.router.info()
       master: *1
     739fe4fb-2850-4cde-9637-10150724c5eb:
       replica: &2
-        network_timeout: 0.5
+        network_timeout: number
         status: available
         uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
@@ -236,7 +253,7 @@ vshard.router.info()
       master: *2
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
       replica: &3
-        network_timeout: 0.5
+        network_timeout: number
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 7223fc89-1a0d-480b-a33e-a8d2b117b13d

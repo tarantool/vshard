@@ -107,7 +107,14 @@ test_run:switch('router_1')
 start = fiber.time()
 while vshard.router.info().bucket.available_rw ~= vshard.consts.DEFAULT_BUCKET_COUNT do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 fiber.sleep(10 - (fiber.time() - start))
-vshard.router.info()
+info = vshard.router.info()
+-- Do not show concrete timeouts. They are not stable.
+test_run:cmd("setopt delimiter ';'")
+for _, rs in pairs(info.replicasets) do
+    rs.replica.network_timeout = 'number'
+end;
+test_run:cmd("setopt delimiter ''");
+info
 util.stop_loading()
 util.check_loading_result()
 
