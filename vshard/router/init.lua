@@ -420,8 +420,9 @@ local function failover_f()
 ::continue::
         local ok, replica_is_changed = pcall(failover_step)
         if not ok then
+            log.error('Error during failovering: %s',
+                      lerror.make(replica_is_changed))
             replica_is_changed = true
-            log.error('Error during failovering: %s', replica_is_changed)
         elseif not prev_was_ok then
             log.info('All replicas are ok')
         end
