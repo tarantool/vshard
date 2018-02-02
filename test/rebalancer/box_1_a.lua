@@ -13,10 +13,12 @@ vshard = require('vshard')
 names = require('names')
 cfg = require('config')
 if NAME == 'box_3_a' or NAME == 'box_3_b' or
-   NAME == 'box_4_a' or NAME == 'box_4_b' then
+   NAME == 'box_4_a' or NAME == 'box_4_b' or
+   string.match(NAME, 'fullbox') then
 	add_replicaset()
 end
-if NAME == 'box_4_a' or NAME == 'box_4_b' then
+if NAME == 'box_4_a' or NAME == 'box_4_b' or
+   string.match(NAME, 'fullbox') then
 	add_second_replicaset()
 end
 vshard.storage.cfg(cfg, names.replica_uuid[NAME])

@@ -23,13 +23,17 @@ local function do_read_load()
 			fiber.sleep(0.1)
 		end
 		local bucket = read_iterations % bucket_count + 1
+		local tuples = {}
+		local err = nil
 		-- Read requests are repeated on replicaset level,
 		-- and here while loop is not necessary.
-		local tuples, err =
-			vshard.router.call(bucket, 'read', 'do_select',
-					   {{read_iterations}}, {timeout = 100})
-		assert(tuples)
-		assert(#tuples == 1)
+		while #tuples == 0 do
+			tuples, err =
+				vshard.router.call(bucket, 'read', 'do_select',
+						   {{read_iterations}},
+						   {timeout = 100})
+			assert(tuples)
+		end
 		assert(tuples[1][1] == read_iterations)
 		assert(tuples[1][2] == bucket)
 		read_iterations = read_iterations + 1
@@ -67,4 +71,5 @@ return {
 	stop_loading = stop_loading,
 	start_loading = start_loading,
 	check_loading_result = check_loading_result,
+	set_bucket_count = function(new_count) bucket_count = new_count end,
 }

@@ -13,5 +13,8 @@ replica_uuid = {
     box_4_a = '535df17b-c325-466c-9320-77f1190c749c',
     box_4_b = 'f24d5101-adec-48b5-baa9-ace33abfd10f'
 }
+local tmp = {}
+for k, v in pairs(replica_uuid) do tmp['full'..k] = v end
+for k, v in pairs(tmp) do replica_uuid[k] = v end
 
 return {rs_uuid = rs_uuid, replica_uuid = replica_uuid}

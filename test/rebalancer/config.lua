@@ -76,5 +76,6 @@ function remove_second_replicaset_first_stage()
 end
 
 return {
-    sharding = sharding
+    sharding = sharding,
+    rebalancer_disbalance_threshold = 0.01,
 }
