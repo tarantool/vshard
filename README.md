@@ -8,12 +8,6 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 - Tarantool 1.7.7 (use 1.7-next branch from GitHub).
 
-## Architecture
-
-WIP
-
-https://docs.google.com/document/d/1DXkQEfpFHcEZJ42jLzdBlVf7fbpK5jPPGd2V7DZ-SNw/edit#heading=h.6irvd1jaina
-
 ## Configuration
 
 A Tarantool sharded cluster consists of the following components:
