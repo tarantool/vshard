@@ -1,22 +1,28 @@
-Получая продукт Tarantool Sharding (далее – Продукт), Вы (далее – Получатель)
-соглашаетесь с тем, что:
+Copyright 2017-2018 Tarantool AUTHORS: please see AUTHORS file.
 
-1. Правообладателем Продукта является ООО «Мэйл.Ру» (ИНН 7743001840, адрес
-   места нахождения 125167, г. Москва, Ленинградский проспект д.39, строение
-   79).
+Redistribution and use in source and binary forms, with or
+without modification, are permitted provided that the following
+conditions are met:
 
-2. Правообладатель предоставляет Получателю неисключительное и непередаваемое
-   третьим лицам право использовать Продукт исключительно с ознакомительной
-   целью и проведения функционального тестирования.
+1. Redistributions of source code must retain the above
+   copyright notice, this list of conditions and the
+   following disclaimer.
 
-3. Получатель обязуется не проникать в Продукт с целью получения кодов
-   программного обеспечения, не воспроизводить, не копировать  и не изменять,
-   не модифицировать, не передавать другим лицам, не  продавать, не доводить
-   до всеобщего сведения, не распространять  Продукт, целиком либо по частям,
-   не создавать программы, производные от Продукта.
+2. Redistributions in binary form must reproduce the above
+   copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials
+   provided with the distribution.
 
-4. Для получения любых интеллектуальных прав на Продукт требуется письменное
-   согласие Правообладателя.
-
-5. Нарушение Получателем условий настоящего документа является основанием для
-   предъявления требований к Получателю о возмещении убытков.
+THIS SOFTWARE IS PROVIDED BY AUTHORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+AUTHORS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
