@@ -473,56 +473,20 @@ Receive `bucket_id` from remote replicaset.
 
 Consider a distributed Tarantool cluster that consists of subclusters called shards, each storing some part of data. Each shard, in its turn, constitutes a replicaset consisting of several replicas, one of which serves as a master node that processes all read and write requests.
 
-
 The whole dataset is logically partitioned into a predefined number of virtual buckets (vbuckets), each assigned a unique number ranging from 1 to N, where N is the total number of vbuckets. The number of vbuckets is specifically chosen to be several orders of magnitude larger than the potential number of cluster nodes, even given future cluster scaling. For example, with M projected nodes the dataset may be split into 100 * M or even 1,000 * M vbuckets. Care should be taken when picking the number of vbuckets: if too large, it may require extra memory for storing the routing information; if too small, it may decrease the granularity of rebalancing.
-
 
 Each shard stores a unique subset of vbuckets, which means that a vbucket cannot belong to several shards at once, as illustrated below:
 
-
-vb1
-	vb2
-	vb3
-	vb4
-	vb5
-	vb6
-	vb7
-	vb8
-	vb9
-	vb10
-	vb11
-	sh1
-	sh2
-	sh3
-	sh4
-	
+```
+vb1 vb2 vb3 vb4 vb5 vb6 vb7 vb8 vb9 vb10 vb11
+    sh1         sh2        sh3       sh4
+```
 
 This shard-to-vbucket mapping is stored in a table in one of Tarantool’s system spaces, with each shard holding only a specific part of the mapping that covers those vbuckets that were assigned to this shard.
 
-#### Sample records stored in the _vbucket table
-
-id
-	replicaset uuid
-	next replicaset uuid
-	state
-	comment
-	1
-	abfe2ef6-9d11-4756-b668-7f5bc5108e2a
-	abfe2ef6-9d11-4756-b668-7f5bc5108e2a
-	ACTIVE
-	This vbucket is situated on this shard
-	2
-	abfe2ef6-9d11-4756-b668-7f5bc5108e2a
-	19f83dcb-9a01-45bc-a0cf-b0c5060ff82c
-	MOVED
-	This vbucket has been moved to another shard
-	
-
 Apart from the mapping table, the bucket id is also stored in a special field of every tuple of every table participating in sharding.
 
-
-Once a shard receives any request (except for SELECT) from an application, this shard checks the bucket id specified in the request against the table of bucket ids that belong to a given node. If the specified bucket id is invalid, the request gets terminated with the following error: “the application uses the routing rules that differ from the actual placement of vbuckets.” Otherwise the request is executed, and all the data created in the process is assigned the bucket id specified in the request. Note that the request can only modify the data that has the same bucket id as the request itself.
-
+Once a shard receives any request (except for SELECT) from an application, this shard checks the bucket id specified in the request against the table of bucket ids that belong to a given node. If the specified bucket id is invalid, the request gets terminated with the following error: “wrong bucket”. Otherwise the request is executed, and all the data created in the process is assigned the bucket id specified in the request. Note that the request can only modify the data that has the same bucket id as the request itself.
 
 Storing bucket ids both in the data itself and the mapping table ensures data consistency regardless of the application logic and makes rebalancing transparent for the application. Storing the mapping table in a system space ensures sharding is performed consistently in case of a failover, as all the replicas in a shard share a common table state.
 
@@ -534,24 +498,13 @@ On their way from the application to the sharded cluster, all the requests pass 
 * the rebalancing process;
 * the occurrence of a failover caused by the shutdown of a replica. 
 
-
 A router can also calculate a bucket id on its own provided that the application clearly defines rules for calculating a bucket id based on the request data. To do it, a router needs to be aware of the data schema.
-
-
-In other cases, a router can store a bucket id in a session, saving the application the need to pass this bucket id with each request.
-
 
 A router is stateless and doesn’t store the cluster topology. Nor does it rebalance data.
 A router is a separate program component that can be implemented both in the storage and application layers, and its placement is application-driven.
  
-A router maintains a constant pool of connections to all the storages that is created at startup. Creating it this way helps avoid configuration errors. Once a pool is created, a router caches the current state of the _vbucket table to speed up the routing. In case a bucket id is moved to another storage as a result of data rebalancing or one of the shards fails over to a replica, a router updates the routing table in a way that’s transparent for the application.
+A router maintains a constant pool of connections to all the storages that is created at startup. Creating it this way helps avoid configuration errors. Once a pool is created, a router caches the current state of the \_vbucket table to speed up the routing. In case a bucket id is moved to another storage as a result of data rebalancing or one of the shards fails over to a replica, a router updates the routing table in a way that's transparent for the application.
 
-#### Router API
-vshard = require(‘vshard’).new()
-Vshard:cfg{list of replicasets and their URIs}
-vshard.space.<space_name>:replace(<bucket id>, tuple)
-vshard.space.<space_name>.index.<index_name>:get(<bucket id>, key)
-Centralized configuration storage
 Sharding is not integrated into any centralized configuration storage system. It is assumed that the application itself handles all the interactions with such systems and passes sharding parameters. That said, the configuration can be changed dynamically - for example, when adding or deleting one or several shards:
 
 1. to add a new shard to the cluster, a system administrator first changes the configuration of all the routers and then the configuration of all the storages;
@@ -561,36 +514,24 @@ Sharding is not integrated into any centralized configuration storage system. It
 ##### CRUD (create, replace, update, delete) operations
 CRUD operations can either be executed in a stored procedure inside a storage or initialized by the application. In any case, the application must include the operation bucket id in a request. When executing an INSERT request, the operation bucket id is stored in a newly created tuple. In other cases, it is checked if the specified operation bucket id matches the bucket id of a tuple being modified.
 ##### SELECT requests
-Since a storage is not aware of the mapping between a bucket id and a primary key, all the SELECT requests executed in stored procedures inside a storage are only executed locally. Those SELECT requests that were initialized by the application are forwarded to a router. Then, if the application has passed a bucket id, a router uses it for shard calculation. Otherwise, if a router does not know how a primary key is mapped to a bucket id, it sends requests to all the shards and returns the result to the application. If a router can calculate a bucket id, then it only sends a request to the specified shard. 
+Since a storage is not aware of the mapping between a bucket id and a primary key, all the SELECT requests executed in stored procedures inside a storage are only executed locally. Those SELECT requests that were initialized by the application are forwarded to a router. Then, if the application has passed a bucket id, a router uses it for shard calculation.
 
-
-SELECT requests that use secondary and partial keys are executed similarly: if a bucket id is specified, a router uses it; if not, map/reduce is used.
 ##### Calling stored procedures
 There are several ways of calling stored procedures in cluster replicasets. Stored procedures can be called on a specific vbucket located in a replicaset or without specifying any particular vbucket. In the former case, it is necessary to differentiate between read and write procedures, as write procedures are not applicable to vbuckets that are being migrated. All the routing validity checks performed for sharded DML operations hold true for vbucket-bound stored procedures as well.
-
-
-The syntax below shows how to call a stored procedure on a remote server:
-vshard:call(<bucket_id>, <mode(read:write)>, <function_name>, {<argument_list>})
 
 #### Replicaset balancing algorithm
 
 The main objective of balancing is to add and delete replicasets as well as to even out the load based of physical capacities of certain replicasets.
 
-
-For balancing to work, each replicaset must be assigned a weight that is proportional to its capacity for data storage. The simplest capacity metric is the number of vbuckets stored by a replicaset. Another possible metric is the total size of all sharded spaces in a replicaset.
-
+For balancing to work, each replicaset can be assigned a weight that is proportional to its capacity for data storage. The simplest capacity metric is the percentage of vbuckets stored by a replicaset. Another possible metric is the total size of all sharded spaces in a replicaset.
 
 Balancing is performed as follows: all the replicasets are ordered based on the value of the M/W ratio, where M is a replicaset capacity metric and W is a replicaset weight. If the difference between the smallest and the largest value exceeds a predefined threshold, balancing is launched for the corresponding replicasets. Once done, the process can be repeated for the next pair of replicasets with different policies, depending on how much the calculated metric deviates from the cluster mean (for example, the minimum value is compared with the maximum one, then with the second largest and so on).
 
-
 With this approach, assigning a zero weight to a replicaset would allow evenly distributing all of its vbuckets among other cluster nodes, and adding a new replicaset with a zero load would result in vbuckets being moved to it from other replicasets.
-
 
 In the migration process, a vbucket goes through two stages at the source and the receiver. At the source, the vbucket is put into the sending state, in which it accepts all the read requests, but declines any write requests. Once the vbucket is activated at the receiver, it is marked as moved at the source and declines all requests from here on.
 
-
 At the receiver, the vbucket is created in the receiving state, and then data copying starts, with all the requests getting declined. Once all the data is copied over, the vbucket is activated and starts accepting all requests.
-
 
 If a node assumes the role of a master, all the vbuckets in the sending state are checked first. For such vbuckets, a request is sent to the destination replicaset, and if a vbucket is active there, it is deleted locally. All the vbuckets in the receiving state are simply deleted.
 
@@ -598,18 +539,14 @@ If a node assumes the role of a master, all the vbuckets in the sending state ar
 
 The main problem when setting up a cluster is that the identifiers of its components (replicasets and Tarantool instances) are unknown. Adding or removing a replicaset one instance at a time creates a risk of data loss. The optimal way of setting up a cluster and adding new nodes to it is to independently create a fully functional replicaset and then add it to the cluster configuration. In this case, all the parameters necessary for updating the configuration are known prior to adding any new members to the cluster.
 
-
 Once a new replicaset is fully set up in the cluster and all of its nodes are notified of the configuration changes, vbuckets are migrated to the new node.
-
 
 If a replicaset master fails, it is recommended to:
 
 1. Switch one of the replicas into master mode for all the replicaset instances, which would allow the new master to process all the incoming requests.
 2. Update the configuration of all the cluster members, which would result in all connection requests being forwarded to the new master.
 
-
 Monitoring the master and switching instance modes can be handled by any external utility.
-
 
 To perform a planned outage of a replicaset master, it is recommended to:
 
@@ -618,14 +555,11 @@ To perform a planned outage of a replicaset master, it is recommended to:
 3. Update the configuration of all the nodes.
 4. Shut down the old master.
 
-
 To perform a planned outage of a cluster replicaset, it is recommended to:
-
 
 1. Migrate all the vbuckets to other cluster storages.
 2. Update the configuration of all the nodes.
 3. Shut down the replicaset.
-
 
 In case a whole replicaset fails, some part of the dataset becomes inaccessible. Meanwhile, a router tries to reconnect to the master of the failed replicaset on a regular basis. This way, once the replicaset is up and running again, the cluster is automatically restored to its full working condition.
 
@@ -708,25 +642,14 @@ Essential commands you need to known:
 
 This section contains definitions of key terms used throughout the document.
 
-Cluster
-	Set of nodes that form a single group
-	Horizontal scaling
-	Partitioning data into several servers and adding more servers as necessary
-	Node
-	Physical or virtual server instance
-	Rebalancing
-	Moving some part of data to new servers added to the cluster
-	Replicaset
-	Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)
-	Router
-	Server responsible for routing requests from the system to certain cluster nodes
-	Sharding
-	Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.
-	Vertical scaling
-	Increasing a server capacity (for example, using a more powerful CPU or adding extra RAM or disk space)
-	Virtual bucket (vbucket)
-	Sharding key that determines which replicaset stores certain data
-
+Cluster - Set of nodes that form a single group<br>
+Horizontal scaling - Partitioning data into several servers and adding more servers as necessary<br>
+Node - Physical or virtual server instance<br>
+Rebalancing - Moving some part of data to new servers added to the cluster<br>
+Replicaset - Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)<br>
+Router - Server responsible for routing requests from the system to certain cluster nodes<br>
+Sharding - Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.<br>
+Virtual bucket (vbucket) - Sharding key that determines which replicaset stores certain data<br>
 
 ## See Also
 
