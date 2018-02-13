@@ -8,7 +8,7 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 ## Prerequisites
 
-- Tarantool 1.7.7 (use 1.7-next branch from GitHub).
+- Tarantool 1.7.7+ (use 1.9 branch from GitHub).
 
 ## Configuration
 
@@ -660,7 +660,7 @@ Feel free to contact us on [Telegram] channel or send a pull request.
 * [Maillist]
 * [Telegram]
 
-[tarantool-badge]: https://img.shields.io/badge/Tarantool-1.7-blue.svg?style=flat
+[tarantool-badge]: https://img.shields.io/badge/Tarantool-1.9-blue.svg?style=flat
 [Tarantool]: https://tarantool.org/
 [Telegram]: http://telegram.me/tarantool
 [Maillist]: https://groups.google.com/forum/#!forum/tarantool
