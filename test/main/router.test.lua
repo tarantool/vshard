@@ -61,6 +61,8 @@ vshard.router.bootstrap()
 --
 util.check_error(vshard.router.call, vshard.consts.DEFAULT_BUCKET_COUNT + 1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, -1, 'read', 'echo', {123})
+util.check_error(vshard.router.call, 0, 'read', 'echo', {123})
+replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
 

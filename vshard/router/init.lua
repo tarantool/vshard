@@ -170,7 +170,7 @@ local function router_call(bucket_id, mode, func, args, opts)
     local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
     local tend = lfiber.time() + timeout
-    if bucket_id > total_bucket_count or bucket_id < 0 then
+    if bucket_id > total_bucket_count or bucket_id <= 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
     local call

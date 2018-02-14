@@ -157,6 +157,16 @@ util.check_error(vshard.router.call, -1, 'read', 'echo', {123})
 ---
 - 'Bucket is unreachable: bucket id is out of range'
 ...
+util.check_error(vshard.router.call, 0, 'read', 'echo', {123})
+---
+- 'Bucket is unreachable: bucket id is out of range'
+...
+replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
+---
+- type: ShardingError
+  bucket_id: 0
+  code: 9
+...
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 ---
 - true
