@@ -257,6 +257,17 @@ local function router_call(bucket_id, mode, func, args, opts)
 end
 
 --
+-- Wrappers for router_call with preset mode.
+--
+local function router_callro(bucket_id, ...)
+    return router_call(bucket_id, 'read', ...)
+end
+
+local function router_callrw(bucket_id, ...)
+    return router_call(bucket_id, 'write', ...)
+end
+
+--
 -- Get replicaset object by bucket identifier.
 -- @param bucket_id Bucket identifier.
 -- @retval Netbox connection.
@@ -739,6 +750,8 @@ return {
     info = router_info;
     buckets_info = router_buckets_info;
     call = router_call;
+    callro = router_callro;
+    callrw = router_callrw;
     route = router_route;
     routeall = router_routeall;
     bucket_id = router_bucket_id;

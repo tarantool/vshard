@@ -146,9 +146,13 @@ customer = {
 }
 test_run:cmd("setopt delimiter ''");
 
-vshard.router.call(bucket_id, 'write', 'customer_add', {customer})
-vshard.router.call(bucket_id, 'read', 'customer_lookup', {1})
-vshard.router.call(bucket_id + 1, 'read', 'customer_lookup', {1}) -- nothing
+--
+-- gh-69: aliases for router.call - callro and callrw.
+--
+vshard.router.callrw(bucket_id, 'customer_add', {customer})
+vshard.router.callro(bucket_id, 'customer_lookup', {1})
+vshard.router.callro(bucket_id + 1, 'customer_lookup', {1}) -- nothing
+
 
 --
 -- Test errors from router call.

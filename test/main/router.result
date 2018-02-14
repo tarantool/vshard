@@ -373,16 +373,19 @@ customer = {
 test_run:cmd("setopt delimiter ''");
 ---
 ...
-vshard.router.call(bucket_id, 'write', 'customer_add', {customer})
+--
+-- gh-69: aliases for router.call - callro and callrw.
+--
+vshard.router.callrw(bucket_id, 'customer_add', {customer})
 ---
 - true
 ...
-vshard.router.call(bucket_id, 'read', 'customer_lookup', {1})
+vshard.router.callro(bucket_id, 'customer_lookup', {1})
 ---
 - {'accounts': [{'account_id': 10, 'balance': 0, 'name': 'Credit Card'}, {'account_id': 11,
       'balance': 0, 'name': 'Debit Card'}], 'customer_id': 1, 'name': 'Customer 1'}
 ...
-vshard.router.call(bucket_id + 1, 'read', 'customer_lookup', {1}) -- nothing
+vshard.router.callro(bucket_id + 1, 'customer_lookup', {1}) -- nothing
 ---
 - null
 ...

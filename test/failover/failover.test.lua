@@ -97,7 +97,8 @@ while rs1.replica.name ~= 'box_1_b' do fiber.sleep(0.1) end
 rs1.replica.down_ts == nil
 rs1.replica_up_ts ~= nil
 test_run:grep_log('router_1', 'New replica box_1_b%(storage%@')
-vshard.router.call(1, 'read', 'echo', {123})
+-- gh-69: ensure callro() goes to a replica.
+vshard.router.callro(1, 'echo', {123})
 test_run:cmd('switch box_1_b')
 -- Ensure the 'read' echo was executed on box_1_b - nearest
 -- available replica.
