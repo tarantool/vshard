@@ -57,6 +57,11 @@ vshard.router.bootstrap()
 vshard.router.bootstrap()
 
 --
+-- Test lua errors.
+--
+vshard.router.callro(1, 'raise_client_error', {}, {})
+
+--
 -- gh-48: more precise error messages about bucket unavailability.
 --
 util.check_error(vshard.router.call, vshard.consts.DEFAULT_BUCKET_COUNT + 1, 'read', 'echo', {123})

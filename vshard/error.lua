@@ -121,8 +121,4 @@ return {
     vshard = vshard_error,
     make = make_error,
     alert = make_alert,
-    is_lua = function(err)
-        return err and type(err) == 'table' and err.type == 'ClientError' and
-               err.code == box.error.PROC_LUA
-    end,
 }

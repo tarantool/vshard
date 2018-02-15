@@ -49,6 +49,7 @@ local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local fiber = require('fiber')
 local luri = require('uri')
+local ffi = require('ffi')
 
 --
 -- on_connect() trigger for net.box
@@ -328,6 +329,22 @@ local function replicaset_master_call(replicaset, func, args, opts)
 end
 
 --
+-- True, if after error @a e a read request can be retried.
+--
+local function can_retry_after_error(e)
+    if not e or (type(e) ~= 'table' and
+                 (type(e) ~= 'cdata' or not ffi.istype('struct error', e))) then
+        return false
+    end
+    if e.type == 'ShardingError' and
+       (e.code == lerror.code.WRONG_BUCKET or
+        e.code == lerror.code.TRANSFER_IS_IN_PROGRESS) then
+        return true
+    end
+    return e.type == 'ClientError' and e.code == box.error.TIMEOUT
+end
+
+--
 -- Call a function on a nearest available replica. It is possible
 -- for 'read' requests only. And if the nearest replica is not
 -- available now, then use master's connection - we can not wait
@@ -357,7 +374,8 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
         net_status, storage_status, retval, error_object =
             replica_call(replica, func, args, call_timeout)
         global_timeout = end_time - fiber.time()
-        if not net_status and not storage_status and lerror.is_lua(retval) then
+        if not net_status and not storage_status and
+           not can_retry_after_error(retval) then
             -- There is no sense to retry LuaJit errors, such as
             -- assetions, not defined variables etc.
             net_status = true
@@ -365,7 +383,7 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
         end
     end
     if not net_status then
-        return nil, lerror.make(storage_status)
+        return nil, lerror.make(retval)
     else
         return storage_status, retval, error_object
     end

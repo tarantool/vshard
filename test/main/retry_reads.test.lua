@@ -42,6 +42,12 @@ _, e = rs1:callro('raise_luajit_error', {}, {timeout = 10})
 string.match(e.message, 'assertion')
 fiber.time() - start < 1
 
+start = fiber.time()
+rs1:callro('raise_client_error', {}, {timeout = 5})
+fiber.time() - start < 1
+
+rs1:callro('raise_client_error', {}, {timeout = 0.0001})
+
 _ = test_run:cmd("switch default")
 test_run:cmd("stop server router_1")
 test_run:cmd("cleanup server router_1")

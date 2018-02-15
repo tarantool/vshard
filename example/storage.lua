@@ -63,6 +63,8 @@ box.once("testapp:schema:1", function()
     box.schema.role.grant('public', 'execute', 'function', 'sleep')
     box.schema.func.create('raise_luajit_error')
     box.schema.role.grant('public', 'execute', 'function', 'raise_luajit_error')
+    box.schema.func.create('raise_client_error')
+    box.schema.role.grant('public', 'execute', 'function', 'raise_client_error')
 end)
 
 function customer_add(customer)
@@ -117,4 +119,8 @@ end
 
 function raise_luajit_error()
     assert(1 == 2)
+end
+
+function raise_client_error()
+    box.error(box.error.UNKNOWN)
 end

@@ -116,6 +116,34 @@ fiber.time() - start < 1
 ---
 - true
 ...
+start = fiber.time()
+---
+...
+rs1:callro('raise_client_error', {}, {timeout = 5})
+---
+- null
+- type: ClientError
+  code: 0
+  message: Unknown error
+  trace:
+  - file: builtin/box/net_box.lua
+    line: 754
+- null
+...
+fiber.time() - start < 1
+---
+- true
+...
+rs1:callro('raise_client_error', {}, {timeout = 0.0001})
+---
+- null
+- type: ClientError
+  code: 78
+  message: Timeout exceeded
+  trace:
+  - file: builtin/box/net_box.lua
+    line: 754
+...
 _ = test_run:cmd("switch default")
 ---
 ...
