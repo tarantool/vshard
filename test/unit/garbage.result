@@ -54,7 +54,7 @@ sk = s:create_index('bucket_id', {parts = {{1, 'unsigned'}, {2, 'unsigned'}}})
 ...
 show_sharded_spaces()
 ---
-- []
+- - test
 ...
 -- Ok to find sharded space.
 sk:drop()

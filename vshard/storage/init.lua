@@ -433,7 +433,8 @@ local function find_sharded_spaces()
     for k, space in pairs(box.space) do
         if type(k) == 'number' and space.index.bucket_id ~= nil then
             local parts = space.index.bucket_id.parts
-            if #parts == 1 and parts[1].type == 'unsigned' then
+            local p = parts[1].type
+            if p == 'unsigned' or p == 'integer' or p == 'number' then
                 spaces[k] = space
             end
         end
