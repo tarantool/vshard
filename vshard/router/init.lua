@@ -290,6 +290,21 @@ end
 --------------------------------------------------------------------------------
 -- Failover
 --------------------------------------------------------------------------------
+
+local function failover_ping_round()
+    for _, replicaset in pairs(self.replicasets) do
+        local replica = replicaset.replica
+        if replica ~= nil and replica.conn ~= nil and
+           replica.down_ts == nil then
+            if not replica.conn:ping({timeout = 5}) then
+                log.info('Ping error from %s: perhaps a connection is down',
+                         replica)
+                replica.conn:close()
+            end
+        end
+    end
+end
+
 --
 -- Replicaset must fall its replica connection to lower priority,
 -- if the current one is down too long.
@@ -364,6 +379,7 @@ end
 -- @retval true A replica of an replicaset has been changed.
 --
 local function failover_step()
+    failover_ping_round()
     local uuid_to_update = failover_collect_to_update()
     if #uuid_to_update == 0 then
         return false
