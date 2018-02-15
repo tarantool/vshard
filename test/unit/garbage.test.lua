@@ -12,6 +12,8 @@ function show_sharded_spaces()
 end;
 test_run:cmd("setopt delimiter ''");
 
+vshard.storage.internal.shard_index = 'bucket_id'
+
 --
 -- Find nothing if no bucket_id anywhere, or there is no index
 -- by it, or bucket_id is not unsigned.
@@ -31,6 +33,16 @@ show_sharded_spaces()
 
 -- Ok to find sharded space.
 sk:drop()
+
+--
+-- gh-74: allow to choose any name for shard indexes.
+--
+sk = s:create_index('vbuckets', {parts = {{2, 'unsigned'}}, unique = false})
+vshard.storage.internal.shard_index = 'vbuckets'
+show_sharded_spaces()
+sk:drop()
+vshard.storage.internal.shard_index = 'bucket_id'
+
 sk = s:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 show_sharded_spaces()
 

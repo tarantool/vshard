@@ -7,6 +7,9 @@ vshard = require('vshard')
 fiber = require('fiber')
 ---
 ...
+vshard.storage.internal.shard_index = 'bucket_id'
+---
+...
 format = {}
 ---
 ...

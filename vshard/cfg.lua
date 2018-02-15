@@ -93,6 +93,14 @@ local function cfg_check(shard_cfg)
     if shard_cfg.weights ~= nil then
         cfg_check_weights(shard_cfg.weights)
     end
+    if shard_cfg.shard_index ~= nil and
+       (type(shard_cfg.shard_index) ~= 'string' or
+        #shard_cfg.shard_index == 0) and
+       (type(shard_cfg.shard_index) ~= 'number' or shard_cfg.shard_index < 0 or
+        math.floor(shard_cfg.shard_index) ~= shard_cfg.shard_index) then
+        error('Shard index must be non-empty string to specify index by '..
+              'name, or unsigned integer to specify index by identifier')
+    end
     if shard_cfg.zone ~= nil and type(shard_cfg.zone) ~= 'number' and
        type(shard_cfg.zone) ~= 'string' then
         error('Config zone must be either number or string')
@@ -147,6 +155,7 @@ local function prepare_for_box_cfg(cfg)
     cfg.bucket_count = nil
     cfg.rebalancer_disbalance_threshold = nil
     cfg.rebalancer_max_receiving = nil
+    cfg.shard_index = nil
 end
 
 return {

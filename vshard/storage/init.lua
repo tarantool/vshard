@@ -41,6 +41,11 @@ local self = {
     -- before the event occurs.
     on_master_enable = trigger.new('on_master_enable'),
     on_master_disable = trigger.new('on_master_disable'),
+    -- Index which is a trigger to shard its space by numbers in
+    -- this index. It must have at first part either unsigned,
+    -- or integer or number type and be not nullable. Values in
+    -- this part are considered as bucket identifiers.
+    shard_index = nil,
     errinj = {
         ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
     }
@@ -436,14 +441,15 @@ local function bucket_recv(bucket_id, from, data)
 end
 
 --
--- Find spaces with indexed bucket_id fields.
+-- Find spaces with index having the specified name.
 -- @retval Map of type {space_id = <space object>}.
 --
 local function find_sharded_spaces()
     local spaces = {}
+    local idx = self.shard_index
     for k, space in pairs(box.space) do
-        if type(k) == 'number' and space.index.bucket_id ~= nil then
-            local parts = space.index.bucket_id.parts
+        if type(k) == 'number' and space.index[idx] ~= nil then
+            local parts = space.index[idx].parts
             local p = parts[1].type
             if p == 'unsigned' or p == 'integer' or p == 'number' then
                 spaces[k] = space
@@ -461,9 +467,10 @@ end
 local function bucket_collect_internal(bucket_id)
     local data = {}
     local spaces = find_sharded_spaces()
+    local idx = self.shard_index
     for k, space in pairs(spaces) do
-        assert(space.index.bucket_id ~= nil)
-        local space_data = space.index.bucket_id:select({bucket_id})
+        assert(space.index[idx] ~= nil)
+        local space_data = space.index[idx]:select({bucket_id})
         table.insert(data, {space.id, space_data})
     end
     return data
@@ -677,7 +684,7 @@ local function collect_garbage_step(control)
     -- 2) Delete all its tuples;
     -- 3) Go to 1.
     for _, space in pairs(sharded_spaces) do
-        local bucket_index = space.index.bucket_id
+        local bucket_index = space.index[self.shard_index]
         while true do
             local garbage_bucket = find_garbage_bucket(bucket_index, control)
             -- Stop the step, if a generation has changed.
@@ -855,8 +862,9 @@ local function bucket_delete_garbage(bucket_id, opts)
               'ignore this attention')
     end
     local sharded_spaces = find_sharded_spaces()
+    local idx = self.shard_index
     for _, space in pairs(sharded_spaces) do
-        collect_garbage_bucket_in_space(space, space.index.bucket_id, bucket_id)
+        collect_garbage_bucket_in_space(space, space.index[idx], bucket_id)
     end
 end
 
@@ -1270,6 +1278,7 @@ local function storage_cfg(cfg, this_replica_uuid)
         consts.DEFAULT_REBALANCER_DISBALANCE_THRESHOLD
     rebalancer_max_receiving = cfg.rebalancer_max_receiving or
                                consts.DEFAULT_REBALANCER_MAX_RECEIVING
+    self.shard_index = cfg.shard_index or 'bucket_id'
     lcfg.prepare_for_box_cfg(cfg)
 
     box.cfg(cfg)

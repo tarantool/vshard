@@ -30,8 +30,8 @@ function init_schema()
 	local s = box.schema.create_space('test', {format = format})
 	local pk = s:create_index('pk')
 	local bucket_id_idx =
-		s:create_index('bucket_id', {parts = {'bucket_id'},
-					     unique = false})
+		s:create_index('vbucket', {parts = {'bucket_id'},
+					   unique = false})
 end
 
 box.once('schema', function()

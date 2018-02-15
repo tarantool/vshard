@@ -132,3 +132,18 @@ cfg.rebalancer_max_receiving = 0
 check(cfg)
 cfg.rebalancer_max_receiving = 10
 lcfg.check(cfg)
+
+--
+-- gh-74: allow to specify name or id of an index on bucket
+-- identifiers.
+--
+cfg.shard_index = -100
+check(cfg)
+cfg.shard_index = 0.1
+check(cfg)
+cfg.shard_index = 0
+lcfg.check(cfg)
+cfg.shard_index = ''
+check(cfg)
+cfg.shard_index = 'vbucket'
+lcfg.check(cfg)

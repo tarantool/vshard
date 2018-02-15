@@ -78,4 +78,5 @@ end
 return {
     sharding = sharding,
     rebalancer_disbalance_threshold = 0.01,
+    shard_index = 'vbucket',
 }

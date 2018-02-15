@@ -2,6 +2,8 @@ test_run = require('test_run').new()
 vshard = require('vshard')
 fiber = require('fiber')
 
+vshard.storage.internal.shard_index = 'bucket_id'
+
 format = {}
 format[1] = {name = 'id', type = 'unsigned'}
 format[2] = {name = 'status', type = 'string', is_nullable = true}
