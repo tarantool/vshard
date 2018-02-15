@@ -340,6 +340,9 @@ fiber = require('fiber')
 while #vshard.storage.info().alerts ~= 1 do fiber.sleep(0.1) end
 ---
 ...
+fiber.sleep(1)
+---
+...
 vshard.storage.info()
 ---
 - replicasets:
