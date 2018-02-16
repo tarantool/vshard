@@ -149,15 +149,17 @@ vshard.router.bootstrap()
 --
 -- Test lua errors.
 --
-vshard.router.callro(1, 'raise_client_error', {}, {})
+_, e = vshard.router.callro(1, 'raise_client_error', {}, {})
 ---
-- null
+...
+e.trace = nil
+---
+...
+e
+---
 - type: ClientError
   code: 32
   message: Unknown error
-  trace:
-  - file: builtin/box/net_box.lua
-    line: 754
 ...
 --
 -- gh-48: more precise error messages about bucket unavailability.

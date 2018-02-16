@@ -43,10 +43,14 @@ string.match(e.message, 'assertion')
 fiber.time() - start < 1
 
 start = fiber.time()
-rs1:callro('raise_client_error', {}, {timeout = 5})
+_, e = rs1:callro('raise_client_error', {}, {timeout = 5})
 fiber.time() - start < 1
+e.trace = nil
+e
 
-rs1:callro('raise_client_error', {}, {timeout = 0.0001})
+_, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
+e.trace = nil
+e
 
 _ = test_run:cmd("switch default")
 test_run:cmd("stop server router_1")

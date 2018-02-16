@@ -59,7 +59,9 @@ vshard.router.bootstrap()
 --
 -- Test lua errors.
 --
-vshard.router.callro(1, 'raise_client_error', {}, {})
+_, e = vshard.router.callro(1, 'raise_client_error', {}, {})
+e.trace = nil
+e
 
 --
 -- gh-48: more precise error messages about bucket unavailability.
