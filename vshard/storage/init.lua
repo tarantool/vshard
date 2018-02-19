@@ -272,7 +272,7 @@ local function sync(timeout)
         error('Usage: vshard.storage.sync([timeout: number])')
     end
 
-    log.verbose("Synchronizing replicaset...")
+    log.debug("Synchronizing replicaset...")
     timeout = timeout or consts.SYNC_TIMEOUT
     local vclock = box.info.vclock
     local tstart = lfiber.time()
@@ -285,7 +285,7 @@ local function sync(timeout)
             end
         end
         if done then
-            log.info("Replicaset has been synchronized")
+            log.debug("Replicaset has been synchronized")
             return true
         end
         lfiber.sleep(0.001)
