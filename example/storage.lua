@@ -115,6 +115,7 @@ end
 
 function sleep(time)
     fiber.sleep(time)
+    return true
 end
 
 function raise_luajit_error()

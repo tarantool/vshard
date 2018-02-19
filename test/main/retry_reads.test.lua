@@ -17,20 +17,14 @@ rs1 = vshard.router.internal.replicasets[replicasets[1]]
 min_timeout = vshard.consts.CALL_TIMEOUT_MIN
 
 --
--- Try read request with exection time = MIN_TIMEOUT * 4 + 0.3. It
--- must produce two attemts to read: two failed reads with timeout
--- MIN_TIMEOUT and success read with timeout MIN_TIMEOUT * 2.
+-- Try two read requests with exection time = MIN_TIMEOUT + 0.5.
+-- It leads to increased network timeout.
 --
 util.collect_timeouts(rs1)
-_ = rs1:callro('sleep', {min_timeout + 0.1}, {timeout = min_timeout * 4 + 0.5})
+_ = rs1:callro('sleep', {min_timeout + 0.5}, {timeout = min_timeout})
+_ = rs1:callro('sleep', {min_timeout + 0.5}, {timeout = min_timeout})
 util.collect_timeouts(rs1)
-for i = 1, 8 do rs1:callro('echo') end
-util.collect_timeouts(rs1)
-
---
--- Test two timeouts increase per one request.
---
-_ = rs1:callro('sleep', {min_timeout * 5}, {timeout = min_timeout * 100})
+for i = 1, 9 do rs1:callro('echo') end
 util.collect_timeouts(rs1)
 
 --
@@ -51,6 +45,13 @@ e
 _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
 e.trace = nil
 e
+
+--
+-- Do not send multiple requests during timeout - it brokes long
+-- polling requests.
+--
+_ = rs1:callro('sleep', {4}, {timeout = 100})
+_
 
 _ = test_run:cmd("switch default")
 test_run:cmd("stop server router_1")

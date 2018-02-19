@@ -354,10 +354,10 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    local global_timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MAX
+    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MAX
     local net_status, storage_status, retval, error_object
-    local end_time = fiber.time() + global_timeout
-    while not net_status and global_timeout > 0 do
+    local end_time = fiber.time() + timeout
+    while not net_status and timeout > 0 do
         local replica = replicaset.replica
         local conn
         if replica and replica:is_connected() then
@@ -366,14 +366,9 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
             conn = replicaset_connect(replicaset)
             replica = replicaset.master
         end
-        -- If network timeout of a replica is less, than global
-        -- timeout, then choose the replica's one. It allows to
-        -- make several attempts to execute request inside single
-        -- global timeout.
-        local call_timeout = math.min(global_timeout, replica.net_timeout)
         net_status, storage_status, retval, error_object =
-            replica_call(replica, func, args, call_timeout)
-        global_timeout = end_time - fiber.time()
+            replica_call(replica, func, args, timeout)
+        timeout = end_time - fiber.time()
         if not net_status and not storage_status and
            not can_retry_after_error(retval) then
             -- There is no sense to retry LuaJit errors, such as

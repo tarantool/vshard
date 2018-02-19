@@ -126,7 +126,8 @@ local function discovery_f()
     while true do
         for _, replicaset in pairs(self.replicasets) do
             local active_buckets, err =
-                replicaset:callro('vshard.storage.buckets_discovery')
+                replicaset:callro('vshard.storage.buckets_discovery', {},
+                                  {timeout = 2})
             if not active_buckets then
                 log.error('Error during discovery %s: %s', replicaset, err)
             else
