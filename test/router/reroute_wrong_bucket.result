@@ -1,0 +1,237 @@
+test_run = require('test_run').new()
+---
+...
+REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
+---
+...
+REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
+---
+...
+test_run:create_cluster(REPLICASET_1, 'router')
+---
+...
+test_run:create_cluster(REPLICASET_2, 'router')
+---
+...
+util = require('util')
+---
+...
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+---
+...
+util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
+---
+...
+test_run:cmd('create server router_1 with script="router/router_1.lua"')
+---
+- true
+...
+test_run:cmd('start server router_1')
+---
+- true
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+vshard.storage.rebalancer_disable()
+---
+...
+for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+---
+...
+test_run:switch('storage_2_a')
+---
+- true
+...
+vshard.storage.rebalancer_disable()
+---
+...
+for i = 101, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+---
+...
+test_run:switch('router_1')
+---
+- true
+...
+vshard.router.bucket_discovery(100) ~= nil
+---
+- true
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+box.space._bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.SENT}, {'=', 3, replicasets[2]}})
+---
+- [100, 'sent', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:switch('storage_2_a')
+---
+- true
+...
+box.space._bucket:replace{100, vshard.consts.BUCKET.ACTIVE}
+---
+- [100, 'active']
+...
+customer_add({customer_id = 1, bucket_id = 100, name = 'name', accounts = {}})
+---
+- true
+...
+test_run:switch('router_1')
+---
+- true
+...
+vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 100})
+---
+- {'accounts': [], 'customer_id': 1, 'name': 'name'}
+...
+vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+---
+...
+vshard.router.call(100, 'write', 'customer_add', {{customer_id = 2, bucket_id = 100, name = 'name2', accounts = {}}}, {timeout = 100})
+---
+- true
+...
+-- Create cycle.
+test_run:switch('storage_2_a')
+---
+- true
+...
+box.space._bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.SENT}, {'=', 3, replicasets[1]}})
+---
+- [100, 'sent', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:switch('router_1')
+---
+- true
+...
+vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 1})
+---
+- null
+- type: ShardingError
+  bucket_id: 100
+  code: 9
+...
+-- Wait reconfiguration durigin timeout, if a replicaset was not
+-- found by bucket.destination from WRONG_BUCKET or
+-- TRANSFER_IS_IN_PROGRESS error object.
+test_run:switch('storage_2_a')
+---
+- true
+...
+box.space._bucket:replace({100, vshard.consts.BUCKET.ACTIVE})
+---
+- [100, 'active']
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+box.space._bucket:replace({100, vshard.consts.BUCKET.SENT, replicasets[2]})
+---
+- [100, 'sent', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:switch('router_1')
+---
+- true
+...
+-- Emulate a situation, when a replicaset_2 while is unknown for
+-- router, but is already known for storages.
+save_rs2 = vshard.router.internal.replicasets[replicasets[2]]
+---
+...
+vshard.router.internal.replicasets[replicasets[2]] = nil
+---
+...
+vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+---
+...
+fiber = require('fiber')
+---
+...
+call_retval = nil
+---
+...
+err = nil
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+function do_call(timeout)
+    call_retval, err =
+        vshard.router.call(100, 'write', 'customer_add',
+                           {{customer_id = 3, bucket_id = 100, name = 'name3',
+                             accounts = {}}}, {timeout = timeout})
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+--
+-- Background call starts 'write' request, but can not find a
+-- replicaset by UUID. It must fail by timeout.
+--
+f = fiber.create(do_call, 1)
+---
+...
+while not err do fiber.sleep(0.1) end
+---
+...
+test_run:grep_log('router_1', 'please update configuration')
+---
+- please update configuration
+...
+err
+---
+- {'type': 'ShardingError', 'bucket_id': 100, 'code': 1, 'destination': 'ac522f65-aa94-4134-9f64-51ee384f1a54'}
+...
+--
+-- Now try again, but update configuration during call(). It must
+-- detect it and end with ok.
+--
+require('log').info(string.rep('a', 1000))
+---
+...
+f = fiber.create(do_call, 100)
+---
+...
+while not test_run:grep_log('router_1', 'please update configuration') do fiber.sleep(0.1) end
+---
+...
+vshard.router.internal.replicasets[replicasets[2]] = save_rs2
+---
+...
+while not call_retval do fiber.sleep(0.1) end
+---
+...
+call_retval
+---
+- true
+...
+vshard.router.call(100, 'read', 'customer_lookup', {3}, {timeout = 1})
+---
+- {'accounts': [], 'customer_id': 3, 'name': 'name3'}
+...
+test_run:cmd("switch default")
+---
+- true
+...
+test_run:cmd('stop server router_1')
+---
+- true
+...
+test_run:cmd('cleanup server router_1')
+---
+- true
+...
+test_run:drop_cluster(REPLICASET_2)
+---
+...
+test_run:drop_cluster(REPLICASET_1)
+---
+...
