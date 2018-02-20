@@ -5,50 +5,51 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
+local util = require('vshard.util')
 
-local total_bucket_count = 0
-
--- Internal state
-local self = {
-    errinj = {
-        ERRINJ_FAILOVER_CHANGE_CFG = false,
-    },
-    -- Bucket map cache.
-    route_map = {},
-    --
-    -- All known replicasets used for bucket re-balancing
-    --
-    replicasets = nil,
-    --
-    -- Fiber to maintain replica connections.
-    --
-    failover_fiber = nil,
-    --
-    -- Fiber to discovery buckets in background.
-    --
-    discovery_fiber = nil,
-}
+local M = rawget(_G, '__module_vshard_router')
+if not M then
+    M = {
+        errinj = {
+            ERRINJ_FAILOVER_CHANGE_CFG = false,
+            ERRINJ_RELOAD = false,
+        },
+        -- Bucket map cache.
+        route_map = {},
+        -- All known replicasets used for bucket re-balancing
+        replicasets = nil,
+        -- Fiber to maintain replica connections.
+        failover_fiber = nil,
+        -- Fiber to discovery buckets in background.
+        discovery_fiber = nil,
+        -- Bucket count stored on all replicasets.
+        total_bucket_count = 0,
+        -- This counter is used to restart background fibers with
+        -- new reloaded code.
+        module_version = 0,
+    }
+end
 
 -- Set a replicaset by container of a bucket.
 local function bucket_set(bucket_id, replicaset)
     assert(replicaset)
-    local old_replicaset = self.route_map[bucket_id]
+    local old_replicaset = M.route_map[bucket_id]
     if old_replicaset then
         old_replicaset.bucket_count = old_replicaset.bucket_count - 1
     end
     if replicaset ~= old_replicaset then
         replicaset.bucket_count = replicaset.bucket_count + 1
     end
-    self.route_map[bucket_id] = replicaset
+    M.route_map[bucket_id] = replicaset
 end
 
 -- Remove a bucket from the cache.
 local function bucket_reset(bucket_id)
-    local replicaset = self.route_map[bucket_id]
+    local replicaset = M.route_map[bucket_id]
     if replicaset then
         replicaset.bucket_count = replicaset.bucket_count - 1
     end
-    self.route_map[bucket_id] = nil
+    M.route_map[bucket_id] = nil
 end
 
 --------------------------------------------------------------------------------
@@ -57,7 +58,7 @@ end
 
 -- Search bucket in whole cluster
 local function bucket_discovery(bucket_id)
-    local replicaset = self.route_map[bucket_id]
+    local replicaset = M.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
     end
@@ -65,7 +66,7 @@ local function bucket_discovery(bucket_id)
     log.info("Discovering bucket %d", bucket_id)
     local unreachable_uuid = nil
     local is_transfer_in_progress = false
-    for _, replicaset in pairs(self.replicasets) do
+    for _, replicaset in pairs(M.replicasets) do
         local stat, err = replicaset:callrw('vshard.storage.bucket_stat',
                                              {bucket_id})
         if stat then
@@ -103,7 +104,7 @@ end
 -- Resolve bucket id to replicaset uuid
 local function bucket_resolve(bucket_id)
     local replicaset, err
-    local replicaset = self.route_map[bucket_id]
+    local replicaset = M.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
     end
@@ -119,12 +120,11 @@ end
 -- Background fiber to perform discovery. It periodically scans
 -- replicasets one by one and updates route_map.
 --
-local function discovery_f()
+local function discovery_f(module_version)
     lfiber.name('discovery_fiber')
-    log.info('Start discovery fiber')
-    self.discovery_fiber = lfiber.self()
-    while true do
-        for _, replicaset in pairs(self.replicasets) do
+    M.discovery_fiber = lfiber.self()
+    while module_version == M.module_version do
+        for _, replicaset in pairs(M.replicasets) do
             local active_buckets, err =
                 replicaset:callro('vshard.storage.buckets_discovery', {},
                                   {timeout = 2})
@@ -138,7 +138,7 @@ local function discovery_f()
                 end
                 replicaset.bucket_count = #active_buckets
                 for _, bucket_id in pairs(active_buckets) do
-                    self.route_map[bucket_id] = replicaset
+                    M.route_map[bucket_id] = replicaset
                 end
             end
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
@@ -150,8 +150,8 @@ end
 -- Immediately wakeup discovery fiber if exists.
 --
 local function discovery_wakeup()
-    if self.discovery_fiber then
-        self.discovery_fiber:wakeup()
+    if M.discovery_fiber then
+        M.discovery_fiber:wakeup()
     end
 end
 
@@ -171,7 +171,7 @@ local function router_call(bucket_id, mode, func, args, opts)
     local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
     local tend = lfiber.time() + timeout
-    if bucket_id > total_bucket_count or bucket_id <= 0 then
+    if bucket_id > M.total_bucket_count or bucket_id <= 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
     local call
@@ -199,7 +199,7 @@ local function router_call(bucket_id, mode, func, args, opts)
             if err.code == lerror.code.WRONG_BUCKET then
                 bucket_reset(bucket_id)
                 if err.destination then
-                    replicaset = self.replicasets[err.destination]
+                    replicaset = M.replicasets[err.destination]
                     if not replicaset then
                         log.warn('Replicaset "%s" was not found, but received'..
                                  ' from storage as destination - please '..
@@ -211,7 +211,7 @@ local function router_call(bucket_id, mode, func, args, opts)
                         -- but already is executed on storages.
                         while lfiber.time() <= tend do
                             lfiber.sleep(0.05)
-                            replicaset = self.replicasets[err.destination]
+                            replicaset = M.replicasets[err.destination]
                             if replicaset then
                                 goto replicaset_is_found
                             end
@@ -285,7 +285,7 @@ end
 -- @retval See self.replicasets map.
 --
 local function router_routeall()
-    return self.replicasets
+    return M.replicasets
 end
 
 --------------------------------------------------------------------------------
@@ -293,7 +293,7 @@ end
 --------------------------------------------------------------------------------
 
 local function failover_ping_round()
-    for _, replicaset in pairs(self.replicasets) do
+    for _, replicaset in pairs(M.replicasets) do
         local replica = replicaset.replica
         if replica ~= nil and replica.conn ~= nil and
            replica.down_ts == nil then
@@ -363,7 +363,7 @@ end
 local function failover_collect_to_update()
     local ts = lfiber.time()
     local uuid_to_update = {}
-    for uuid, rs in pairs(self.replicasets) do
+    for uuid, rs in pairs(M.replicasets) do
         if failover_need_down_priority(rs, ts) or
            failover_is_candidate_connected(rs) or
            failover_need_update_candidate(rs, ts) then
@@ -388,10 +388,10 @@ local function failover_step()
     local curr_ts = lfiber.time()
     local replica_is_changed = false
     for _, uuid in pairs(uuid_to_update) do
-        local rs = self.replicasets[uuid]
-        if self.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
+        local rs = M.replicasets[uuid]
+        if M.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
             rs = nil
-            self.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
+            M.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
         end
         if rs == nil then
             log.info('Configuration has changed, restart failovering')
@@ -434,17 +434,16 @@ end
 -- tries to reconnect to the best replica. When the connection is
 -- established, it replaces the original replica.
 --
-local function failover_f()
-    log.info('Start failover fiber')
+local function failover_f(module_version)
     lfiber.name('vshard.failover')
-    self.failover_fiber = lfiber.self()
+    M.failover_fiber = lfiber.self()
     local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
                                  consts.FAILOVER_DOWN_TIMEOUT)
     -- This flag is used to avoid logging like:
     -- 'All is ok ... All is ok ... All is ok ...'
     -- each min_timeout seconds.
     local prev_was_ok = false
-    while true do
+    while module_version == M.module_version do
 ::continue::
         local ok, replica_is_changed = pcall(failover_step)
         if not ok then
@@ -476,7 +475,7 @@ end
 local function router_cfg(cfg)
     cfg = table.deepcopy(cfg)
     lcfg.check(cfg)
-    local old_replicasets = self.replicasets
+    local old_replicasets = M.replicasets
     if not old_replicasets then
         log.info('Starting router configuration')
     else
@@ -484,8 +483,8 @@ local function router_cfg(cfg)
     end
     local new_replicasets = lreplicaset.buildall(cfg)
     -- TODO: update existing route map in-place
-    self.route_map = {}
-    total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
+    M.route_map = {}
+    M.total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
     lcfg.prepare_for_box_cfg(cfg)
     -- Force net.box connection on cfg()
     for _, replicaset in pairs(new_replicasets) do
@@ -499,12 +498,14 @@ local function router_cfg(cfg)
     end
     box.cfg(cfg)
     log.info("Box has been configured")
-    self.replicasets = new_replicasets
-    if self.failover_fiber == nil then
-        lfiber.create(failover_f)
+    M.replicasets = new_replicasets
+    if M.failover_fiber == nil then
+        log.info('Start failover fiber')
+        lfiber.create(util.reloadable_fiber_f, M, 'failover_f', 'Failover')
     end
-    if self.discovery_fiber == nil then
-        lfiber.create(discovery_f)
+    if M.discovery_fiber == nil then
+        log.info('Start discovery fiber')
+        lfiber.create(util.reloadable_fiber_f, M, 'discovery_f', 'Discovery')
     end
     if old_replicasets then
         lreplicaset.destroy(old_replicasets)
@@ -517,7 +518,7 @@ end
 
 local function cluster_bootstrap()
     local replicasets = {}
-    for uuid, replicaset in pairs(self.replicasets) do
+    for uuid, replicaset in pairs(M.replicasets) do
         table.insert(replicasets, replicaset)
         local count, err = replicaset:callrw('vshard.storage.buckets_count',
                                              {})
@@ -530,7 +531,7 @@ local function cluster_bootstrap()
         end
     end
     local bucket_id = 1
-    for uuid, replicaset in pairs(self.replicasets) do
+    for uuid, replicaset in pairs(M.replicasets) do
         if replicaset.ethalon_bucket_count > 0 then
             local ok, err =
                 replicaset:callrw('vshard.storage.bucket_force_create',
@@ -600,7 +601,7 @@ local function router_info()
     }
     local bucket_info = state.bucket
     local known_bucket_count = 0
-    for rs_uuid, replicaset in pairs(self.replicasets) do
+    for rs_uuid, replicaset in pairs(M.replicasets) do
         -- Replicaset info parameters:
         -- * master instance info;
         -- * replica instance info;
@@ -682,7 +683,7 @@ local function router_info()
         -- If a bucket is unreachable, then replicaset is
         -- unreachable too and color already is red.
     end
-    bucket_info.unknown = total_bucket_count - known_bucket_count
+    bucket_info.unknown = M.total_bucket_count - known_bucket_count
     if bucket_info.unknown > 0 then
         state.status = math.max(state.status, consts.STATUS.YELLOW)
         table.insert(state.alerts, lerror.alert(lerror.code.UNKNOWN_BUCKETS,
@@ -705,7 +706,7 @@ local function router_buckets_info(offset, limit)
         error('Usage: buckets_info(offset, limit)')
     end
     offset = offset or 0
-    limit = limit or total_bucket_count
+    limit = limit or M.total_bucket_count
     local ret = {}
     -- Use one string memory for all unknown buckets.
     local available_rw = 'available_rw'
@@ -714,9 +715,9 @@ local function router_buckets_info(offset, limit)
     local unreachable = 'unreachable'
     -- Collect limit.
     local first = math.max(1, offset + 1)
-    local last = math.min(offset + limit, total_bucket_count)
+    local last = math.min(offset + limit, M.total_bucket_count)
     for bucket_id = first, last do
-        local rs = self.route_map[bucket_id]
+        local rs = M.route_map[bucket_id]
         if rs then
             if rs.master and rs.master:is_connected() then
                 ret[bucket_id] = {uuid = rs.uuid, status = available_rw}
@@ -740,18 +741,18 @@ local function router_bucket_id(key)
     if key == nil then
         error("Usage: vshard.router.bucket_id(key)")
     end
-    return lhash.key_hash(key) % total_bucket_count + 1
+    return lhash.key_hash(key) % M.total_bucket_count + 1
 end
 
 local function router_bucket_count()
-    return total_bucket_count
+    return M.total_bucket_count
 end
 
 local function router_sync(timeout)
     if timeout ~= nil and type(timeout) ~= 'number' then
         error('Usage: vshard.router.sync([timeout: number])')
     end
-    for rs_uuid, replicaset in pairs(self.replicasets) do
+    for rs_uuid, replicaset in pairs(M.replicasets) do
         local status, err = replicaset:callrw('vshard.storage.sync', {timeout})
         if not status then
             -- Add information about replicaset
@@ -761,9 +762,25 @@ local function router_sync(timeout)
     end
 end
 
+if M.errinj.ERRINJ_RELOAD then
+    error('Error injection: reload')
+end
+
 --------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
+--
+-- About functions, saved in M, and reloading see comment in
+-- storage/init.lua.
+--
+M.discovery_f = discovery_f
+M.failover_f = failover_f
+
+if not rawget(_G, '__module_vshard_router') then
+    rawset(_G, '__module_vshard_router', M)
+else
+    M.module_version = M.module_version + 1
+end
 
 return {
     cfg = router_cfg;
@@ -780,5 +797,6 @@ return {
     bootstrap = cluster_bootstrap;
     bucket_discovery = bucket_discovery;
     discovery_wakeup = discovery_wakeup;
-    internal = self;
+    internal = M;
+    module_version = function() return M.module_version end;
 }
