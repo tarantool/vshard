@@ -50,17 +50,7 @@ deploy:
   # Deploy packages to PackageCloud
   - provider: packagecloud
     username: tarantool
-    repository: "1_7"
-    token: ${PACKAGECLOUD_TOKEN}
-    dist: ${OS}/${DIST}
-    package_glob: build/*.{deb,rpm,dsc}
-    skip_cleanup: true
-    on:
-      branch: "master"
-      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
-  - provider: packagecloud
-    username: tarantool
-    repository: "2_0"
+    repository: "1_9"
     token: ${PACKAGECLOUD_TOKEN}
     dist: ${OS}/${DIST}
     package_glob: build/*.{deb,rpm,dsc}
