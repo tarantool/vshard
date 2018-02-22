@@ -638,6 +638,9 @@ local function find_garbage_bucket(bucket_index, control)
     local iterations = 0
     local bucket_generation = control.bucket_generation
     while true do
+        while M.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
+            lfiber.sleep(0.1)
+        end
         -- Get next bucket id from a space.
         local t = bucket_index:select({curr_bucket}, {iterator='GE', limit=1})
         if #t == 0 then
@@ -655,11 +658,7 @@ local function find_garbage_bucket(bucket_index, control)
         -- starting from the next one.
         curr_bucket = bucket_id + 1
         iterations = iterations + 1
-        if iterations % 1000 == 0 or
-           M.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY then
-            while M.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
-                lfiber.sleep(0.1)
-            end
+        if iterations % 1000 == 0 then
             -- Do not occupy 100% CPU.
             lfiber.yield()
             -- If during yield _bucket space has changed, then
