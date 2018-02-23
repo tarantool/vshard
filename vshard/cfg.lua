@@ -2,146 +2,152 @@
 
 local log = require('log')
 local luri = require('uri')
+local consts = require('vshard.consts')
 
---
--- Check replicaset config on correctness.
---
-local function cfg_check_replicaset(replicaset)
-    if type(replicaset) ~= 'table' then
-        error('Replicaset must be a table')
+local function check_uri(uri)
+    uri = luri.parse(uri)
+    if uri.login == nil or uri.password == nil then
+        error('URI must contain login and password')
     end
-    if type(replicaset.replicas) ~= 'table' then
-        error('Replicaset.replicas must be array of replicas')
+end
+
+local function check_master(master, ctx)
+    if master then
+        if ctx.master then
+            error('Only one master is allowed per replicaset')
+        else
+            ctx.master = master
+        end
     end
-    if replicaset.weight ~= nil and (type(replicaset.weight) ~= 'number' or
-                                     replicaset.weight < 0) then
-        error('Replicaset weight must be either nil or non-negative number')
-    end
-    local master_is_found = false
-    for k, replica in pairs(replicaset.replicas) do
-        if type(replica.uri) ~= 'string' then
-            error('replica uri must be string')
-        end
-        local uri = luri.parse(replica.uri)
-        if uri.login == nil or uri.password == nil then
-            error('URI must contain login and password')
-        end
-        if type(replica.name) ~= 'string' then
-            error('replica name must be string')
-        end
-        if replica.zone ~= nil and type(replica.zone) ~= 'number' and
-           type(replica.zone) ~= 'string' then
-            error('replica zone must be either string or number')
-        end
-        if replica.master ~= nil then
-            if type(replica.master) ~= 'boolean' then
-                error('"master" must be boolean')
+end
+
+local type_validate = {
+    ['string'] = function(v) return type(v) == 'string' end,
+    ['non-empty string'] = function(v)
+        return type(v) == 'string' and #v > 0
+    end,
+    ['boolean'] = function(v) return type(v) == 'boolean' end,
+    ['number'] = function(v) return type(v) == 'number' end,
+    ['non-negative number'] = function(v)
+        return type(v) == 'number' and v >= 0
+    end,
+    ['positive number'] = function(v)
+        return type(v) == 'number' and v > 0
+    end,
+    ['non-negative integer'] = function(v)
+        return type(v) == 'number' and v >= 0 and math.floor(v) == v
+    end,
+    ['positive integer'] = function(v)
+        return type(v) == 'number' and v > 0 and math.floor(v) == v
+    end,
+    ['table'] = function(v) return type(v) == 'table' end,
+}
+
+local function validate_config(config, template, check_arg)
+    for _, key_template in pairs(template) do
+        local key = key_template[1]
+        local template_value = key_template[2]
+        local value = config[key]
+        if not value then
+            if not template_value.is_optional then
+                error(string.format('%s must be specified',
+                                    template_value.name))
+            else
+                config[key] = template_value.default
             end
-            if replica.master then
-                if master_is_found then
-                    error('Only one master is allowed per replicaset')
+        else
+            if type(template_value.type) == 'string' then
+                if not type_validate[template_value.type](value) then
+                    error(string.format('%s must be %s', template_value.name,
+                                        template_value.type))
                 end
-                master_is_found = true
+            else
+                local is_valid_type_found = false
+                for _, t in pairs(template_value.type) do
+                    if type_validate[t](value) then
+                        is_valid_type_found = true
+                        break
+                    end
+                end
+                if not is_valid_type_found then
+                    local types = table.concat(template_value.type, ', ')
+                    error(string.format('%s must be one of the following '..
+                                        'types: %s', template_value.name,
+                                        types))
+                end
+            end
+            if template_value.check then
+                template_value.check(value, check_arg)
             end
         end
     end
 end
 
+local replica_template = {
+    {'uri', {type = 'non-empty string', name = 'URI', check = check_uri}},
+    {'name', {type = 'string', name = "Name"}},
+    {'zone', {type = {'string', 'number'}, name = "Zone", is_optional = true}},
+    {'master', {
+        type = 'boolean', name = "Master", is_optional = true, default = false,
+        check = check_master
+    }},
+}
+
+local function check_replicas(replicas)
+    local ctx = {master = false}
+    for _, replica in pairs(replicas) do
+        validate_config(replica, replica_template, ctx)
+    end
+end
+
+local replicaset_template = {
+    {'replicas', {type = 'table', name = 'Replicas', check = check_replicas}},
+    {'weight', {
+        type = 'non-negative number', name = 'Weight', is_optional = true
+    }}
+}
+
 --
 -- Check weights map on correctness.
 --
 local function cfg_check_weights(weights)
-    if type(weights) ~= 'table' then
-        error('weights must be map of maps')
-    end
     for zone1, v in pairs(weights) do
         if type(zone1) ~= 'number' and type(zone1) ~= 'string' then
             -- Zone1 can be not number or string, if an user made
             -- this: weights = {[{1}] = ...}. In such a case
             -- {1} is the unaccassible key of a lua table, which
             -- is available only via pairs.
-            error('zone identifier must be either string or number')
+            error('Zone identifier must be either string or number')
         end
         if type(v) ~= 'table' then
-            error('zone must be map of relative weights of other zones')
+            error('Zone must be map of relative weights of other zones')
         end
         for zone2, weight in pairs(v) do
             if type(zone2) ~= 'number' and type(zone2) ~= 'string' then
-                error('zone identifier must be either string or number')
+                error('Zone identifier must be either string or number')
             end
             if type(weight) ~= 'number' or weight < 0 then
-                error('weight must be either nil or non-negative number')
+                error('Zone weight must be either nil or non-negative number')
             end
             if zone2 == zone1 and weight ~= 0 then
-                error('weight of zone self must be either nil or 0')
+                error('Weight of own zone must be either nil or 0')
             end
         end
     end
 end
 
---
--- Check sharding config on correctness. Check types, name and uri
--- uniqueness, master count (in each replicaset must by <= 1).
---
-local function cfg_check(shard_cfg)
-    if type(shard_cfg) ~= 'table' then
-        error('Сonfig must be map of options')
-    end
-    if type(shard_cfg.sharding) ~= 'table' then
-        error('Sharding config must be array of replicasets')
-    end
-    if shard_cfg.weights ~= nil then
-        cfg_check_weights(shard_cfg.weights)
-    end
-    if shard_cfg.shard_index ~= nil and
-       (type(shard_cfg.shard_index) ~= 'string' or
-        #shard_cfg.shard_index == 0) and
-       (type(shard_cfg.shard_index) ~= 'number' or shard_cfg.shard_index < 0 or
-        math.floor(shard_cfg.shard_index) ~= shard_cfg.shard_index) then
-        error('Shard index must be non-empty string to specify index by '..
-              'name, or unsigned integer to specify index by identifier')
-    end
-    if shard_cfg.zone ~= nil and type(shard_cfg.zone) ~= 'number' and
-       type(shard_cfg.zone) ~= 'string' then
-        error('Config zone must be either number or string')
-    end
-    if shard_cfg.bucket_count ~= nil and
-       (type(shard_cfg.bucket_count) ~= 'number' or
-        shard_cfg.bucket_count <= 0 or
-        math.floor(shard_cfg.bucket_count) ~= shard_cfg.bucket_count) then
-        error('Bucket count must be positive integer')
-    end
-    if shard_cfg.rebalancer_disbalance_threshold ~= nil then
-        local t = shard_cfg.rebalancer_disbalance_threshold
-        if type(t) ~= 'number' or t < 0 then
-            error('Rebalancer disbalance threshold must be non-negative number')
-        end
-    end
-    if shard_cfg.rebalancer_max_receiving ~= nil then
-        local t = shard_cfg.rebalancer_max_receiving
-        if type(t) ~= 'number' or t <= 0 or math.floor(t) ~= t then
-            error('Rebalancer max receiving bucket count must be '..
-                  'positive integer')
-        end
-    end
-    if shard_cfg.collect_bucket_garbage_interval ~= nil then
-        local t = shard_cfg.collect_bucket_garbage_interval
-        if type(t) ~= 'number' or t <= 0 then
-            error('Garbage collect interval must be positive number')
-        end
-    end
-    if shard_cfg.collect_lua_garbage ~= nil and
-       type(shard_cfg.collect_lua_garbage) ~= 'boolean' then
-        error('Collect Lua garbage must be either true or false')
-    end
+local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
-    for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
+    for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
         end
         uuids[replicaset_uuid] = true
-        cfg_check_replicaset(replicaset)
+        if type(replicaset) ~= 'table' then
+            error('Replicaset must be a table')
+        end
+        validate_config(replicaset, replicaset_template)
         for replica_uuid, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
                 error(string.format('Duplicate uri %s', replica.uri))
@@ -155,10 +161,62 @@ local function cfg_check(shard_cfg)
     end
 end
 
+local cfg_template = {
+    {'sharding', {type = 'table', name = 'Sharding', check = check_sharding}},
+    {'weights', {
+        type = 'table', name = 'Weight matrix', is_optional = true,
+        check = cfg_check_weights
+    }},
+    {'shard_index', {
+        type = {'non-empty string', 'non-negative integer'},
+        name = 'Shard index', is_optional = true, default = 'bucket_id',
+    }},
+    {'zone', {
+        type = {'string', 'number'}, name = 'Zone identifier',
+        is_optional = true
+    }},
+    {'bucket_count', {
+        type = 'positive integer', name = 'Bucket count', is_optional = true,
+        default = consts.DEFAULT_BUCKET_COUNT
+    }},
+    {'rebalancer_disbalance_threshold', {
+        type = 'non-negative number', name = 'Rebalancer disbalance threshold',
+        is_optional = true,
+        default = consts.DEFAULT_REBALANCER_DISBALANCE_THRESHOLD
+    }},
+    {'rebalancer_max_receiving', {
+        type = 'positive integer',
+        name = 'Rebalancer max receiving bucket count', is_optional = true,
+        default = consts.DEFAULT_REBALANCER_MAX_RECEIVING
+    }},
+    {'collect_bucket_garbage_interval', {
+        type = 'positive number', name = 'Garbage bucket collect interval',
+        is_optional = true,
+        default = consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
+    }},
+    {'collect_lua_garbage', {
+        type = 'boolean', name = 'Garbage Lua collect necessity',
+        is_optional = true, default = false
+    }}
+}
+
+--
+-- Check sharding config on correctness. Check types, name and uri
+-- uniqueness, master count (in each replicaset must by <= 1).
+--
+local function cfg_check(shard_cfg)
+    if type(shard_cfg) ~= 'table' then
+        error('Сonfig must be map of options')
+    end
+    shard_cfg = table.deepcopy(shard_cfg)
+    validate_config(shard_cfg, cfg_template)
+    return shard_cfg
+end
+
 --
 -- Nullify non-box options.
 --
-local function prepare_for_box_cfg(cfg)
+local function remove_non_box_options(cfg)
     cfg.sharding = nil
     cfg.weights = nil
     cfg.zone = nil
@@ -172,5 +230,5 @@ end
 
 return {
     check = cfg_check,
-    prepare_for_box_cfg = prepare_for_box_cfg,
+    remove_non_box_options = remove_non_box_options,
 }

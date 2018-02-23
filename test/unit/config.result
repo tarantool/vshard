@@ -24,7 +24,7 @@ check(100)
 -- Sharding is not a table.
 check({sharding = 100})
 ---
-- Sharding config must be array of replicasets
+- Sharding must be table
 ...
 -- Replicaset is not table.
 check({sharding = {100}})
@@ -43,14 +43,14 @@ cfg = {sharding = {['replicaset_uuid'] = replicaset}}
 -- URI is not string.
 check(cfg)
 ---
-- replica uri must be string
+- URI must be specified
 ...
 replica.uri = 100
 ---
 ...
 check(cfg)
 ---
-- replica uri must be string
+- URI must be non-empty string
 ...
 replica.uri = 'uri:uri@uri'
 ---
@@ -58,14 +58,14 @@ replica.uri = 'uri:uri@uri'
 -- Name is not string.
 check(cfg)
 ---
-- replica name must be string
+- Name must be specified
 ...
 replica.name = 100
 ---
 ...
 check(cfg)
 ---
-- replica name must be string
+- Name must be string
 ...
 replica.name = 'storage'
 ---
@@ -76,7 +76,7 @@ replica.master = 100
 ...
 check(cfg)
 ---
-- '"master" must be boolean'
+- Master must be boolean
 ...
 replica.master = true
 ---
@@ -155,31 +155,31 @@ replicaset.weight = '100'
 ...
 check(cfg)
 ---
-- Replicaset weight must be either nil or non-negative number
+- Weight must be non-negative number
 ...
 replicaset.weight = -100
 ---
 ...
 check(cfg)
 ---
-- Replicaset weight must be either nil or non-negative number
+- Weight must be non-negative number
 ...
 replicaset.weight = 0
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 replicaset.weight = 0.123
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 replicaset.weight = 100000
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 --
@@ -190,14 +190,14 @@ cfg.weights = 100
 ...
 check(cfg)
 ---
-- weights must be map of maps
+- Weight matrix must be table
 ...
 cfg.weights = {[{1}] = 200}
 ---
 ...
 check(cfg)
 ---
-- zone identifier must be either string or number
+- Zone identifier must be either string or number
 ...
 weights = {zone1 = 100}
 ---
@@ -207,28 +207,28 @@ cfg.weights = weights
 ...
 check(cfg)
 ---
-- zone must be map of relative weights of other zones
+- Zone must be map of relative weights of other zones
 ...
 weights.zone1 = {[{1}] = 100}
 ---
 ...
 check(cfg)
 ---
-- zone identifier must be either string or number
+- Zone identifier must be either string or number
 ...
 weights.zone1 = {zone2 = '100'}
 ---
 ...
 check(cfg)
 ---
-- weight must be either nil or non-negative number
+- Zone weight must be either nil or non-negative number
 ...
 weights.zone1 = {zone1 = 100}
 ---
 ...
 check(cfg)
 ---
-- weight of zone self must be either nil or 0
+- Weight of own zone must be either nil or 0
 ...
 weights[2] = {zone1 = 100}
 ---
@@ -236,7 +236,7 @@ weights[2] = {zone1 = 100}
 weights.zone1 = {[2] = 100}
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 --
@@ -273,7 +273,7 @@ check(cfg)
 cfg.bucket_count = 100
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 cfg.rebalancer_disbalance_threshold = -100
@@ -293,7 +293,7 @@ check(cfg)
 cfg.rebalancer_disbalance_threshold = 0.5
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 cfg.rebalancer_max_receiving = -100
@@ -327,7 +327,7 @@ check(cfg)
 cfg.rebalancer_max_receiving = 10
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 --
@@ -339,21 +339,21 @@ cfg.shard_index = -100
 ...
 check(cfg)
 ---
-- Shard index must be non-empty string to specify index by name, or unsigned integer
-  to specify index by identifier
+- 'Shard index must be one of the following types: non-empty string, non-negative
+  integer'
 ...
 cfg.shard_index = 0.1
 ---
 ...
 check(cfg)
 ---
-- Shard index must be non-empty string to specify index by name, or unsigned integer
-  to specify index by identifier
+- 'Shard index must be one of the following types: non-empty string, non-negative
+  integer'
 ...
 cfg.shard_index = 0
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 cfg.shard_index = ''
@@ -361,13 +361,13 @@ cfg.shard_index = ''
 ...
 check(cfg)
 ---
-- Shard index must be non-empty string to specify index by name, or unsigned integer
-  to specify index by identifier
+- 'Shard index must be one of the following types: non-empty string, non-negative
+  integer'
 ...
 cfg.shard_index = 'vbucket'
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 --
@@ -378,26 +378,26 @@ cfg.collect_bucket_garbage_interval = 'str'
 ...
 check(cfg)
 ---
-- Garbage collect interval must be positive number
+- Garbage bucket collect interval must be positive number
 ...
 cfg.collect_bucket_garbage_interval = 0
 ---
 ...
 check(cfg)
 ---
-- Garbage collect interval must be positive number
+- Garbage bucket collect interval must be positive number
 ...
 cfg.collect_bucket_garbage_interval = -1
 ---
 ...
 check(cfg)
 ---
-- Garbage collect interval must be positive number
+- Garbage bucket collect interval must be positive number
 ...
 cfg.collect_bucket_garbage_interval = 100.5
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 cfg.collect_lua_garbage = 100
@@ -405,17 +405,17 @@ cfg.collect_lua_garbage = 100
 ...
 check(cfg)
 ---
-- Collect Lua garbage must be either true or false
+- Garbage Lua collect necessity must be boolean
 ...
 cfg.collect_lua_garbage = true
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...
 cfg.collect_lua_garbage = false
 ---
 ...
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 ---
 ...

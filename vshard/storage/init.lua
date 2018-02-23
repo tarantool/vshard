@@ -1279,11 +1279,10 @@ end
 -- Configuration
 --------------------------------------------------------------------------------
 local function storage_cfg(cfg, this_replica_uuid)
-    cfg = table.deepcopy(cfg)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
-    lcfg.check(cfg)
+    cfg = lcfg.check(cfg)
     if cfg.weights or cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
@@ -1343,18 +1342,13 @@ local function storage_cfg(cfg, this_replica_uuid)
     end
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
-    M.total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
-    M.rebalancer_disbalance_threshold =
-        cfg.rebalancer_disbalance_threshold or
-        consts.DEFAULT_REBALANCER_DISBALANCE_THRESHOLD
-    M.rebalancer_max_receiving = cfg.rebalancer_max_receiving or
-                                    consts.DEFAULT_REBALANCER_MAX_RECEIVING
-    M.shard_index = cfg.shard_index or 'bucket_id'
-    M.collect_bucket_garbage_interval =
-        cfg.collect_bucket_garbage_interval or
-        consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
+    M.total_bucket_count = cfg.bucket_count
+    M.rebalancer_disbalance_threshold = cfg.rebalancer_disbalance_threshold
+    M.rebalancer_max_receiving = cfg.rebalancer_max_receiving
+    M.shard_index = cfg.shard_index
+    M.collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
     M.collect_lua_garbage = cfg.collect_lua_garbage
-    lcfg.prepare_for_box_cfg(cfg)
+    lcfg.remove_non_box_options(cfg)
 
     box.cfg(cfg)
     log.info("Box has been configured")

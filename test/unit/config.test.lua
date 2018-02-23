@@ -75,11 +75,11 @@ check(cfg)
 replicaset.weight = -100
 check(cfg)
 replicaset.weight = 0
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 replicaset.weight = 0.123
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 replicaset.weight = 100000
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 --
 -- gh-12: zones, zone weight and failover by weight.
@@ -99,7 +99,7 @@ weights.zone1 = {zone1 = 100}
 check(cfg)
 weights[2] = {zone1 = 100}
 weights.zone1 = {[2] = 100}
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 --
 -- gh-62: allow to specify bucket_count, rebalancer settings.
@@ -113,14 +113,14 @@ check(cfg)
 cfg.bucket_count = 0
 check(cfg)
 cfg.bucket_count = 100
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 cfg.rebalancer_disbalance_threshold = -100
 check(cfg)
 cfg.rebalancer_disbalance_threshold = '100'
 check(cfg)
 cfg.rebalancer_disbalance_threshold = 0.5
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 cfg.rebalancer_max_receiving = -100
 check(cfg)
@@ -131,7 +131,7 @@ check(cfg)
 cfg.rebalancer_max_receiving = 0
 check(cfg)
 cfg.rebalancer_max_receiving = 10
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 --
 -- gh-74: allow to specify name or id of an index on bucket
@@ -142,11 +142,11 @@ check(cfg)
 cfg.shard_index = 0.1
 check(cfg)
 cfg.shard_index = 0
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 cfg.shard_index = ''
 check(cfg)
 cfg.shard_index = 'vbucket'
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 --
 -- gh-77: garbage collection options.
@@ -158,11 +158,11 @@ check(cfg)
 cfg.collect_bucket_garbage_interval = -1
 check(cfg)
 cfg.collect_bucket_garbage_interval = 100.5
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 
 cfg.collect_lua_garbage = 100
 check(cfg)
 cfg.collect_lua_garbage = true
-lcfg.check(cfg)
+_ = lcfg.check(cfg)
 cfg.collect_lua_garbage = false
-lcfg.check(cfg)
+_ = lcfg.check(cfg)

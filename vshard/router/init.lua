@@ -484,8 +484,7 @@ end
 --------------------------------------------------------------------------------
 
 local function router_cfg(cfg)
-    cfg = table.deepcopy(cfg)
-    lcfg.check(cfg)
+    cfg = lcfg.check(cfg)
     local old_replicasets = M.replicasets
     if not old_replicasets then
         log.info('Starting router configuration')
@@ -495,9 +494,9 @@ local function router_cfg(cfg)
     local new_replicasets = lreplicaset.buildall(cfg)
     -- TODO: update existing route map in-place
     M.route_map = {}
-    M.total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
+    M.total_bucket_count = cfg.bucket_count
     M.collect_lua_garbage = cfg.collect_lua_garbage
-    lcfg.prepare_for_box_cfg(cfg)
+    lcfg.remove_non_box_options(cfg)
     -- Force net.box connection on cfg()
     for _, replicaset in pairs(new_replicasets) do
         replicaset:connect()
