@@ -124,6 +124,16 @@ local function cfg_check(shard_cfg)
                   'positive integer')
         end
     end
+    if shard_cfg.garbage_collect_interval ~= nil then
+        local t = shard_cfg.garbage_collect_interval
+        if type(t) ~= 'number' or t <= 0 then
+            error('Garbage collect interval must be positive number')
+        end
+    end
+    if shard_cfg.collect_lua_garbage ~= nil and
+       type(shard_cfg.collect_lua_garbage) ~= 'boolean' then
+        error('Collect Lua garbage must be either true or false')
+    end
     local uuids = {}
     local uris = {}
     for replicaset_uuid, replicaset in pairs(shard_cfg.sharding) do
@@ -156,6 +166,8 @@ local function prepare_for_box_cfg(cfg)
     cfg.rebalancer_disbalance_threshold = nil
     cfg.rebalancer_max_receiving = nil
     cfg.shard_index = nil
+    cfg.garbage_collect_interval = nil
+    cfg.collect_lua_garbage = nil
 end
 
 return {

@@ -13,6 +13,7 @@ end;
 test_run:cmd("setopt delimiter ''");
 
 vshard.storage.internal.shard_index = 'bucket_id'
+vshard.storage.internal.garbage_collect_interval = vshard.consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
 
 --
 -- Find nothing if no bucket_id anywhere, or there is no index

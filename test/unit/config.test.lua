@@ -147,3 +147,22 @@ cfg.shard_index = ''
 check(cfg)
 cfg.shard_index = 'vbucket'
 lcfg.check(cfg)
+
+--
+-- gh-77: garbage collection options.
+--
+cfg.garbage_collect_interval = 'str'
+check(cfg)
+cfg.garbage_collect_interval = 0
+check(cfg)
+cfg.garbage_collect_interval = -1
+check(cfg)
+cfg.garbage_collect_interval = 100.5
+lcfg.check(cfg)
+
+cfg.collect_lua_garbage = 100
+check(cfg)
+cfg.collect_lua_garbage = true
+lcfg.check(cfg)
+cfg.collect_lua_garbage = false
+lcfg.check(cfg)

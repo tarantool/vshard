@@ -41,6 +41,28 @@ test_run:switch('storage_1_b')
 while box.space._bucket:get{3} ~= nil do fiber.sleep(0.1) end
 customer:select{}
 
+--
+-- gh-77: garbage collection options and Lua garbage collection.
+--
+test_run:switch('storage_1_a')
+fiber = require('fiber')
+log = require('log')
+cfg.collect_lua_garbage = true
+vshard.storage.cfg(cfg, names.storage_1_a)
+-- Create a weak reference to a able {b = 100} - it must be
+-- deleted on the next GC.
+a = setmetatable({}, {__mode = 'v'})
+a.k = {b = 100}
+iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
+-- Wait until Lua GC deletes a.k.
+for i = 1, iters + 1 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+a.k
+cfg.collect_lua_garbage = false
+vshard.storage.cfg(cfg, names.storage_1_a)
+a.k = {b = 100}
+for i = 1, iters + 1 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+a.k ~= nil
+
 test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

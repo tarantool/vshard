@@ -24,6 +24,9 @@ if not M then
         discovery_fiber = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
+        -- If true, then discovery fiber starts to call
+        -- collectgarbage() periodically.
+        collect_lua_garbage = nil,
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
@@ -123,6 +126,8 @@ end
 local function discovery_f(module_version)
     lfiber.name('discovery_fiber')
     M.discovery_fiber = lfiber.self()
+    local iterations_until_lua_gc =
+        consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
     while module_version == M.module_version do
         for _, replicaset in pairs(M.replicasets) do
             local active_buckets, err =
@@ -140,6 +145,12 @@ local function discovery_f(module_version)
                 for _, bucket_id in pairs(active_buckets) do
                     M.route_map[bucket_id] = replicaset
                 end
+            end
+            iterations_until_lua_gc = iterations_until_lua_gc - 1
+            if M.collect_lua_garbage and iterations_until_lua_gc == 0 then
+                iterations_until_lua_gc =
+                    consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
+                collectgarbage()
             end
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
         end
@@ -485,6 +496,7 @@ local function router_cfg(cfg)
     -- TODO: update existing route map in-place
     M.route_map = {}
     M.total_bucket_count = cfg.bucket_count or consts.DEFAULT_BUCKET_COUNT
+    M.collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.prepare_for_box_cfg(cfg)
     -- Force net.box connection on cfg()
     for _, replicaset in pairs(new_replicasets) do

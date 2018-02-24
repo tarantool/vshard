@@ -48,12 +48,17 @@ if not M then
         shard_index = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
+        -- If true, then bucket garbage collection fiber starts to
+        -- call collectgarbage() periodically.
+        collect_lua_garbage = nil,
         -- Maximal allowed percent deviation of bucket count on a
         -- replicaset from ethalon bucket count.
         rebalancer_disbalance_threshold = 0,
         -- Maximal bucket count that can be received by a single
         -- replicaset simultaneously.
         rebalancer_max_receiving = 0,
+        -- Do buckets garbage collection once per this time.
+        garbage_collect_interval = nil,
         errinj = {
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
@@ -793,7 +798,7 @@ end
 
 --
 -- Garbage collector. Works on masters. The garbage collector
--- wakes up once per GARBAGE_COLLECT_INTERVAL seconds.
+-- wakes up once per specified time.
 -- After wakeup it checks follows the plan:
 -- 1) Check if _bucket has changed. If not, then sleep again;
 -- 2) Scan user spaces for not existing, sent and garbage buckets,
@@ -837,6 +842,8 @@ function collect_garbage_f(module_version)
     -- buckets_for_redirect is deleted, it gets empty_sent_buckets
     -- for next deletion.
     local empty_sent_buckets = {}
+    local iterations_until_lua_gc =
+        consts.COLLECT_LUA_GARBAGE_INTERVAL / M.garbage_collect_interval
 
     while M.module_version == module_version do
         -- Check if no changes in buckets configuration.
@@ -847,7 +854,6 @@ function collect_garbage_f(module_version)
             end
             if not status then
                 log.error('Error during garbage collection step: %s', err)
-                lfiber.sleep(consts.GARBAGE_COLLECT_INTERVAL)
                 goto continue
             end
             status, empty_sent_buckets = pcall(collect_garbage_update_bucket)
@@ -858,12 +864,11 @@ function collect_garbage_f(module_version)
                 log.error('Error during empty buckets processing: %s',
                           empty_sent_buckets)
                 control.bucket_generation = control.bucket_generation + 1
-                lfiber.sleep(consts.GARBAGE_COLLECT_INTERVAL)
                 goto continue
             end
         end
-        local duration = lfiber.time() - buckets_for_redirect_ts
-        if duration >= consts.BUCKET_SENT_GARBAGE_DELAY then
+        if lfiber.time() - buckets_for_redirect_ts >=
+           consts.BUCKET_SENT_GARBAGE_DELAY then
             local status, err = pcall(collect_garbage_drop_redirects,
                                       buckets_for_redirect)
             if M.module_version ~= module_version then
@@ -878,8 +883,23 @@ function collect_garbage_f(module_version)
                 buckets_for_redirect_ts = lfiber.time()
             end
         end
-        lfiber.sleep(consts.GARBAGE_COLLECT_INTERVAL)
 ::continue::
+        iterations_until_lua_gc = iterations_until_lua_gc - 1
+        if iterations_until_lua_gc == 0 and M.collect_lua_garbage then
+            iterations_until_lua_gc =
+                consts.COLLECT_LUA_GARBAGE_INTERVAL / M.garbage_collect_interval
+            collectgarbage()
+        end
+        lfiber.sleep(M.garbage_collect_interval)
+    end
+end
+
+--
+-- Immediately wakeup bucket garbage collector.
+--
+local function garbage_collector_wakeup()
+    if M.garbage_collect_fiber then
+        M.garbage_collect_fiber:wakeup()
     end
 end
 
@@ -1323,6 +1343,9 @@ local function storage_cfg(cfg, this_replica_uuid)
     M.rebalancer_max_receiving = cfg.rebalancer_max_receiving or
                                     consts.DEFAULT_REBALANCER_MAX_RECEIVING
     M.shard_index = cfg.shard_index or 'bucket_id'
+    M.garbage_collect_interval = cfg.garbage_collect_interval or
+                                 consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
+    M.collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.prepare_for_box_cfg(cfg)
 
     box.cfg(cfg)
@@ -1356,6 +1379,7 @@ local function storage_cfg(cfg, this_replica_uuid)
         M.rebalancer_fiber:cancel()
         M.rebalancer_fiber = nil
     end
+
     if old_replicasets then
         lreplicaset.destroy(old_replicasets)
     end
@@ -1586,6 +1610,7 @@ return {
     bucket_send = bucket_send;
     bucket_stat = bucket_stat;
     bucket_delete_garbage = bucket_delete_garbage;
+    garbage_collector_wakeup = garbage_collector_wakeup;
     rebalancer_wakeup = rebalancer_wakeup;
     rebalancer_apply_routes = rebalancer_apply_routes;
     rebalancer_disable = rebalancer_disable;
