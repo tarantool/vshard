@@ -1,5 +1,6 @@
 -- vshard.util
-log = require('log')
+local log = require('log')
+local fiber = require('fiber')
 
 --
 -- Extract parts of a tuple.
@@ -39,8 +40,10 @@ local function reloadable_fiber_f(M, func_name, worker_name)
         local ok, err = pcall(M[func_name], M.module_version)
         if not ok then
             log.error('%s has been failed: %s', worker_name, err)
+            fiber.yield()
         else
             log.info('%s has been reloaded', worker_name)
+            fiber.yield()
         end
     end
 end
