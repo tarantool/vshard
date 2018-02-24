@@ -151,13 +151,13 @@ lcfg.check(cfg)
 --
 -- gh-77: garbage collection options.
 --
-cfg.garbage_collect_interval = 'str'
+cfg.collect_bucket_garbage_interval = 'str'
 check(cfg)
-cfg.garbage_collect_interval = 0
+cfg.collect_bucket_garbage_interval = 0
 check(cfg)
-cfg.garbage_collect_interval = -1
+cfg.collect_bucket_garbage_interval = -1
 check(cfg)
-cfg.garbage_collect_interval = 100.5
+cfg.collect_bucket_garbage_interval = 100.5
 lcfg.check(cfg)
 
 cfg.collect_lua_garbage = 100

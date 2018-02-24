@@ -124,8 +124,8 @@ local function cfg_check(shard_cfg)
                   'positive integer')
         end
     end
-    if shard_cfg.garbage_collect_interval ~= nil then
-        local t = shard_cfg.garbage_collect_interval
+    if shard_cfg.collect_bucket_garbage_interval ~= nil then
+        local t = shard_cfg.collect_bucket_garbage_interval
         if type(t) ~= 'number' or t <= 0 then
             error('Garbage collect interval must be positive number')
         end
@@ -166,7 +166,7 @@ local function prepare_for_box_cfg(cfg)
     cfg.rebalancer_disbalance_threshold = nil
     cfg.rebalancer_max_receiving = nil
     cfg.shard_index = nil
-    cfg.garbage_collect_interval = nil
+    cfg.collect_bucket_garbage_interval = nil
     cfg.collect_lua_garbage = nil
 end
 

@@ -137,7 +137,7 @@ a = setmetatable({}, {__mode = 'v'})
 a.k = {b = 100}
 ---
 ...
-iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
+iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
 ---
 ...
 -- Wait until Lua GC deletes a.k.

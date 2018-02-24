@@ -15,28 +15,12 @@ if not M then
     -- The module is loaded for the first time.
     --
     M = {
+        ---------------- Common module attributes ----------------
         --
         -- All known replicasets used for bucket re-balancing.
         -- See format in replicaset.lua.
         --
         replicasets = nil,
-        -- Fiber to remove garbage buckets data.
-        garbage_collect_fiber = nil,
-        -- Bucket identifiers which are not active and are not being
-        -- sent - their status is unknown. Their state must be checked
-        -- periodically in recovery fiber.
-        buckets_to_recovery = {},
-        buckets_to_recovery_count = 0,
-        recovery_fiber = nil,
-        -- Fiber to rebalance a cluster.
-        rebalancer_fiber = nil,
-        -- Fiber which applies routes one by one. Its presense and
-        -- active status means that the rebalancing is in progress
-        -- now on the current node.
-        rebalancer_applier_fiber = nil,
-        -- Internal flag to activate and deactivate rebalancer. Mostly
-        -- for tests.
-        is_rebalancer_active = true,
         -- Triggers on master switch event. They are called right
         -- before the event occurs.
         _on_master_enable = trigger.new('_on_master_enable'),
@@ -48,17 +32,6 @@ if not M then
         shard_index = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
-        -- If true, then bucket garbage collection fiber starts to
-        -- call collectgarbage() periodically.
-        collect_lua_garbage = nil,
-        -- Maximal allowed percent deviation of bucket count on a
-        -- replicaset from ethalon bucket count.
-        rebalancer_disbalance_threshold = 0,
-        -- Maximal bucket count that can be received by a single
-        -- replicaset simultaneously.
-        rebalancer_max_receiving = 0,
-        -- Do buckets garbage collection once per this time.
-        garbage_collect_interval = nil,
         errinj = {
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
@@ -66,6 +39,40 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
+
+        ------------------- Garbage collection -------------------
+        -- Fiber to remove garbage buckets data.
+        collect_bucket_garbage_fiber = nil,
+        -- Do buckets garbage collection once per this time.
+        collect_bucket_garbage_interval = nil,
+        -- If true, then bucket garbage collection fiber starts to
+        -- call collectgarbage() periodically.
+        collect_lua_garbage = nil,
+
+        -------------------- Bucket recovery ---------------------
+        -- Bucket identifiers which are not active and are not being
+        -- sent - their status is unknown. Their state must be checked
+        -- periodically in recovery fiber.
+        buckets_to_recovery = {},
+        buckets_to_recovery_count = 0,
+        recovery_fiber = nil,
+
+        ----------------------- Rebalancer -----------------------
+        -- Fiber to rebalance a cluster.
+        rebalancer_fiber = nil,
+        -- Fiber which applies routes one by one. Its presense and
+        -- active status means that the rebalancing is in progress
+        -- now on the current node.
+        rebalancer_applier_fiber = nil,
+        -- Internal flag to activate and deactivate rebalancer. Mostly
+        -- for tests.
+        is_rebalancer_active = true,
+        -- Maximal allowed percent deviation of bucket count on a
+        -- replicaset from ethalon bucket count.
+        rebalancer_disbalance_threshold = 0,
+        -- Maximal bucket count that can be received by a single
+        -- replicaset simultaneously.
+        rebalancer_max_receiving = 0,
     }
 end
 
@@ -541,9 +548,9 @@ local function local_on_master_disable()
     box.cfg({read_only = true})
     log.verbose("Resigning from the replicaset master role...")
     -- Stop garbage collecting
-    if M.garbage_collect_fiber ~= nil then
-        M.garbage_collect_fiber:cancel()
-        M.garbage_collect_fiber = nil
+    if M.collect_bucket_garbage_fiber ~= nil then
+        M.collect_bucket_garbage_fiber:cancel()
+        M.collect_bucket_garbage_fiber = nil
         log.info("GC stopped")
     end
     if M.recovery_fiber ~= nil then
@@ -568,7 +575,7 @@ local function local_on_master_enable()
     log.verbose("Taking on replicaset master role...")
     recovery_garbage_receiving_buckets()
     -- Start background process to collect garbage.
-    M.garbage_collect_fiber =
+    M.collect_bucket_garbage_fiber =
         lfiber.create(util.reloadable_fiber_f, M, 'collect_garbage_f',
                       'Garbage collector')
     log.info("GC is started")
@@ -843,7 +850,7 @@ function collect_garbage_f(module_version)
     -- for next deletion.
     local empty_sent_buckets = {}
     local iterations_until_lua_gc =
-        consts.COLLECT_LUA_GARBAGE_INTERVAL / M.garbage_collect_interval
+        consts.COLLECT_LUA_GARBAGE_INTERVAL / M.collect_bucket_garbage_interval
 
     while M.module_version == module_version do
         -- Check if no changes in buckets configuration.
@@ -886,11 +893,11 @@ function collect_garbage_f(module_version)
 ::continue::
         iterations_until_lua_gc = iterations_until_lua_gc - 1
         if iterations_until_lua_gc == 0 and M.collect_lua_garbage then
-            iterations_until_lua_gc =
-                consts.COLLECT_LUA_GARBAGE_INTERVAL / M.garbage_collect_interval
+            iterations_until_lua_gc = consts.COLLECT_LUA_GARBAGE_INTERVAL /
+                                      M.collect_bucket_garbage_interval
             collectgarbage()
         end
-        lfiber.sleep(M.garbage_collect_interval)
+        lfiber.sleep(M.collect_bucket_garbage_interval)
     end
 end
 
@@ -898,8 +905,8 @@ end
 -- Immediately wakeup bucket garbage collector.
 --
 local function garbage_collector_wakeup()
-    if M.garbage_collect_fiber then
-        M.garbage_collect_fiber:wakeup()
+    if M.collect_bucket_garbage_fiber then
+        M.collect_bucket_garbage_fiber:wakeup()
     end
 end
 
@@ -1343,8 +1350,9 @@ local function storage_cfg(cfg, this_replica_uuid)
     M.rebalancer_max_receiving = cfg.rebalancer_max_receiving or
                                     consts.DEFAULT_REBALANCER_MAX_RECEIVING
     M.shard_index = cfg.shard_index or 'bucket_id'
-    M.garbage_collect_interval = cfg.garbage_collect_interval or
-                                 consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
+    M.collect_bucket_garbage_interval =
+        cfg.collect_bucket_garbage_interval or
+        consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
     M.collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.prepare_for_box_cfg(cfg)
 

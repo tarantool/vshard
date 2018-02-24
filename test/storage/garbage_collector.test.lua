@@ -53,7 +53,7 @@ vshard.storage.cfg(cfg, names.storage_1_a)
 -- deleted on the next GC.
 a = setmetatable({}, {__mode = 'v'})
 a.k = {b = 100}
-iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DEFAULT_GARBAGE_COLLECT_INTERVAL
+iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
 -- Wait until Lua GC deletes a.k.
 for i = 1, iters + 1 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
 a.k
