@@ -93,6 +93,54 @@ util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 - Local replica unknow uuid wasn't found in config
 ...
 --
+-- Ensure that in a case of error storage internals are not
+-- changed.
+--
+not vshard.storage.internal.collect_lua_garbage
+---
+- true
+...
+cfg.collect_lua_garbage = true
+---
+...
+cfg.rebalancer_max_receiving = 1000
+---
+...
+cfg.collect_bucket_garbage_interval = 100
+---
+...
+cfg.invalid_option = 'kek'
+---
+...
+vshard.storage.cfg(cfg, names.storage_1_a)
+---
+- error: 'Incorrect value for option ''invalid_option'': unexpected option'
+...
+not vshard.storage.internal.collect_lua_garbage
+---
+- true
+...
+vshard.storage.internal.rebalancer_max_receiving ~= 1000
+---
+- true
+...
+vshard.storage.internal.collect_bucket_garbage_interval ~= 100
+---
+- true
+...
+cfg.collect_lua_garbage = nil
+---
+...
+cfg.rebalancer_max_receiving = nil
+---
+...
+cfg.collect_bucket_garbage_interval = nil
+---
+...
+cfg.invalid_option = nil
+---
+...
+--
 -- gh-59: provide trigger on master enable/disable.
 --
 disable_count = 0
@@ -183,6 +231,34 @@ vshard.storage.cfg(cfg, names['storage_2_b'])
 test_run:switch('router_1')
 ---
 - true
+...
+--
+-- Ensure that in a case of error router internals are not
+-- changed.
+--
+not vshard.router.internal.collect_lua_garbage
+---
+- true
+...
+cfg.collect_lua_garbage = true
+---
+...
+cfg.invalid_option = 'kek'
+---
+...
+vshard.router.cfg(cfg)
+---
+- error: 'Incorrect value for option ''invalid_option'': unexpected option'
+...
+not vshard.router.internal.collect_lua_garbage
+---
+- true
+...
+cfg.invalid_option = nil
+---
+...
+cfg.collect_lua_garbage = nil
+---
 ...
 vshard.router.cfg(cfg)
 ---

@@ -37,6 +37,24 @@ util = require('util')
 util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 
 --
+-- Ensure that in a case of error storage internals are not
+-- changed.
+--
+not vshard.storage.internal.collect_lua_garbage
+cfg.collect_lua_garbage = true
+cfg.rebalancer_max_receiving = 1000
+cfg.collect_bucket_garbage_interval = 100
+cfg.invalid_option = 'kek'
+vshard.storage.cfg(cfg, names.storage_1_a)
+not vshard.storage.internal.collect_lua_garbage
+vshard.storage.internal.rebalancer_max_receiving ~= 1000
+vshard.storage.internal.collect_bucket_garbage_interval ~= 100
+cfg.collect_lua_garbage = nil
+cfg.rebalancer_max_receiving = nil
+cfg.collect_bucket_garbage_interval = nil
+cfg.invalid_option = nil
+
+--
 -- gh-59: provide trigger on master enable/disable.
 --
 disable_count = 0
@@ -73,6 +91,17 @@ test_run:switch('storage_2_b')
 vshard.storage.cfg(cfg, names['storage_2_b'])
 
 test_run:switch('router_1')
+--
+-- Ensure that in a case of error router internals are not
+-- changed.
+--
+not vshard.router.internal.collect_lua_garbage
+cfg.collect_lua_garbage = true
+cfg.invalid_option = 'kek'
+vshard.router.cfg(cfg)
+not vshard.router.internal.collect_lua_garbage
+cfg.invalid_option = nil
+cfg.collect_lua_garbage = nil
 vshard.router.cfg(cfg)
 
 test_run:cmd('switch default')

@@ -1342,21 +1342,28 @@ local function storage_cfg(cfg, this_replica_uuid)
     end
     cfg.instance_uuid = this_replica.uuid
     cfg.replicaset_uuid = this_replicaset.uuid
-    M.total_bucket_count = cfg.bucket_count
-    M.rebalancer_disbalance_threshold = cfg.rebalancer_disbalance_threshold
-    M.rebalancer_max_receiving = cfg.rebalancer_max_receiving
-    M.shard_index = cfg.shard_index
-    M.collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
-    M.collect_lua_garbage = cfg.collect_lua_garbage
+    local total_bucket_count = cfg.bucket_count
+    local rebalancer_disbalance_threshold = cfg.rebalancer_disbalance_threshold
+    local rebalancer_max_receiving = cfg.rebalancer_max_receiving
+    local shard_index = cfg.shard_index
+    local collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
+    local collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.remove_non_box_options(cfg)
 
     box.cfg(cfg)
     log.info("Box has been configured")
+    local uri = luri.parse(this_replica.uri)
+    box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+
     M.replicasets = new_replicasets
     M.this_replicaset = this_replicaset
     M.this_replica = this_replica
-    local uri = luri.parse(this_replica.uri)
-    box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+    M.total_bucket_count = total_bucket_count
+    M.rebalancer_disbalance_threshold = rebalancer_disbalance_threshold
+    M.rebalancer_max_receiving = rebalancer_max_receiving
+    M.shard_index = shard_index
+    M.collect_bucket_garbage_interval = collect_bucket_garbage_interval
+    M.collect_lua_garbage = collect_lua_garbage
 
     if was_master and not is_master then
         local_on_master_disable()

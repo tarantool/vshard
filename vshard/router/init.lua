@@ -492,10 +492,8 @@ local function router_cfg(cfg)
         log.info('Starting router reconfiguration')
     end
     local new_replicasets = lreplicaset.buildall(cfg)
-    -- TODO: update existing route map in-place
-    M.route_map = {}
-    M.total_bucket_count = cfg.bucket_count
-    M.collect_lua_garbage = cfg.collect_lua_garbage
+    local total_bucket_count = cfg.bucket_count
+    local collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.remove_non_box_options(cfg)
     -- Force net.box connection on cfg()
     for _, replicaset in pairs(new_replicasets) do
@@ -509,6 +507,10 @@ local function router_cfg(cfg)
     end
     box.cfg(cfg)
     log.info("Box has been configured")
+    M.total_bucket_count = total_bucket_count
+    M.collect_lua_garbage = collect_lua_garbage
+    -- TODO: update existing route map in-place
+    M.route_map = {}
     M.replicasets = new_replicasets
     if M.failover_fiber == nil then
         log.info('Start failover fiber')
