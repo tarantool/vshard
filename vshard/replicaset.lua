@@ -7,7 +7,7 @@
 --             uri = string,
 --             name = string,
 --             uuid = string,
---             conn = <netbox>,
+--             conn = <netbox> + .replica + .replicaset,
 --             zone = number,
 --             next_by_priority = <replica object of the same type>,
 --             weight = number,
@@ -399,11 +399,35 @@ local function replicaset_tostring(replicaset)
 end
 
 --
+-- Rebind connections of old replicas to new ones.
+--
+local function replicaset_rebind_connections(replicaset)
+    for _, replica in pairs(replicaset.replicas) do
+        local old_replica = replica.old_replica
+        if old_replica then
+            local conn = old_replica.conn
+            replica.conn = conn
+            replica.down_ts = old_replica.down_ts
+            replica.net_timeout = old_replica.net_timeout
+            replica.net_sequential_ok = old_replica.net_sequential_ok
+            replica.net_sequential_fail = old_replica.net_sequential_fail
+            if conn then
+                conn.replica = replica
+                conn.replicaset = replicaset
+                old_replica.conn = nil
+            end
+            replica.old_replica = nil
+        end
+    end
+end
+
+--
 -- Meta-methods
 --
 local replicaset_mt = {
     __index = {
         connect = replicaset_connect;
+        rebind_connections = replicaset_rebind_connections;
         update_candidate = replicaset_update_candidate;
         down_replica_priority = replicaset_down_replica_priority;
         set_candidate_as_replica = replicaset_set_candidate_as_replica;
@@ -469,7 +493,7 @@ end
 --
 -- Update/build replicasets from configuration
 --
-local function buildall(sharding_cfg)
+local function buildall(sharding_cfg, old_replicasets)
     local new_replicasets = {}
     local weights = sharding_cfg.weights
     local zone = sharding_cfg.zone
@@ -481,6 +505,8 @@ local function buildall(sharding_cfg)
     end
     local curr_ts = fiber.time()
     for replicaset_uuid, replicaset in pairs(sharding_cfg.sharding) do
+        local old_replicaset = old_replicasets and
+                               old_replicasets[replicaset_uuid]
         local new_replicaset = setmetatable({
             replicas = {},
             uuid = replicaset_uuid,
@@ -489,11 +515,16 @@ local function buildall(sharding_cfg)
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
+            local old_replica = old_replicaset and
+                                old_replicaset.replicas[replica_uuid]
+            -- The old replica is saved in the new object to
+            -- rebind its connection at the end of a
+            -- router/storage reconfiguration.
             local new_replica = setmetatable({
                 uri = replica.uri, name = replica.name, uuid = replica_uuid,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
-                down_ts = curr_ts,
+                down_ts = curr_ts, old_replica = old_replica,
             }, replica_mt)
             new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then

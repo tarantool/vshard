@@ -36,6 +36,35 @@ rs1.replica == rs1.master
 rs2.replica == rs2.master
 
 --
+-- Part of gh-76: on reconfiguration do not recreate connections
+-- to replicas, that are kept in a new configuration.
+--
+old_replicasets = vshard.router.internal.replicasets
+old_connections = {}
+test_run:cmd("setopt delimiter ';'")
+for _, old_rs in pairs(old_replicasets) do
+    for uuid, old_replica in pairs(old_rs.replicas) do
+        old_connections[uuid] = old_replica.conn
+    end
+end;
+test_run:cmd("setopt delimiter ''");
+vshard.router.cfg(cfg)
+new_replicasets = vshard.router.internal.replicasets
+old_replicasets ~= new_replicasets
+rs1 = vshard.router.internal.replicasets[replicasets[1]]
+rs2 = vshard.router.internal.replicasets[replicasets[2]]
+while not rs1.replica or not rs2.replica do fiber.sleep(0.1) end
+vshard.router.discovery_wakeup()
+-- Check that netbox connections are the same.
+test_run:cmd("setopt delimiter ';'")
+for _, new_rs in pairs(new_replicasets) do
+    for uuid, new_replica in pairs(new_rs.replicas) do
+        assert(old_connections[uuid] == new_replica.conn)
+    end
+end;
+test_run:cmd("setopt delimiter ''");
+
+--
 -- bucket_id and bucket_count
 --
 

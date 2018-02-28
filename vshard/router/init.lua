@@ -491,16 +491,10 @@ local function router_cfg(cfg)
     else
         log.info('Starting router reconfiguration')
     end
-    local new_replicasets = lreplicaset.buildall(cfg)
+    local new_replicasets = lreplicaset.buildall(cfg, old_replicasets)
     local total_bucket_count = cfg.bucket_count
     local collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.remove_non_box_options(cfg)
-    -- Force net.box connection on cfg()
-    for _, replicaset in pairs(new_replicasets) do
-        replicaset:connect()
-        replicaset:update_candidate()
-    end
-    lreplicaset.wait_masters_connect(new_replicasets)
     log.info("Calling box.cfg()...")
     for k, v in pairs(cfg) do
         log.info({[k] = v})
@@ -512,6 +506,19 @@ local function router_cfg(cfg)
     -- TODO: update existing route map in-place
     M.route_map = {}
     M.replicasets = new_replicasets
+    -- Move connections from an old configuration to a new one.
+    -- It must be done with no yields to prevent usage both of not
+    -- fully moved old replicasets, and not fully built new ones.
+    for _, replicaset in pairs(new_replicasets) do
+        replicaset:rebind_connections()
+    end
+    -- Now the new replicasets are fully built. Can establish
+    -- connections and yield.
+    for _, replicaset in pairs(new_replicasets) do
+        replicaset:connect()
+        replicaset:update_candidate()
+    end
+    lreplicaset.wait_masters_connect(new_replicasets)
     if M.failover_fiber == nil then
         log.info('Start failover fiber')
         lfiber.create(util.reloadable_fiber_f, M, 'failover_f', 'Failover')

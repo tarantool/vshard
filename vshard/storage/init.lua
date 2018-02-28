@@ -1298,7 +1298,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg)
+    local new_replicasets = lreplicaset.buildall(cfg, old_replicasets)
     local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
@@ -1356,6 +1356,9 @@ local function storage_cfg(cfg, this_replica_uuid)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
 
     M.replicasets = new_replicasets
+    for _, replicaset in pairs(new_replicasets) do
+        replicaset:rebind_connections()
+    end
     M.this_replicaset = this_replicaset
     M.this_replica = this_replica
     M.total_bucket_count = total_bucket_count

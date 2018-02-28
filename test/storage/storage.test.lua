@@ -143,6 +143,35 @@ vshard.storage.buckets_info()
 _ = test_run:cmd("switch storage_1_a")
 vshard.storage.buckets_info()
 
+--
+-- Part of gh-76: check that netbox old connections are reused on
+-- reconfiguration.
+--
+old_connections = {}
+connection_count = 0
+old_replicasets = vshard.storage.internal.replicasets
+test_run:cmd("setopt delimiter ';'")
+for _, old_replicaset in pairs(old_replicasets) do
+	for uuid, old_replica in pairs(old_replicaset.replicas) do
+		old_connections[uuid] = old_replica.conn
+		if old_replica.conn then
+			connection_count = connection_count + 1
+		end
+	end
+end;
+test_run:cmd("setopt delimiter ''");
+connection_count > 0
+vshard.storage.cfg(cfg, names.storage_1_a)
+new_replicasets = vshard.storage.internal.replicasets
+new_replicasets ~= old_replicasets
+test_run:cmd("setopt delimiter ';'")
+for _, new_replicaset in pairs(new_replicasets) do
+	for uuid, new_replica in pairs(new_replicaset.replicas) do
+		assert(old_connections[uuid] == new_replica.conn)
+	end
+end;
+test_run:cmd("setopt delimiter ''");
+
 _ = test_run:cmd("switch default")
 
 test_run:drop_cluster(REPLICASET_2)
