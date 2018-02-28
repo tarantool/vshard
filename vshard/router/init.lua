@@ -66,7 +66,7 @@ local function bucket_discovery(bucket_id)
         return replicaset
     end
 
-    log.info("Discovering bucket %d", bucket_id)
+    log.verbose("Discovering bucket %d", bucket_id)
     local unreachable_uuid = nil
     local is_transfer_in_progress = false
     for _, replicaset in pairs(M.replicasets) do
