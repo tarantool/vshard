@@ -41,13 +41,16 @@ rs2.replica == rs2.master
 --
 old_replicasets = vshard.router.internal.replicasets
 old_connections = {}
+connection_count = 0
 test_run:cmd("setopt delimiter ';'")
 for _, old_rs in pairs(old_replicasets) do
     for uuid, old_replica in pairs(old_rs.replicas) do
         old_connections[uuid] = old_replica.conn
+        connection_count = connection_count + 1
     end
 end;
 test_run:cmd("setopt delimiter ''");
+connection_count == 4
 vshard.router.cfg(cfg)
 new_replicasets = vshard.router.internal.replicasets
 old_replicasets ~= new_replicasets
@@ -143,7 +146,7 @@ rs.master = nil
 vshard.router.route(1).master
 rs.master = master
 -- Test reconnect on bucker_route().
-rs:disconnect()
+master.conn:close()
 conn = vshard.router.route(1):connect()
 conn:wait_connected()
 conn.state

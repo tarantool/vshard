@@ -311,7 +311,10 @@ local function failover_ping_round()
             if not replica.conn:ping({timeout = 5}) then
                 log.info('Ping error from %s: perhaps a connection is down',
                          replica)
+                -- Connection hangs. Recreate it to be able to
+                -- fail over to a replica next by priority.
                 replica.conn:close()
+                replicaset:connect_replica(replica)
             end
         end
     end
@@ -515,7 +518,7 @@ local function router_cfg(cfg)
     -- Now the new replicasets are fully built. Can establish
     -- connections and yield.
     for _, replicaset in pairs(new_replicasets) do
-        replicaset:connect()
+        replicaset:connect_all()
         replicaset:update_candidate()
     end
     lreplicaset.wait_masters_connect(new_replicasets)

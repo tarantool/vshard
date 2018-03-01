@@ -113,13 +113,22 @@ end
 --
 -- Create net.box connection to master.
 --
-local function replicaset_connect(replicaset)
+local function replicaset_connect_master(replicaset)
     local master = replicaset.master
     if master == nil then
         return nil, lerror.vshard(lerror.code.MASTER_IS_MISSING,
                                   {replicaset_uuid = replicaset.uuid})
     end
     return replicaset_connect_to_replica(replicaset, master)
+end
+
+--
+-- Create net.box connections to all replicas and master.
+--
+local function replicaset_connect_all(replicaset)
+    for _, replica in pairs(replicaset.replicas) do
+        replicaset_connect_to_replica(replicaset, replica)
+    end
 end
 
 --
@@ -132,17 +141,9 @@ end
 --
 local function replicaset_make_replica_read(replicaset, replica, read_name)
     assert(read_name == 'replica' or read_name == 'candidate')
-    local old_replica = replicaset[read_name]
-    assert(old_replica ~= replica)
-    local conn = replicaset_connect_to_replica(replicaset, replica)
+    assert(replicaset[read_name] ~= replica)
+    replicaset_connect_to_replica(replicaset, replica)
     replicaset[read_name] = replica
-    if old_replica and old_replica ~= replicaset.master then
-        assert(conn ~= old_replica.conn)
-        -- Each unused connection holds a worker fiber. Close them
-        -- to return fibers in pool now. Do not wait lua gc - it
-        -- is slow as fuck.
-        old_replica.conn:close()
-    end
 end
 
 --
@@ -214,24 +215,6 @@ local function replicaset_set_candidate_as_replica(replicaset)
            old_replica.weight >= replicaset.replica.weight and
            old_replica ~= replicaset.replica)
     replicaset.candidate = nil
-    if old_replica and old_replica.conn and
-       old_replica ~= replicaset.master then
-        old_replica.conn:close()
-    end
-end
-
---
--- Destroy net.box connection to master
---
-local function replicaset_disconnect(replicaset)
-    local master = replicaset.master
-    if master == nil then
-       return true
-    end
-    local conn = replicaset.master.conn
-    replicaset.master.conn = nil
-    conn:close()
-    return true
 end
 
 --
@@ -320,7 +303,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    replicaset_connect(replicaset)
+    replicaset_connect_master(replicaset)
     local timeout = opts and opts.timeout or replicaset.master.net_timeout
     local net_status, storage_status, retval, error_object =
         replica_call(replicaset.master, func, args, timeout)
@@ -363,7 +346,7 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
         if replica and replica:is_connected() then
             conn = replica.conn
         else
-            conn = replicaset_connect(replicaset)
+            conn = replicaset_connect_master(replicaset)
             replica = replicaset.master
         end
         net_status, storage_status, retval, error_object =
@@ -426,12 +409,14 @@ end
 --
 local replicaset_mt = {
     __index = {
-        connect = replicaset_connect;
+        connect = replicaset_connect_master;
+        connect_master = replicaset_connect_master;
+        connect_all = replicaset_connect_all;
+        connect_replica = replicaset_connect_to_replica;
         rebind_connections = replicaset_rebind_connections;
         update_candidate = replicaset_update_candidate;
         down_replica_priority = replicaset_down_replica_priority;
         set_candidate_as_replica = replicaset_set_candidate_as_replica;
-        disconnect = replicaset_disconnect;
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_nearest_call;

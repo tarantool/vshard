@@ -101,6 +101,9 @@ old_replicasets = vshard.router.internal.replicasets
 old_connections = {}
 ---
 ...
+connection_count = 0
+---
+...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -108,11 +111,16 @@ test_run:cmd("setopt delimiter ';'")
 for _, old_rs in pairs(old_replicasets) do
     for uuid, old_replica in pairs(old_rs.replicas) do
         old_connections[uuid] = old_replica.conn
+        connection_count = connection_count + 1
     end
 end;
 ---
 ...
 test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+connection_count == 4
 ---
 - true
 ...
@@ -389,9 +397,8 @@ rs.master = master
 ---
 ...
 -- Test reconnect on bucker_route().
-rs:disconnect()
+master.conn:close()
 ---
-- true
 ...
 conn = vshard.router.route(1):connect()
 ---
