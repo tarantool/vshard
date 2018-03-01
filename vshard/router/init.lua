@@ -335,39 +335,12 @@ local function failover_need_down_priority(replicaset, curr_ts)
 end
 
 --
--- Replicaset must try to connect to a server with the highest
--- priority once per specified timeout. It allows to return to
--- the best server, if it was unavailable and has returned back.
--- And if the connection attempt was not successfull, then the
--- candidate must try a replica next by priority.
+-- Once per FAILOVER_UP_TIMEOUT a replicaset must try to connect
+-- to a replica with a higher priority.
 --
-local function failover_need_update_candidate(replicaset, curr_ts)
+local function failover_need_up_priority(replicaset, curr_ts)
     local up_ts = replicaset.replica_up_ts
-    -- First attempt to connect to replica.
-    if not up_ts then
-        return true
-    end
-    -- Try to reconnect to the best replica once per UP_TIMEOUT.
-    if curr_ts - up_ts >= consts.FAILOVER_UP_TIMEOUT then
-        return true
-    end
-    -- Candidate can not connect to a replica. Try next by
-    -- priority, if it is not current replica. Candidate always
-    -- must have weight <= current replica weight.
-    local candidate = replicaset.candidate
-    return candidate and
-           curr_ts - candidate.down_ts >= consts.FAILOVER_DOWN_TIMEOUT and
-           candidate.next_by_priority and
-           candidate.next_by_priority ~= replicaset.replica
-end
-
---
--- Check that a candidate is connected to its replica. In such a
--- case it becames new replica, because its weight <= current one.
---
-local function failover_is_candidate_connected(replicaset)
-    local candidate = replicaset.candidate
-    return candidate and candidate:is_connected()
+    return not up_ts or curr_ts - up_ts >= consts.FAILOVER_UP_TIMEOUT
 end
 
 --
@@ -379,8 +352,7 @@ local function failover_collect_to_update()
     local uuid_to_update = {}
     for uuid, rs in pairs(M.replicasets) do
         if failover_need_down_priority(rs, ts) or
-           failover_is_candidate_connected(rs) or
-           failover_need_update_candidate(rs, ts) then
+           failover_need_up_priority(rs, ts) then
             table.insert(uuid_to_update, uuid)
         end
     end
@@ -413,12 +385,9 @@ local function failover_step()
             return true
         end
         local old_replica = rs.replica
-        if failover_is_candidate_connected(rs) then
-            rs:set_candidate_as_replica()
+        if failover_need_up_priority(rs, curr_ts) then
+            rs:up_replica_priority()
             replica_is_changed = true
-        end
-        if failover_need_update_candidate(rs, curr_ts) then
-            rs:update_candidate()
         end
         if failover_need_down_priority(rs, curr_ts) then
             rs:down_replica_priority()
@@ -519,7 +488,6 @@ local function router_cfg(cfg)
     -- connections and yield.
     for _, replicaset in pairs(new_replicasets) do
         replicaset:connect_all()
-        replicaset:update_candidate()
     end
     lreplicaset.wait_masters_connect(new_replicasets)
     if M.failover_fiber == nil then

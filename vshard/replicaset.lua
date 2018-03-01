@@ -25,8 +25,6 @@
 --      },
 --      master = <master server from the array above>,
 --      replica = <nearest available replica object>,
---      candidate = <replica with less weight, which tries to
---                   connect and replace an original replica>,
 --      replica_up_ts = <timestamp updated on each attempt to
 --                       connect to the nearest replica, and on
 --                       each connect event>,
@@ -68,8 +66,7 @@ local function netbox_on_connect(conn)
         conn:close()
         return
     end
-    if (replica == rs.replica or replica == rs.candidate) and
-       replica == rs.priority_list[1] then
+    if replica == rs.replica and replica == rs.priority_list[1] then
         -- Update replica_up_ts, if the current replica has the
         -- biggest priority. Really, it is not neccessary to
         -- increase replica connection priority, if the current
@@ -132,60 +129,6 @@ local function replicaset_connect_all(replicaset)
 end
 
 --
--- Make a replica be used for read requests or be candidate.
--- @param replicaset Replicaset for which a replica is set.
--- @param replica Replica to be used for read requests.
--- @param read_name Either replica or candidate. Both of them can
---        be updated independently (@sa update_candidate(),
---        down_priority()).
---
-local function replicaset_make_replica_read(replicaset, replica, read_name)
-    assert(read_name == 'replica' or read_name == 'candidate')
-    assert(replicaset[read_name] ~= replica)
-    replicaset_connect_to_replica(replicaset, replica)
-    replicaset[read_name] = replica
-end
-
---
--- Try to connect to another candidate. There is two cases:
--- either
--- * it is time to reconnect to the nearest replica - choose
---   first replica in priority list, or
--- * current candidate can not connect to a server during
---   DOWN_TIMEOUT seconds - then the candidate is set to a next by
---   priority.
---
--- New connection is stored into candidate. It replaces an
--- original replica when connected.
---
-local function replicaset_update_candidate(replicaset)
-    local old_candidate = replicaset.candidate
-    local new_candidate
-    local curr_ts = fiber.time()
-    local up_ts = replicaset.replica_up_ts
-    if not old_candidate or not up_ts or
-       curr_ts - up_ts >= consts.FAILOVER_UP_TIMEOUT then
-        new_candidate = replicaset.priority_list[1]
-        -- Update timestamp of the last attempt to connect to the
-        -- best replica.
-        replicaset.replica_up_ts = curr_ts
-        -- It is possible, that the current replica already has
-        -- the best priority. In such a case there is no need
-        -- to create candidate.
-        if new_candidate == replicaset.replica or
-           new_candidate == old_candidate then
-            return
-        end
-    else
-        assert(old_candidate.next_by_priority and old_candidate.down_ts and
-               curr_ts - old_candidate.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
-               and old_candidate.next_by_priority ~= replicaset.replica)
-        new_candidate = old_candidate.next_by_priority
-    end
-    replicaset_make_replica_read(replicaset, new_candidate, 'candidate')
-end
-
---
 -- Connect to a next replica with less priority against a current
 -- one. It is needed, if a current replica's connection is down
 -- too long.
@@ -194,27 +137,39 @@ local function replicaset_down_replica_priority(replicaset)
     local old_replica = replicaset.replica
     assert(old_replica and old_replica.down_ts and
            not old_replica:is_connected())
-    local new_replica = replicaset.replica.next_by_priority
+    local new_replica = old_replica.next_by_priority
     if new_replica then
-        replicaset_make_replica_read(replicaset, new_replica, 'replica')
+        assert(new_replica ~= old_replica)
+        replicaset_connect_to_replica(replicaset, new_replica)
+        replicaset.replica = new_replica
     end
     -- Else the current replica already has the lowest priority.
     -- Can not down it.
 end
 
 --
--- Set candidate as the current replica. Candidate attribute is
--- nullified and can be reused, for example, to try to connect to
--- the nearest replica.
+-- Search a replica with higher priority than a current replica
+-- has.
 --
-local function replicaset_set_candidate_as_replica(replicaset)
-    assert(replicaset.candidate)
+local function replicaset_up_replica_priority(replicaset)
     local old_replica = replicaset.replica
-    replicaset.replica = replicaset.candidate
-    assert(not old_replica or
-           old_replica.weight >= replicaset.replica.weight and
-           old_replica ~= replicaset.replica)
-    replicaset.candidate = nil
+    if old_replica == replicaset.priority_list[1] and
+       old_replica:is_connected() then
+        replicaset.replica_up_ts = fiber.time()
+        return
+    end
+    for _, replica in pairs(replicaset.priority_list) do
+        if replica == old_replica then
+            -- Failed to up priority.
+            return
+        end
+        if replica:is_connected() then
+            replicaset.replica = replica
+            assert(not old_replica or
+                   old_replica.weight >= replicaset.replica.weight)
+            return
+        end
+    end
 end
 
 --
@@ -414,9 +369,8 @@ local replicaset_mt = {
         connect_all = replicaset_connect_all;
         connect_replica = replicaset_connect_to_replica;
         rebind_connections = replicaset_rebind_connections;
-        update_candidate = replicaset_update_candidate;
         down_replica_priority = replicaset_down_replica_priority;
-        set_candidate_as_replica = replicaset_set_candidate_as_replica;
+        up_replica_priority = replicaset_up_replica_priority;
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_nearest_call;
@@ -579,9 +533,6 @@ local function destroy(replicasets)
         end
         if rs.replica and rs.replica.conn then
             rs.replica.conn:close()
-        end
-        if rs.candidate and rs.candidate.conn then
-            rs.candidate.conn:close()
         end
     end
 end

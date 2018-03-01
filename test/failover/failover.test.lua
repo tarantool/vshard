@@ -75,6 +75,7 @@ echo_count
 -- Ensure that replica_up_ts is updated periodically.
 test_run:switch('router_1')
 rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
+while not rs1.replica_up_ts do fiber.sleep(0.1) end
 old_up_ts = rs1.replica_up_ts
 while rs1.replica_up_ts == old_up_ts do fiber.sleep(0.1) end
 rs1.replica_up_ts - old_up_ts >= vshard.consts.FAILOVER_UP_TIMEOUT
@@ -105,20 +106,13 @@ test_run:cmd('switch box_1_b')
 echo_count
 test_run:switch('router_1')
 
--- Once per FAILOVER_UP_TIMEOUT a router tries to reconnect to the
--- best replica.
-while rs1.candidate == nil or rs1.candidate.down_ts == nil do fiber.sleep(0.1) end
--- Check that the original replica is used, while a candidate
--- tries to connnect.
-vshard.router.call(1, 'read', 'echo', {123})
-test_run:switch('box_1_b')
-echo_count
-test_run:switch('router_1')
-
 -- Revive the best replica. A router must reconnect to it in
 -- FAILOVER_UP_TIMEOUT seconds.
 test_run:cmd('start server box_1_d')
+ts1 = fiber.time()
 while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
+ts2 = fiber.time()
+ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 test_run:grep_log('router_1', 'New replica box_1_d%(storage%@')
 
 -- Ensure the master connection is used as replica's one instead
@@ -128,21 +122,6 @@ test_run:cmd('stop server box_1_c')
 test_run:cmd('stop server box_1_d')
 while rs1.replica.name ~= 'box_1_a' do fiber.sleep(0.1) end
 rs1.replica.conn == rs1.master.conn
---
--- Ensure the candidate downs its priority until mets a current
--- replica.
---
-while not rs1.candidate or rs1.candidate.name ~= 'box_1_d' do fiber.sleep(0.1) end
-ts1 = fiber.time()
-while rs1.candidate.name ~= 'box_1_b' do fiber.sleep(0.1) end
-ts2 = fiber.time()
--- Ensure the candidate is updated more often than once per
--- UP_TIMEOUT seconds.
-ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
-ts1 = ts2
-while rs1.candidate.name ~= 'box_1_c' do fiber.sleep(0.1) end
-ts2 = fiber.time()
-ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 
 test_run:cmd('start server box_1_b with wait=False, wait_load=False')
 test_run:cmd('start server box_1_c with wait=False, wait_load=False')
