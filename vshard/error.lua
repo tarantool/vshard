@@ -19,8 +19,10 @@ end
 local function vshard_error(code, args, msg)
     local ret = setmetatable({type = 'ShardingError', code = code,
                               message = msg}, {__tostring = json.encode})
-    for k, v in pairs(args) do
-        ret[k] = v
+    if args then
+        for k, v in pairs(args) do
+            ret[k] = v
+        end
     end
     return ret
 end
@@ -36,13 +38,14 @@ local function make_error(e)
     elseif type(e) == 'string' then
         local ok, err = pcall(box.error, box.error.PROC_LUA, e)
         return box_error(err)
+    elseif type(e) == 'table' then
+        return setmetatable(e, {__tostring = json.encode})
     else
         return e
     end
 end
 
 local error_code = {
-    -- Error codes. Some of them are used for alerts too.
     WRONG_BUCKET = 1,
     NON_MASTER = 2,
     BUCKET_ALREADY_EXISTS = 3,
@@ -53,8 +56,6 @@ local error_code = {
     UNREACHABLE_REPLICASET = 8,
     NO_ROUTE_TO_BUCKET = 9,
     NON_EMPTY = 10,
-
-    -- Alert codes.
     UNREACHABLE_MASTER = 11,
     OUT_OF_SYNC = 12,
     HIGH_REPLICATION_LAG = 13,
@@ -63,6 +64,7 @@ local error_code = {
     INVALID_REBALANCING = 16,
     SUBOPTIMAL_REPLICA = 17,
     UNKNOWN_BUCKETS = 18,
+    REPLICASET_IS_LOCKED = 19,
 }
 
 local error_message_template = {

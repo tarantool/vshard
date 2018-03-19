@@ -3,7 +3,7 @@
 require('strict').on()
 local fio = require('fio')
 local NAME = fio.basename(arg[0], '.lua')
-local log = require('log')
+log = require('log')
 require('console').listen(os.getenv('ADMIN'))
 fiber = require('fiber')
 

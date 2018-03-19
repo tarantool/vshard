@@ -520,6 +520,7 @@ local function cluster_bootstrap()
                                       'Cluster is already bootstrapped')
         end
     end
+    lreplicaset.calculate_ethalon_balance(M.replicasets, M.total_bucket_count)
     local bucket_id = 1
     for uuid, replicaset in pairs(M.replicasets) do
         if replicaset.ethalon_bucket_count > 0 then

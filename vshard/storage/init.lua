@@ -40,7 +40,14 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
+        --
+        -- Timeout to wait sync with slaves. Used on master
+        -- demotion or on a manual sync() call.
+        --
         sync_timeout = consts.DEFAULT_SYNC_TIMEOUT,
+        -- References to a parent replicaset and self in it.
+        this_replicaset = nil,
+        this_replica = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -76,6 +83,14 @@ if not M then
         -- replicaset simultaneously.
         rebalancer_max_receiving = 0,
     }
+end
+
+--
+-- Check if this replicaset is locked. It means be invisible for
+-- the rebalancer.
+--
+local function is_this_replicaset_locked()
+    return M.this_replicaset and M.this_replicaset.lock
 end
 
 --------------------------------------------------------------------------------
@@ -1135,6 +1150,10 @@ end
 -- }. Is used by a rebalancer.
 --
 local function rebalancer_apply_routes(routes)
+    if is_this_replicaset_locked() then
+        return false, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED, nil,
+                                    "Replicaset is locked");
+    end
     assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool
     -- about problems with long polling. Apply routes in a fiber.
@@ -1151,6 +1170,7 @@ end
 --
 local function rebalancer_download_states()
     local replicasets = {}
+    local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(M.replicasets) do
         local bucket_active_count =
@@ -1158,19 +1178,23 @@ local function rebalancer_download_states()
         if bucket_active_count == nil then
             return
         end
-        total_bucket_active_count = total_bucket_active_count +
-                                    bucket_active_count
-        replicasets[uuid] = {bucket_count = bucket_active_count,
-                             weight = replicaset.weight or 1,
-                             ethalon_bucket_count =
-                                replicaset.ethalon_bucket_count}
+        if replicaset.lock then
+            total_bucket_locked_count =
+                total_bucket_locked_count + bucket_active_count
+        else
+            total_bucket_active_count =
+                total_bucket_active_count + bucket_active_count
+            replicasets[uuid] = {bucket_count = bucket_active_count,
+                                 weight = replicaset.weight}
+        end
     end
-    if total_bucket_active_count == M.total_bucket_count then
-        return replicasets
+    local sum = total_bucket_active_count + total_bucket_locked_count
+    if sum == M.total_bucket_count then
+        return replicasets, total_bucket_active_count
     else
         log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet. Expected %d, but '..
-                 'found %d', M.total_bucket_count, total_bucket_active_count)
+                 'found %d', M.total_bucket_count, sum)
     end
 end
 
@@ -1185,7 +1209,8 @@ local function rebalancer_f(module_version)
             log.info('Rebalancer is disabled. Sleep')
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
         end
-        local status, replicasets = pcall(rebalancer_download_states)
+        local status, replicasets, total_bucket_active_count =
+            pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
             return
         end
@@ -1198,6 +1223,8 @@ local function rebalancer_f(module_version)
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
             goto continue
         end
+        lreplicaset.calculate_ethalon_balance(replicasets,
+                                              total_bucket_active_count)
         local max_disbalance =
             rebalancer_calculate_metrics(replicasets,
                                          M.rebalancer_max_receiving)
@@ -1224,7 +1251,7 @@ local function rebalancer_f(module_version)
                           {src_routes})
             if not status then
                 log.error('Error during routes appying on "%s": %s. '..
-                          'Try rebalance later', rs, err)
+                          'Try rebalance later', rs, lerror.make(err))
                 lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
                 goto continue
             end
@@ -1558,6 +1585,9 @@ local function storage_info()
         state.replication.status = 'slave'
     end
 
+    if is_this_replicaset_locked() then
+        state.bucket.lock = true
+    end
     state.bucket.total = box.space._bucket.index.pk:count()
     state.bucket.active = box.space._bucket.index.status:count({consts.BUCKET.ACTIVE})
     state.bucket.garbage = box.space._bucket.index.status:count({consts.BUCKET.SENT})
@@ -1689,6 +1719,7 @@ return {
     rebalancer_apply_routes = rebalancer_apply_routes;
     rebalancer_disable = rebalancer_disable;
     rebalancer_enable = rebalancer_enable;
+    is_locked = is_this_replicaset_locked;
     recovery_wakeup = recovery_wakeup;
     call = storage_call;
     cfg = storage_cfg;

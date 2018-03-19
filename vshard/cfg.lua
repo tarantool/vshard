@@ -105,7 +105,8 @@ local replicaset_template = {
     {'weight', {
         type = 'non-negative number', name = 'Weight', is_optional = true,
         default = 1,
-    }}
+    }},
+    {'lock', {type = 'boolean', name = 'Lock', is_optional = true}},
 }
 
 --

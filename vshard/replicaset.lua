@@ -456,6 +456,7 @@ local function buildall(sharding_cfg, old_replicasets)
             uuid = replicaset_uuid,
             weight = replicaset.weight,
             bucket_count = 0,
+            lock = replicaset.lock,
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
@@ -511,8 +512,6 @@ local function buildall(sharding_cfg, old_replicasets)
         new_replicaset.priority_list = priority_list
         new_replicasets[replicaset_uuid] = new_replicaset
     end
-    cluster_calculate_ethalon_balance(new_replicasets,
-                                      sharding_cfg.bucket_count)
     return new_replicasets
 end
 
