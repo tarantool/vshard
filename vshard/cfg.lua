@@ -103,7 +103,8 @@ end
 local replicaset_template = {
     {'replicas', {type = 'table', name = 'Replicas', check = check_replicas}},
     {'weight', {
-        type = 'non-negative number', name = 'Weight', is_optional = true
+        type = 'non-negative number', name = 'Weight', is_optional = true,
+        default = 1,
     }}
 }
 

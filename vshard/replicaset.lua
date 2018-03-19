@@ -400,14 +400,14 @@ local replica_mt = {
 local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
     local weight_sum = 0
     for _, replicaset in pairs(replicasets) do
-        weight_sum = weight_sum + (replicaset.weight or 1)
+        weight_sum = weight_sum + replicaset.weight
     end
     assert(weight_sum > 0)
     local bucket_per_weight = bucket_count / weight_sum
     local buckets_calculated = 0
     for _, replicaset in pairs(replicasets) do
         replicaset.ethalon_bucket_count =
-            math.ceil((replicaset.weight or 1) * bucket_per_weight)
+            math.ceil(replicaset.weight * bucket_per_weight)
         buckets_calculated =
             buckets_calculated + replicaset.ethalon_bucket_count
     end
@@ -421,12 +421,17 @@ local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
     -- admissible.
     local buckets_rest = buckets_calculated - bucket_count
     for _, replicaset in pairs(replicasets) do
-        replicaset.ethalon_bucket_count = replicaset.ethalon_bucket_count - 1
-        buckets_rest = buckets_rest - 1
-        if buckets_rest == 0 then
-            return
+        local ceil = math.ceil(replicaset.weight * bucket_per_weight)
+        local floor = math.floor(replicaset.weight * bucket_per_weight)
+        if replicaset.ethalon_bucket_count > 0 and ceil ~= floor then
+            replicaset.ethalon_bucket_count = replicaset.ethalon_bucket_count - 1
+            buckets_rest = buckets_rest - 1
+            if buckets_rest == 0 then
+                return
+            end
         end
     end
+    assert(buckets_rest == 0)
 end
 
 --
@@ -507,8 +512,7 @@ local function buildall(sharding_cfg, old_replicasets)
         new_replicasets[replicaset_uuid] = new_replicaset
     end
     cluster_calculate_ethalon_balance(new_replicasets,
-                                      sharding_cfg.bucket_count or
-                                      consts.DEFAULT_BUCKET_COUNT)
+                                      sharding_cfg.bucket_count)
     return new_replicasets
 end
 

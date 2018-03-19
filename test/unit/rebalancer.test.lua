@@ -151,4 +151,15 @@ replicasets
 calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 replicasets
 
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 25, weight = 1},
+	uuid2 = {bucket_count = 25, weight = 1},
+	uuid3 = {bucket_count = 25, weight = 1},
+	uuid4 = {bucket_count = 25, weight = 0},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+
 _bucket:drop()

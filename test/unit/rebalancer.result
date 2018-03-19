@@ -605,6 +605,44 @@ replicasets
     ethalon_bucket_count: 13
     bucket_count: 13
 ...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+replicasets = {
+	uuid1 = {bucket_count = 25, weight = 1},
+	uuid2 = {bucket_count = 25, weight = 1},
+	uuid3 = {bucket_count = 25, weight = 1},
+	uuid4 = {bucket_count = 25, weight = 0},
+};
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calc_ethalon(replicasets, 100)
+---
+...
+replicasets
+---
+- uuid4:
+    weight: 0
+    ethalon_bucket_count: 0
+    bucket_count: 25
+  uuid1:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 25
+  uuid3:
+    weight: 1
+    ethalon_bucket_count: 33
+    bucket_count: 25
+  uuid2:
+    weight: 1
+    ethalon_bucket_count: 34
+    bucket_count: 25
+...
 _bucket:drop()
 ---
 ...
