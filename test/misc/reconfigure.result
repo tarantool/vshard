@@ -100,6 +100,13 @@ not vshard.storage.internal.collect_lua_garbage
 ---
 - true
 ...
+vshard.storage.internal.sync_timeout
+---
+- 1
+...
+cfg.sync_timeout = 100
+---
+...
 cfg.collect_lua_garbage = true
 ---
 ...
@@ -120,6 +127,10 @@ not vshard.storage.internal.collect_lua_garbage
 ---
 - true
 ...
+vshard.storage.internal.sync_timeout
+---
+- 1
+...
 vshard.storage.internal.rebalancer_max_receiving ~= 1000
 ---
 - true
@@ -127,6 +138,9 @@ vshard.storage.internal.rebalancer_max_receiving ~= 1000
 vshard.storage.internal.collect_bucket_garbage_interval ~= 100
 ---
 - true
+...
+cfg.sync_timeout = nil
+---
 ...
 cfg.collect_lua_garbage = nil
 ---

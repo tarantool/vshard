@@ -198,7 +198,11 @@ local cfg_template = {
     {'collect_lua_garbage', {
         type = 'boolean', name = 'Garbage Lua collect necessity',
         is_optional = true, default = false
-    }}
+    }},
+    {'sync_timeout', {
+        type = 'non-negative number', name = 'Sync timeout', is_optional = true,
+        default = consts.DEFAULT_SYNC_TIMEOUT
+    }},
 }
 
 --
@@ -227,6 +231,7 @@ local function remove_non_box_options(cfg)
     cfg.shard_index = nil
     cfg.collect_bucket_garbage_interval = nil
     cfg.collect_lua_garbage = nil
+    cfg.sync_timeout = nil
 end
 
 return {

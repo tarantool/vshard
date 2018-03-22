@@ -35,10 +35,12 @@ if not M then
         errinj = {
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
+            ERRINJ_CFG_DELAY = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
+        sync_timeout = consts.DEFAULT_SYNC_TIMEOUT,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -305,7 +307,7 @@ local function sync(timeout)
     end
 
     log.debug("Synchronizing replicaset...")
-    timeout = timeout or consts.SYNC_TIMEOUT
+    timeout = timeout or M.sync_timeout
     local vclock = box.info.vclock
     local tstart = lfiber.time()
     repeat
@@ -540,13 +542,30 @@ local function buckets_discovery()
 end
 
 --
+-- The only thing, that must be done to abort a master demote is
+-- a reset of read_only.
+--
+local function local_on_master_disable_abort()
+    box.cfg{read_only = false}
+end
+
+--
+-- Prepare to a master demotion. Before it, a master must stop
+-- accept writes, and try to wait until all of its data is
+-- replicated to each slave.
+--
+local function local_on_master_disable_prepare()
+    log.info("Resigning from the replicaset master role...")
+    box.cfg({read_only = true})
+    sync(M.sync_timeout)
+end
+
+--
 -- This function executes when a master role is removed from local
 -- instance during configuration
 --
 local function local_on_master_disable()
     M._on_master_disable:run()
-    box.cfg({read_only = true})
-    log.verbose("Resigning from the replicaset master role...")
     -- Stop garbage collecting
     if M.collect_bucket_garbage_fiber ~= nil then
         M.collect_bucket_garbage_fiber:cancel()
@@ -558,13 +577,29 @@ local function local_on_master_disable()
         M.recovery_fiber = nil
         log.info('Recovery stopped')
     end
-    -- Wait until replicas are synchronized before one another become a new master
-    sync(consts.SYNC_TIMEOUT)
     log.info("Resigned from the replicaset master role")
 end
 
 local collect_garbage_f
 
+--
+-- The only thing, that must be done to abort a master promotion
+-- is a set read_only back to true.
+--
+local function local_on_master_enable_abort()
+    box.cfg({read_only = true})
+end
+
+--
+-- Promote does not require sync, because a replica can not have a
+-- data, that is not on a current master - the replica is read
+-- only. But read_only can not be set to false here, because
+-- until box.cfg is called, it can not be guaranteed, that the
+-- promotion will be successful.
+--
+local function local_on_master_enable_prepare()
+    log.info("Taking on replicaset master role...")
+end
 --
 -- This function executes whan a master role is added to local
 -- instance during configuration
@@ -572,7 +607,6 @@ local collect_garbage_f
 local function local_on_master_enable()
     box.cfg({read_only = false})
     M._on_master_enable:run()
-    log.verbose("Taking on replicaset master role...")
     recovery_garbage_receiving_buckets()
     -- Start background process to collect garbage.
     M.collect_bucket_garbage_fiber =
@@ -1348,9 +1382,37 @@ local function storage_cfg(cfg, this_replica_uuid)
     local shard_index = cfg.shard_index
     local collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
     local collect_lua_garbage = cfg.collect_lua_garbage
+    --
+    -- Sync timeout is a special case - it must be updated before
+    -- all other options to allow a user to demote a master with
+    -- a new sync timeout.
+    --
+    local old_sync_timeout = M.sync_timeout
+    M.sync_timeout = cfg.sync_timeout
     lcfg.remove_non_box_options(cfg)
 
-    box.cfg(cfg)
+    if was_master and not is_master then
+        local_on_master_disable_prepare()
+    end
+    if not was_master and is_master then
+        local_on_master_enable_prepare()
+    end
+
+    local ok, err = pcall(box.cfg, cfg)
+    while M.errinj.ERRINJ_CFG_DELAY do
+        lfiber.sleep(0.01)
+    end
+    if not ok then
+        M.sync_timeout = old_sync_timeout
+        if was_master and not is_master then
+            local_on_master_disable_abort()
+        end
+        if not was_master and is_master then
+            local_on_master_enable_abort()
+        end
+        error(err)
+    end
+
     log.info("Box has been configured")
     local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)

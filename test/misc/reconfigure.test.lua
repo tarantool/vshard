@@ -41,14 +41,18 @@ util.check_error(vshard.storage.cfg, cfg, 'unknow uuid')
 -- changed.
 --
 not vshard.storage.internal.collect_lua_garbage
+vshard.storage.internal.sync_timeout
+cfg.sync_timeout = 100
 cfg.collect_lua_garbage = true
 cfg.rebalancer_max_receiving = 1000
 cfg.collect_bucket_garbage_interval = 100
 cfg.invalid_option = 'kek'
 vshard.storage.cfg(cfg, names.storage_1_a)
 not vshard.storage.internal.collect_lua_garbage
+vshard.storage.internal.sync_timeout
 vshard.storage.internal.rebalancer_max_receiving ~= 1000
 vshard.storage.internal.collect_bucket_garbage_interval ~= 100
+cfg.sync_timeout = nil
 cfg.collect_lua_garbage = nil
 cfg.rebalancer_max_receiving = nil
 cfg.collect_bucket_garbage_interval = nil

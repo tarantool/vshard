@@ -166,3 +166,14 @@ cfg.collect_lua_garbage = true
 _ = lcfg.check(cfg)
 cfg.collect_lua_garbage = false
 _ = lcfg.check(cfg)
+
+--
+-- gh-84: sync before master demotion, and allow to configure
+-- sync timeout.
+--
+cfg.sync_timeout = -100
+check(cfg)
+cfg.sync_timeout = 0
+_ = lcfg.check(cfg)
+cfg.sync_timeout = 10.5
+_ = lcfg.check(cfg)
