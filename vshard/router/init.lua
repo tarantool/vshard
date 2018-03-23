@@ -67,29 +67,29 @@ local function bucket_discovery(bucket_id)
     end
 
     log.verbose("Discovering bucket %d", bucket_id)
+    local last_err = nil
     local unreachable_uuid = nil
-    local is_transfer_in_progress = false
-    for _, replicaset in pairs(M.replicasets) do
-        local stat, err = replicaset:callrw('vshard.storage.bucket_stat',
-                                             {bucket_id})
-        if stat then
-            if stat.status == consts.BUCKET.ACTIVE or
-               stat.status == consts.BUCKET.SENDING then
-                log.info("Discovered bucket %d on %s", bucket_id, replicaset)
-                bucket_set(bucket_id, replicaset)
-                return replicaset
-            elseif stat.status == consts.BUCKET.RECEIVING then
-                is_transfer_in_progress = true
-            end
+    for uuid, replicaset in pairs(M.replicasets) do
+        local _, err =
+            replicaset:callrw('vshard.storage.bucket_stat', {bucket_id})
+        if err == nil then
+            bucket_set(bucket_id, replicaset)
+            return replicaset
         elseif err.code ~= lerror.code.WRONG_BUCKET then
-            unreachable_uuid = replicaset.uuid
+            last_err = err
+            unreachable_uuid = uuid
         end
     end
-    local errcode = nil
-    if unreachable_uuid then
-        errcode = lerror.code.UNREACHABLE_REPLICASET
-    elseif is_transfer_in_progress then
-        errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
+    local err = nil
+    if last_err then
+        if last_err.type == 'ClientError' and
+           last_err.code == box.error.NO_CONNECTION then
+            err = lerror.vshard(lerror.code.UNREACHABLE_REPLICASET,
+                                {bucket_id = bucket_id,
+                                 unreachable_uuid = unreachable_uuid})
+        else
+            err = lerror.make(last_err)
+        end
     else
         -- All replicasets were scanned, but a bucket was not
         -- found anywhere, so most likely it does not exist. It
@@ -97,11 +97,12 @@ local function bucket_discovery(bucket_id)
         -- bucket was found to be RECEIVING on one replicaset, and
         -- was not found on other replicasets (it was sent during
         -- discovery).
-        errcode = lerror.code.NO_ROUTE_TO_BUCKET
+        err = lerror.vshard(lerror.code.NO_ROUTE_TO_BUCKET,
+                            {bucket_id = bucket_id,
+                             unreachable_uuid = unreachable_uuid})
     end
 
-    return nil, lerror.vshard(errcode, {bucket_id = bucket_id,
-                                        unreachable_uuid = unreachable_uuid})
+    return nil, err
 end
 
 -- Resolve bucket id to replicaset uuid

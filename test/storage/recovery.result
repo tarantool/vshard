@@ -22,7 +22,7 @@ util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 ---
 ...
-test_run:cmd("switch storage_1_a")
+test_run:switch("storage_1_a")
 ---
 - true
 ...
@@ -38,10 +38,6 @@ rs2_uuid = replicasets[2]
 _bucket = box.space._bucket
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.SENDING, rs2_uuid}
----
-- [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
-...
 _bucket:replace{2, vshard.consts.BUCKET.SENDING, rs2_uuid}
 ---
 - [2, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
@@ -50,7 +46,7 @@ _bucket:replace{3, vshard.consts.BUCKET.RECEIVING, rs2_uuid}
 ---
 - [3, 'receiving', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
 ...
-test_run:cmd('switch storage_2_a')
+test_run:switch('storage_2_a')
 ---
 - true
 ...
@@ -60,10 +56,6 @@ _bucket = box.space._bucket
 rs1_uuid = replicasets[1]
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.RECEIVING, rs1_uuid}
----
-- [1, 'receiving', 'cbf06940-0790-498b-948d-042b62cf3d29']
-...
 _bucket:replace{2, vshard.consts.BUCKET.ACTIVE, rs1_uuid}
 ---
 - [2, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
@@ -71,6 +63,9 @@ _bucket:replace{2, vshard.consts.BUCKET.ACTIVE, rs1_uuid}
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, rs1_uuid}
 ---
 - [3, 'sending', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+vshard.storage.internal.rebalancer_sending_bucket = 3
+---
 ...
 test_run:cmd('stop server storage_1_a')
 ---
@@ -80,7 +75,7 @@ test_run:cmd('start server storage_1_a')
 ---
 - true
 ...
-test_run:cmd('switch storage_1_a')
+test_run:switch('storage_1_a')
 ---
 - true
 ...
@@ -95,10 +90,61 @@ _bucket = box.space._bucket
 ...
 _bucket:select{}
 ---
-- - [1, 'active', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
-  - [2, 'garbage', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+- - [2, 'garbage', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+  - [3, 'receiving', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:switch('storage_2_a')
+---
+- true
+...
+_bucket:select{}
+---
+- - [2, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
+  - [3, 'sending', 'cbf06940-0790-498b-948d-042b62cf3d29']
+...
+test_run:switch('storage_1_a')
+---
+- true
 ...
 while _bucket:count() ~= 1 do fiber.sleep(0.1) end
+---
+...
+--
+-- Test a case, when a bucket is sending on one replicaset,
+-- receiving on another one, but there is no rebalancing.
+--
+test_run:cmd('stop server storage_2_a')
+---
+- true
+...
+test_run:cmd('start server storage_2_a')
+---
+- true
+...
+test_run:switch('storage_2_a')
+---
+- true
+...
+vshard.storage.recovery_wakeup()
+---
+...
+fiber = require('fiber')
+---
+...
+_bucket = box.space._bucket
+---
+...
+while _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE}) ~= 2 do fiber.sleep(0.1) end
+---
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
+vshard.storage.recovery_wakeup()
+---
+...
+while _bucket:count() ~= 0 do fiber.sleep(0.1) end
 ---
 ...
 --
@@ -112,15 +158,18 @@ _bucket:replace{1, vshard.consts.BUCKET.SENDING, rs2_uuid}
 ---
 - [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
 ...
-test_run:cmd('switch storage_2_a')
+test_run:switch('storage_2_a')
 ---
 - true
+...
+rs1_uuid = replicasets[1]
+---
 ...
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, rs1_uuid}
 ---
 - [1, 'active', 'cbf06940-0790-498b-948d-042b62cf3d29']
 ...
-test_run:cmd('switch default')
+test_run:switch('default')
 ---
 - true
 ...
@@ -136,7 +185,7 @@ test_run:cmd('start server storage_1_a')
 ---
 - true
 ...
-test_run:cmd('switch storage_1_a')
+test_run:switch('storage_1_a')
 ---
 - true
 ...
@@ -168,7 +217,7 @@ _bucket:select{}
 ---
 - []
 ...
-test_run:cmd('switch storage_2_a')
+test_run:switch('storage_2_a')
 ---
 - true
 ...
@@ -230,7 +279,7 @@ fiber = require('fiber')
 while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
 ---
 ...
-test_run:cmd("switch default")
+test_run:switch("default")
 ---
 - true
 ...
