@@ -129,7 +129,7 @@ local function on_master_disable(...)
     M._on_master_disable(...)
     -- If a trigger is set after storage.cfg(), then notify an
     -- user, that the current instance is not master.
-    if #{...} == 1 and not this_is_master() then
+    if select('#', ...) == 1 and not this_is_master() then
         M._on_master_disable:run()
     end
 end
@@ -137,7 +137,7 @@ end
 local function on_master_enable(...)
     M._on_master_enable(...)
     -- Same as above, but notify, that the instance is master.
-    if #{...} == 1 and this_is_master() then
+    if select('#', ...) == 1 and this_is_master() then
         M._on_master_enable:run()
     end
 end
