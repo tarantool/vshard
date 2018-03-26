@@ -197,6 +197,7 @@ vshard.storage.info()
     active: 0
     total: 0
     garbage: 0
+    pinned: 0
     sending: 0
   status: 2
   replication:
@@ -287,6 +288,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 0
   replication:
@@ -317,6 +319,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 1
   replication:
@@ -363,6 +366,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 2
   replication:
@@ -394,6 +398,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 3
   replication:
@@ -426,6 +431,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 0
   replication:
@@ -457,6 +463,7 @@ vshard.storage.info()
     active: 2
     total: 2
     garbage: 0
+    pinned: 0
     sending: 0
   status: 2
   replication:

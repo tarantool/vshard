@@ -300,6 +300,194 @@ vshard.storage.info().bucket.active
 ---
 - 1000
 ...
+--
+-- Test bucket pinning. At first, return to the default
+-- configuration.
+--
+test_run:switch('box_2_a')
+---
+- true
+...
+rs1_cfg.lock = false
+---
+...
+rs1_cfg.weight = 1
+---
+...
+rs2_cfg.lock = false
+---
+...
+rs2_cfg.weight = 1
+---
+...
+vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+---
+...
+test_run:switch('box_3_a')
+---
+- true
+...
+rs1_cfg.lock = false
+---
+...
+rs1_cfg.weight = 1
+---
+...
+rs2_cfg.lock = false
+---
+...
+rs2_cfg.weight = 1
+---
+...
+vshard.storage.cfg(cfg, names.replica_uuid.box_3_a)
+---
+...
+test_run:switch('box_1_a')
+---
+- true
+...
+rs1_cfg.lock = false
+---
+...
+rs1_cfg.weight = 1
+---
+...
+rs2_cfg.lock = false
+---
+...
+rs2_cfg.weight = 1
+---
+...
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+---
+...
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+---
+...
+vshard.storage.info().bucket.active
+---
+- 1000
+...
+status = box.space._bucket.index.status
+---
+...
+first_id = status:select(vshard.consts.BUCKET.ACTIVE, {limit = 1})[1].id
+---
+...
+-- Test that double pin is ok.
+vshard.storage.bucket_pin(first_id)
+---
+- true
+...
+box.space._bucket:get{first_id}.status
+---
+- pinned
+...
+vshard.storage.bucket_pin(first_id)
+---
+- true
+...
+box.space._bucket:get{first_id}.status
+---
+- pinned
+...
+-- Test that double unpin after pin is ok.
+vshard.storage.bucket_unpin(first_id)
+---
+- true
+...
+box.space._bucket:get{first_id}.status
+---
+- active
+...
+vshard.storage.bucket_unpin(first_id)
+---
+- true
+...
+box.space._bucket:get{first_id}.status
+---
+- active
+...
+-- Test that can not pin other buckets.
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+box.begin()
+box.space._bucket:update({first_id}, {{'=', 2, vshard.consts.BUCKET.SENDING}})
+ok, err = vshard.storage.bucket_pin(first_id)
+assert(not ok and err)
+ok, err = vshard.storage.bucket_unpin(first_id)
+assert(not ok and err)
+box.space._bucket:update({first_id}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
+ok, err = vshard.storage.bucket_pin(first_id)
+assert(not ok and err)
+ok, err = vshard.storage.bucket_unpin(first_id)
+assert(not ok and err)
+box.space._bucket:update({first_id}, {{'=', 2, vshard.consts.BUCKET.SENT}})
+ok, err = vshard.storage.bucket_pin(first_id)
+assert(not ok and err)
+ok, err = vshard.storage.bucket_unpin(first_id)
+assert(not ok and err)
+box.space._bucket:update({first_id}, {{'=', 2, vshard.consts.BUCKET.GARBAGE}})
+ok, err = vshard.storage.bucket_pin(first_id)
+assert(not ok and err)
+ok, err = vshard.storage.bucket_unpin(first_id)
+assert(not ok and err)
+box.rollback()
+test_run:cmd("setopt delimiter ''");
+---
+...
+--
+-- Now pin some buckets and create such disbalance, that the
+-- rebalancer will face with unreachability of the perfect
+-- balance.
+--
+for i = 1, 800 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
+---
+...
+status:count({vshard.consts.BUCKET.PINNED})
+---
+- 800
+...
+rs1_cfg.weight = 0.5
+---
+...
+vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+---
+...
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+---
+...
+-- The perfect balance is now 200-400-400, but on the replicaset 1
+-- 800 buckets are pinned, so the actual balance is 800-1100-1100.
+info = vshard.storage.info().bucket
+---
+...
+info.active
+---
+- 800
+...
+info.pinned
+---
+- 800
+...
+test_run:switch('box_2_a')
+---
+- true
+...
+vshard.storage.info().bucket.active
+---
+- 1100
+...
+test_run:switch('box_3_a')
+---
+- true
+...
+vshard.storage.info().bucket.active
+---
+- 1100
+...
 test_run:cmd("switch default")
 ---
 - true

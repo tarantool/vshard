@@ -105,7 +105,8 @@ end
 -- buckets can accept 'read' too.
 --
 local function bucket_is_writable(bucket)
-    return bucket.status == consts.BUCKET.ACTIVE
+    return bucket.status == consts.BUCKET.ACTIVE or
+           bucket.status == consts.BUCKET.PINNED
 end
 
 --
@@ -727,6 +728,54 @@ local function bucket_send(bucket_id, destination)
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
     M.buckets_to_recovery[bucket_id] = nil
 
+    return true
+end
+
+--
+-- Pin a bucket to a replicaset. Pinned bucket can not be sent
+-- even if is breaks the cluster balance.
+-- @param bucket_id Bucket identifier to pin.
+-- @retval true A bucket is pinned.
+-- @retval nil, err A bucket can not be pinned. @A err is the
+--         reason why.
+--
+local function bucket_pin(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_pin(bucket_id)')
+    end
+    local bucket, err = bucket_check_state(bucket_id, 'write')
+    if err then
+        return nil, err
+    end
+    assert(bucket)
+    if bucket.status ~= consts.BUCKET.PINNED then
+        assert(bucket.status == consts.BUCKET.ACTIVE)
+        box.space._bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.PINNED}})
+    end
+    return true
+end
+
+--
+-- Return a pinned bucket back into active state.
+-- @param bucket_id Bucket identifier to unpin.
+-- @retval true A bucket is unpinned.
+-- @retval nil, err A bucket can not be unpinned. @A err is the
+--         reason why.
+--
+local function bucket_unpin(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_unpin(bucket_id)')
+    end
+    local bucket, err = bucket_check_state(bucket_id, 'write')
+    if err then
+        return nil, err
+    end
+    assert(bucket)
+    if bucket.status == consts.BUCKET.PINNED then
+        box.space._bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.ACTIVE}})
+    else
+        assert(bucket.status == consts.BUCKET.ACTIVE)
+    end
     return true
 end
 
@@ -1633,11 +1682,13 @@ local function storage_info()
         state.bucket.lock = true
     end
     local status = box.space._bucket.index.status
+    local pinned = status:count({consts.BUCKET.PINNED})
     state.bucket.total = box.space._bucket:count()
-    state.bucket.active = status:count({consts.BUCKET.ACTIVE})
+    state.bucket.active = status:count({consts.BUCKET.ACTIVE}) + pinned
     state.bucket.garbage = status:count({consts.BUCKET.SENT})
     state.bucket.receiving = status:count({consts.BUCKET.RECEIVING})
     state.bucket.sending = status:count({consts.BUCKET.SENDING})
+    state.bucket.pinned = pinned
     if state.bucket.receiving ~= 0 and state.bucket.sending ~= 0 then
         --
         --Some buckets are receiving and some buckets are sending at same time,
@@ -1758,6 +1809,8 @@ return {
     bucket_recv = bucket_recv,
     bucket_send = bucket_send,
     bucket_stat = bucket_stat,
+    bucket_pin = bucket_pin,
+    bucket_unpin = bucket_unpin,
     bucket_delete_garbage = bucket_delete_garbage,
     garbage_collector_wakeup = garbage_collector_wakeup,
     rebalancer_wakeup = rebalancer_wakeup,

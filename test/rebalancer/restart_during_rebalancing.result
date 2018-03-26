@@ -284,6 +284,7 @@ vshard.storage.info().bucket
   active: 750
   total: 750
   garbage: 0
+  pinned: 0
   sending: 0
 ...
 vshard.storage.internal.buckets_to_recovery
@@ -304,6 +305,7 @@ vshard.storage.info().bucket
   active: 750
   total: 750
   garbage: 0
+  pinned: 0
   sending: 0
 ...
 vshard.storage.internal.buckets_to_recovery
@@ -324,6 +326,7 @@ vshard.storage.info().bucket
   active: 750
   total: 750
   garbage: 0
+  pinned: 0
   sending: 0
 ...
 vshard.storage.internal.buckets_to_recovery
@@ -344,6 +347,7 @@ vshard.storage.info().bucket
   active: 750
   total: 750
   garbage: 0
+  pinned: 0
   sending: 0
 ...
 vshard.storage.internal.buckets_to_recovery
