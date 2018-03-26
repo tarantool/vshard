@@ -1213,19 +1213,20 @@ local function rebalancer_download_states()
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(M.replicasets) do
-        local bucket_active_count =
+        local state =
             replicaset:callrw('vshard.storage.rebalancer_request_state', {})
-        if bucket_active_count == nil then
+        if state == nil then
             return
         end
+        local bucket_count = state.bucket_active_count +
+                             state.bucket_pinned_count
         if replicaset.lock then
-            total_bucket_locked_count =
-                total_bucket_locked_count + bucket_active_count
+            total_bucket_locked_count = total_bucket_locked_count + bucket_count
         else
-            total_bucket_active_count =
-                total_bucket_active_count + bucket_active_count
-            replicasets[uuid] = {bucket_count = bucket_active_count,
-                                 weight = replicaset.weight}
+            total_bucket_active_count = total_bucket_active_count + bucket_count
+            replicasets[uuid] = {bucket_count = bucket_count,
+                                 weight = replicaset.weight,
+                                 pinned_count = state.bucket_pinned_count}
         end
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
@@ -1325,7 +1326,10 @@ local function rebalancer_request_state()
         return
     end
     local bucket_count = _bucket:count()
-    return status_index:count({consts.BUCKET.ACTIVE})
+    return {
+        bucket_active_count = status_index:count({consts.BUCKET.ACTIVE}),
+        bucket_pinned_count = status_index:count({consts.BUCKET.PINNED}),
+    }
 end
 
 --

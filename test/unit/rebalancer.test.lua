@@ -162,4 +162,83 @@ test_run:cmd("setopt delimiter ''");
 calc_ethalon(replicasets, 100)
 replicasets
 
+--
+-- gh-71: allow to pin buckets. A pinned bucket can not be sent
+-- out of its replicaset even to satisfy perfect balance.
+--
+-- For this case the rebalancer does best effort balance. The
+-- perfect balance here is unrechable, since on each replicaset
+-- too many buckets are pinned.
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 33, pinned_count = 26, weight = 1},
+	uuid2 = {bucket_count = 33, pinned_count = 24, weight = 1},
+	uuid3 = {bucket_count = 34, pinned_count = 30, weight = 1},
+	uuid4 = {bucket_count = 0, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+--
+-- Here the disbalance is ok for the replicaset with uuid1 only -
+-- other replicasets have pinned buckets too, but not enough to
+-- break the balance: buckets are moved ok to uuid4.
+--
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 33, pinned_count = 30, weight = 1},
+	uuid2 = {bucket_count = 33, pinned_count = 10, weight = 1},
+	uuid3 = {bucket_count = 34, pinned_count = 15, weight = 1},
+	uuid4 = {bucket_count = 0, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+--
+-- Non-locked replicaset with any pinned bucket count can receive
+-- more buckets, if the rebalancer decides it is the best balance.
+--
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 30, pinned_count = 25, weight = 0},
+	uuid2 = {bucket_count = 25, pinned_count = 25, weight = 1},
+	uuid3 = {bucket_count = 25, pinned_count = 25, weight = 1},
+	uuid4 = {bucket_count = 20, weight = 0},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+--
+-- Check that the rebalancer can calculate a complex case, when a
+-- perfect balance is learned in several steps of the algorithm.
+-- Here on the first step it is calculated, that each replicaset
+-- must contain 25 buckets. But UUID1 can not satisfy it, so it
+-- is ignored. On the next step there are 100 - 30 pinned buckets
+-- from UUID1 = 70 buckets, and 3 replicasets. A new perfect
+-- balance is 23-23-24. But it can not be satisfied too - UUID2
+-- has 25 pinned buckets, so it is ignored. On the third step
+-- there are 70 - 25 = 45 buckets and 2 replicasets. A new perfect
+-- balance is 22-23. But it is unreachable too, because UUID3 has
+-- 24 pinned buckets. So only UUID4 is not ignored, and it
+-- receives all non-pinned buckets: 45 - 24 = 21.
+--
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 33, pinned_count = 30, weight = 1},
+	uuid2 = {bucket_count = 33, pinned_count = 25, weight = 1},
+	uuid3 = {bucket_count = 34, pinned_count = 24, weight = 1},
+	uuid4 = {bucket_count = 0, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_ethalon(replicasets, 100)
+replicasets
+calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+replicasets
+
 _bucket:drop()

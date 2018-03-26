@@ -2,6 +2,7 @@ return {
     -- Bucket FSM
     BUCKET = {
         ACTIVE = 'active',
+        PINNED = 'pinned',
         SENDING = 'sending',
         SENT = 'sent',
         RECEIVING = 'receiving',

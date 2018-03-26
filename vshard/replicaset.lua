@@ -396,42 +396,90 @@ local replica_mt = {
 
 --
 -- Calculate for each replicaset its ethalon bucket count.
+-- Iterative algorithm is used to learn the best balance in a
+-- cluster. On each step it calculates perfect bucket count for
+-- each replicaset. If this count can not be satisfied due to
+-- pinned buckets, the algorithm does best effort to get the
+-- perfect balance. This is done via ignoring of replicasets
+-- disbalanced via pinning, and their pinned buckets. After that a
+-- new balance is calculated. And it can happen, that it can not
+-- be satisfied too. It is possible, because ignoring of pinned
+-- buckets in overpopulated replicasets leads to decrease of
+-- perfect bucket count in other replicasets, and a new values can
+-- become less that their pinned bucket count.
+--
+-- On each step the algorithm either is finished, or ignores at
+-- least one new overpopulated replicaset, so it has complexity
+-- O(N^2), where N - replicaset count.
 --
 local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
+    local is_balance_found = false
     local weight_sum = 0
+    local step_count = 0
+    local replicaset_count = 0
     for _, replicaset in pairs(replicasets) do
         weight_sum = weight_sum + replicaset.weight
+        replicaset_count = replicaset_count + 1
     end
-    assert(weight_sum > 0)
-    local bucket_per_weight = bucket_count / weight_sum
-    local buckets_calculated = 0
-    for _, replicaset in pairs(replicasets) do
-        replicaset.ethalon_bucket_count =
-            math.ceil(replicaset.weight * bucket_per_weight)
-        buckets_calculated =
-            buckets_calculated + replicaset.ethalon_bucket_count
-    end
-    if buckets_calculated == bucket_count then
-        return
-    end
-    -- A situation is possible, when bucket_per_weight is not
-    -- integer. Lets spread this disbalance over cluster to
-    -- make for any replicaset pair
-    -- |replicaset_1 - replicaset_2| <= 1 - this difference is
-    -- admissible.
-    local buckets_rest = buckets_calculated - bucket_count
-    for _, replicaset in pairs(replicasets) do
-        local ceil = math.ceil(replicaset.weight * bucket_per_weight)
-        local floor = math.floor(replicaset.weight * bucket_per_weight)
-        if replicaset.ethalon_bucket_count > 0 and ceil ~= floor then
-            replicaset.ethalon_bucket_count = replicaset.ethalon_bucket_count - 1
-            buckets_rest = buckets_rest - 1
-            if buckets_rest == 0 then
-                return
+    while not is_balance_found do
+        step_count = step_count + 1
+        assert(weight_sum > 0)
+        local bucket_per_weight = bucket_count / weight_sum
+        local buckets_calculated = 0
+        for _, replicaset in pairs(replicasets) do
+            if not replicaset.ignore_disbalance then
+                replicaset.ethalon_bucket_count =
+                    math.ceil(replicaset.weight * bucket_per_weight)
+                buckets_calculated =
+                    buckets_calculated + replicaset.ethalon_bucket_count
             end
         end
+        local buckets_rest = buckets_calculated - bucket_count
+        is_balance_found = true
+        for _, replicaset in pairs(replicasets) do
+            if not replicaset.ignore_disbalance then
+                -- A situation is possible, when bucket_per_weight
+                -- is not integer. Lets spread this disbalance
+                -- over the cluster.
+                if buckets_rest > 0 then
+                    local n = replicaset.weight * bucket_per_weight
+                    local ceil = math.ceil(n)
+                    local floor = math.floor(n)
+                    if replicaset.ethalon_bucket_count > 0 and ceil ~= floor then
+                        replicaset.ethalon_bucket_count =
+                            replicaset.ethalon_bucket_count - 1
+                        buckets_rest = buckets_rest - 1
+                    end
+                end
+                --
+                -- Search for incorrigible disbalance due to
+                -- pinned buckets.
+                --
+                local pinned = replicaset.pinned_count
+                if pinned and replicaset.ethalon_bucket_count < pinned then
+                    -- This replicaset can not send out enough
+                    -- buckets to reach a balance. So do the best
+                    -- effort balance by sending from the
+                    -- replicaset though non-pinned buckets. This
+                    -- replicaset and its pinned buckets does not
+                    -- participate in the next steps of balance
+                    -- calculation.
+                    is_balance_found = false
+                    bucket_count = bucket_count - replicaset.pinned_count
+                    replicaset.ethalon_bucket_count = replicaset.pinned_count
+                    replicaset.ignore_disbalance = true
+                    weight_sum = weight_sum - replicaset.weight
+                end
+            end
+        end
+        assert(buckets_rest == 0)
+        if step_count > replicaset_count then
+            -- This can happed only because of a bug in this
+            -- algorithm. But it occupies 100% of transaction
+            -- thread, so check step count explicitly.
+            return error('PANIC: the rebalancer is broken')
+        end
     end
-    assert(buckets_rest == 0)
 end
 
 --
