@@ -101,6 +101,29 @@ local function is_this_replicaset_locked()
 end
 
 --
+-- Check if @a bucket can accept 'write' requests. Writable
+-- buckets can accept 'read' too.
+--
+local function bucket_is_writable(bucket)
+    return bucket.status == consts.BUCKET.ACTIVE
+end
+
+--
+-- Check if @a bucket can accept 'read' requests.
+--
+local function bucket_is_readable(bucket)
+    return bucket_is_writable(bucket) or bucket.status == consts.BUCKET.SENDING
+end
+
+--
+-- Check if a bucket is sending or receiving.
+--
+local function bucket_is_transfer_in_progress(bucket)
+    return bucket.status == consts.BUCKET.SENDING or
+           bucket.status == consts.BUCKET.RECEIVING
+end
+
+--
 -- Check if @a bucket is garbage. It is true for
 -- * sent buckets;
 -- * buckets explicitly marked to be a garbage.
@@ -192,7 +215,7 @@ end
 -- Check if a local bucket can be deleted.
 --
 local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
-    return remote_bucket and remote_bucket.status == consts.BUCKET.ACTIVE
+    return remote_bucket and bucket_is_writable(remote_bucket)
 end
 
 --
@@ -242,8 +265,7 @@ local function recovery_step()
         end
         is_empty = false
         local bucket = _bucket:get{bucket_id}
-        if not bucket or (bucket.status ~= consts.BUCKET.SENDING and
-                          bucket.status ~= consts.BUCKET.RECEIVING) then
+        if not bucket or not bucket_is_transfer_in_progress(bucket) then
             -- Possibly, a bucket was deleted or recovered by
             -- an admin. Or recovery_f started not after
             -- bootstrap, but after master change - in such a case
@@ -399,24 +421,32 @@ local function bucket_check_state(bucket_id, mode)
     assert(mode == 'read' or mode == 'write')
     local bucket = box.space._bucket:get({bucket_id})
     local errcode = nil
-    if bucket == nil or bucket_is_garbage(bucket) or
-       bucket.status == consts.BUCKET.RECEIVING then
+    if not bucket then
         errcode = lerror.code.WRONG_BUCKET
-    elseif (bucket.status == consts.BUCKET.SENDING and mode ~= 'read') then
-        errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
-    elseif bucket.status == consts.BUCKET.ACTIVE and mode ~= 'read' and
-           M.this_replicaset.master ~= M.this_replica then
+        goto finish
+    elseif mode == 'read' then
+        if not bucket_is_readable(bucket) then
+            errcode = lerror.code.WRONG_BUCKET
+            goto finish
+        end
+    elseif not bucket_is_writable(bucket) then
+        if bucket_is_transfer_in_progress(bucket) then
+            errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
+        else
+            errcode = lerror.code.WRONG_BUCKET
+        end
+        goto finish
+    elseif M.this_replicaset.master ~= M.this_replica then
         errcode = lerror.code.NON_MASTER
+        goto finish
     end
-    if errcode ~= nil then
-        local dest = bucket and bucket.destination or nil
-        return bucket, lerror.vshard(errcode, {bucket_id = bucket_id,
-                                               destination = dest})
-    end
-
-    assert(bucket.status == consts.BUCKET.ACTIVE or
-           bucket.status == consts.BUCKET.SENDING and mode == 'read')
-    return bucket, nil
+    assert(not errcode)
+    assert(mode == 'read' and bucket_is_readable(bucket) or
+           mode == 'write' and bucket_is_writable(bucket))
+::finish::
+    return bucket, errcode and
+           lerror.vshard(errcode, {bucket_id = bucket_id,
+                                   destination = bucket and bucket.destination})
 end
 
 --
@@ -1598,11 +1628,12 @@ local function storage_info()
     if is_this_replicaset_locked() then
         state.bucket.lock = true
     end
-    state.bucket.total = box.space._bucket.index.pk:count()
-    state.bucket.active = box.space._bucket.index.status:count({consts.BUCKET.ACTIVE})
-    state.bucket.garbage = box.space._bucket.index.status:count({consts.BUCKET.SENT})
-    state.bucket.receiving = box.space._bucket.index.status:count({consts.BUCKET.RECEIVING})
-    state.bucket.sending = box.space._bucket.index.status:count({consts.BUCKET.SENDING})
+    local status = box.space._bucket.index.status
+    state.bucket.total = box.space._bucket:count()
+    state.bucket.active = status:count({consts.BUCKET.ACTIVE})
+    state.bucket.garbage = status:count({consts.BUCKET.SENT})
+    state.bucket.receiving = status:count({consts.BUCKET.RECEIVING})
+    state.bucket.sending = status:count({consts.BUCKET.SENDING})
     if state.bucket.receiving ~= 0 and state.bucket.sending ~= 0 then
         --
         --Some buckets are receiving and some buckets are sending at same time,
