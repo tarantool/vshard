@@ -387,14 +387,13 @@ local function failover_step()
         local old_replica = rs.replica
         if failover_need_up_priority(rs, curr_ts) then
             rs:up_replica_priority()
-            replica_is_changed = true
         end
         if failover_need_down_priority(rs, curr_ts) then
             rs:down_replica_priority()
-            replica_is_changed = true
         end
         if old_replica ~= rs.replica then
             log.info('New replica %s for %s', rs.replica, rs)
+            replica_is_changed = true
         end
     end
     return replica_is_changed
