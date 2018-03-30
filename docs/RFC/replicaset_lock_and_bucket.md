@@ -1,6 +1,6 @@
 # Replicaset lock and bucket pin
 
-* **Status**: In progress
+* **Status**: Complete
 * **Start date**: 19-03-2018
 * **Authors**: Vladislav Shpilevoy @Gerold103 <v.shpilevoy@tarantool.org>
 * **Issues**: [#71](https://github.com/tarantool/vshard/issues/71)
