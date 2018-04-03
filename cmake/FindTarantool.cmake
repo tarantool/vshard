@@ -9,7 +9,8 @@ macro(extract_definition name output input)
 endmacro()
 
 find_path(TARANTOOL_INCLUDE_DIR tarantool/module.h
-  HINTS ENV TARANTOOL_DIR /usr/local/include
+  HINTS ${TARANTOOL_DIR} ENV TARANTOOL_DIR
+  PATH_SUFFIXES include
 )
 
 if(TARANTOOL_INCLUDE_DIR)
