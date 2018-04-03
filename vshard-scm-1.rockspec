@@ -12,10 +12,16 @@ description = {
 dependencies = {
     'tarantool >= 1.7.7';
 }
+external_dependencies = {
+    TARANTOOL = {
+        header = 'tarantool/module.h';
+    };
+}
 build = {
     type = 'cmake';
     variables = {
         CMAKE_BUILD_TYPE="RelWithDebInfo";
+        TARANTOOL_DIR="$(TARANTOOL_DIR)";
         TARANTOOL_INSTALL_LIBDIR="$(LIBDIR)";
         TARANTOOL_INSTALL_LUADIR="$(LUADIR)";
     };
