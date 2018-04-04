@@ -10,6 +10,10 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 - Tarantool 1.7.7+ (use 1.9 branch from GitHub).
 
+## Install
+
+Install **vshard** as module `tarantoolctl rocks install https://raw.githubusercontent.com/tarantool/vshard/master/vshard-scm-1.rockspec`
+
 ## Configuration
 
 A Tarantool sharded cluster consists of the following components:
