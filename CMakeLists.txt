@@ -14,11 +14,6 @@ set(CMAKE_INSTALL_DATADIR "" )
 find_package(Tarantool)
 include_directories(${TARANTOOL_INCLUDE_DIRS})
 
-# Find MsgPuck
-set(MsgPuck_FIND_REQUIRED ON)
-find_package(MsgPuck)
-include_directories(${MSGPUCK_INCLUDE_DIRS})
-
 add_definitions("-D_GNU_SOURCE")
 
 # Set CFLAGS
