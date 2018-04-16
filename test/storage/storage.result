@@ -340,13 +340,13 @@ test_run:cmd("switch storage_2_a")
 fiber = require('fiber')
 ---
 ...
-while #vshard.storage.info().alerts ~= 1 do fiber.sleep(0.1) end
+info = vshard.storage.info()
 ---
 ...
-fiber.sleep(1)
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.storage.info() end
 ---
 ...
-vshard.storage.info()
+info
 ---
 - replicasets:
     <replicaset_2>:

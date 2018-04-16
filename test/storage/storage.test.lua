@@ -91,9 +91,9 @@ vshard.storage.info()
 test_run:cmd("start server storage_2_a")
 test_run:cmd("switch storage_2_a")
 fiber = require('fiber')
-while #vshard.storage.info().alerts ~= 1 do fiber.sleep(0.1) end
-fiber.sleep(1)
-vshard.storage.info()
+info = vshard.storage.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.storage.info() end
+info
 test_run:cmd("stop server storage_2_b")
 vshard.storage.info()
 test_run:cmd("start server storage_2_b")
