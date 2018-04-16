@@ -77,7 +77,7 @@ if not M then
         -- for tests.
         is_rebalancer_active = true,
         -- Maximal allowed percent deviation of bucket count on a
-        -- replicaset from ethalon bucket count.
+        -- replicaset from etalon bucket count.
         rebalancer_disbalance_threshold = 0,
         -- Maximal bucket count that can be received by a single
         -- replicaset simultaneously.
@@ -1100,10 +1100,10 @@ end
 local function rebalancer_calculate_metrics(replicasets, max_receiving)
     local max_disbalance = 0
     for _, replicaset in pairs(replicasets) do
-        local needed = replicaset.ethalon_bucket_count - replicaset.bucket_count
-        if replicaset.ethalon_bucket_count ~= 0 then
+        local needed = replicaset.etalon_bucket_count - replicaset.bucket_count
+        if replicaset.etalon_bucket_count ~= 0 then
             local disbalance =
-                math.abs(needed) / replicaset.ethalon_bucket_count * 100
+                math.abs(needed) / replicaset.etalon_bucket_count * 100
             if disbalance > max_disbalance then
                 max_disbalance = disbalance
             end
@@ -1313,8 +1313,8 @@ local function rebalancer_f(module_version)
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
             goto continue
         end
-        lreplicaset.calculate_ethalon_balance(replicasets,
-                                              total_bucket_active_count)
+        lreplicaset.calculate_etalon_balance(replicasets,
+                                             total_bucket_active_count)
         local max_disbalance =
             rebalancer_calculate_metrics(replicasets,
                                          M.rebalancer_max_receiving)

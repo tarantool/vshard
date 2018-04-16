@@ -31,9 +31,9 @@
 --      uuid = <replicaset_uuid>,
 --      weight = number,
 --      priority_list = <list of replicas, sorted by weight asc>,
---      ethalon_bucket_count = <bucket count, that must be stored
---                              on this replicaset to reach the
---                              balance in a cluster>,
+--      etalon_bucket_count = <bucket count, that must be stored
+--                             on this replicaset to reach the
+--                             balance in a cluster>,
 --  }
 --
 -- replicasets = {
@@ -395,7 +395,7 @@ local replica_mt = {
 }
 
 --
--- Calculate for each replicaset its ethalon bucket count.
+-- Calculate for each replicaset its etalon bucket count.
 -- Iterative algorithm is used to learn the best balance in a
 -- cluster. On each step it calculates perfect bucket count for
 -- each replicaset. If this count can not be satisfied due to
@@ -412,7 +412,7 @@ local replica_mt = {
 -- least one new overpopulated replicaset, so it has complexity
 -- O(N^2), where N - replicaset count.
 --
-local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
+local function cluster_calculate_etalon_balance(replicasets, bucket_count)
     local is_balance_found = false
     local weight_sum = 0
     local step_count = 0
@@ -428,10 +428,10 @@ local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
         local buckets_calculated = 0
         for _, replicaset in pairs(replicasets) do
             if not replicaset.ignore_disbalance then
-                replicaset.ethalon_bucket_count =
+                replicaset.etalon_bucket_count =
                     math.ceil(replicaset.weight * bucket_per_weight)
                 buckets_calculated =
-                    buckets_calculated + replicaset.ethalon_bucket_count
+                    buckets_calculated + replicaset.etalon_bucket_count
             end
         end
         local buckets_rest = buckets_calculated - bucket_count
@@ -445,9 +445,9 @@ local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
                     local n = replicaset.weight * bucket_per_weight
                     local ceil = math.ceil(n)
                     local floor = math.floor(n)
-                    if replicaset.ethalon_bucket_count > 0 and ceil ~= floor then
-                        replicaset.ethalon_bucket_count =
-                            replicaset.ethalon_bucket_count - 1
+                    if replicaset.etalon_bucket_count > 0 and ceil ~= floor then
+                        replicaset.etalon_bucket_count =
+                            replicaset.etalon_bucket_count - 1
                         buckets_rest = buckets_rest - 1
                     end
                 end
@@ -456,7 +456,7 @@ local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
                 -- pinned buckets.
                 --
                 local pinned = replicaset.pinned_count
-                if pinned and replicaset.ethalon_bucket_count < pinned then
+                if pinned and replicaset.etalon_bucket_count < pinned then
                     -- This replicaset can not send out enough
                     -- buckets to reach a balance. So do the best
                     -- effort balance by sending from the
@@ -466,7 +466,7 @@ local function cluster_calculate_ethalon_balance(replicasets, bucket_count)
                     -- calculation.
                     is_balance_found = false
                     bucket_count = bucket_count - replicaset.pinned_count
-                    replicaset.ethalon_bucket_count = replicaset.pinned_count
+                    replicaset.etalon_bucket_count = replicaset.pinned_count
                     replicaset.ignore_disbalance = true
                     weight_sum = weight_sum - replicaset.weight
                 end
@@ -590,7 +590,7 @@ end
 
 return {
     buildall = buildall,
-    calculate_ethalon_balance = cluster_calculate_ethalon_balance,
+    calculate_etalon_balance = cluster_calculate_etalon_balance,
     destroy = destroy,
     wait_masters_connect = wait_masters_connect,
 }

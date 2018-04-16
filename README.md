@@ -106,11 +106,11 @@ local cfg = {
 
 * `sharding` defines logical topology of sharded Tarantool cluster;
 * `bucket_count` total bucket count in a cluster. **It can not be changed after bootstrap!**;
-* `rebalancer_disbalance_threshold` maximal bucket disbalance percents. Disbalance for each replicaset is calculated by formula: `|ethalon_bucket_count - real_bucket_count| / ethalon_bucket_count * 100`.
+* `rebalancer_disbalance_threshold` maximal bucket disbalance percents. Disbalance for each replicaset is calculated by formula: `|etalon_bucket_count - real_bucket_count| / etalon_bucket_count * 100`.
 * `rebalancer_max_receiving` maximal bucket count that can be received in parallel by single replicaset. This count must be limited, because else, when a new replicaset is added to a cluster, the rebalancer would send to it very big amount of buckets from existing replicasets - it produces heavy load on a new replicaset to apply all these buckets.
 
 Example of usage `rebalancer_max_receiving`:<br>
-Suppose it to be equal to 100, total bucket count is 1000 and there are 3 replicasets with 333, 333 and 334 buckets. When a new replicaset is added, each replicaset's ethalon bucket count becomes 250. And the new replicaset does not receive 250 buckets at once - it receives 100, 100 and 50 sequentialy instead.
+Suppose it to be equal to 100, total bucket count is 1000 and there are 3 replicasets with 333, 333 and 334 buckets. When a new replicaset is added, each replicaset's etalon bucket count becomes 250. And the new replicaset does not receive 250 buckets at once - it receives 100, 100 and 50 sequentialy instead.
 
 ### Replicas weight configuration
 
