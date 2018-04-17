@@ -3,8 +3,8 @@ Priority: optional
 Section: database
 Maintainer: Vladislav Shpilevoy <v.shpilevoy@tarantool.org>
 Build-Depends: debhelper (>= 9),
-               tarantool (>= 1.10.0),
-               tarantool-dev (>= 1.10.0),
+               tarantool (>= 1.9.0),
+               tarantool-dev (>= 1.9.0),
 Standards-Version: 3.9.6
 Homepage: https://github.com/tarantool/vshard
 Vcs-Git: git://github.com/tarantool/vshard.git
@@ -12,6 +12,6 @@ Vcs-Browser: https://github.com/tarantool/vshard
 
 Package: tarantool-vshard
 Architecture: all
-Depends: tarantool (>= 1.10.0), ${misc:Depends}
+Depends: tarantool (>= 1.9.0), ${misc:Depends}
 Description: The new generation of sharding based on virtual buckets
  The new generation of sharding based on virtual buckets.

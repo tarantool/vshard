@@ -9,9 +9,9 @@ Source0: https://github.com/tarantool/vshard/archive/%{version}/vshard-%{version
 BuildArch: noarch
 BuildRequires: cmake >= 2.8
 BuildRequires: gcc >= 4.5
-BuildRequires: tarantool >= 1.10.0
-BuildRequires: tarantool-devel >= 1.10.0
-Requires: tarantool >= 1.10.0
+BuildRequires: tarantool >= 1.9.0
+BuildRequires: tarantool-devel >= 1.9.0
+Requires: tarantool >= 1.9.0
 
 # For tests
 %if (0%{?fedora} >= 22 || 0%{?rhel} >= 7)

@@ -10,7 +10,7 @@ description = {
     license  = 'BSD',
 }
 dependencies = {
-    'tarantool >= 1.10.0';
+    'tarantool >= 1.9.0';
 }
 build = {
     type = 'cmake';
