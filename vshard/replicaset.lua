@@ -390,7 +390,11 @@ local replica_mt = {
         end,
     },
     __tostring = function(replica)
-        return replica.name..'('..replica:safe_uri()..')'
+        if replica.name then
+            return replica.name..'('..replica:safe_uri()..')'
+        else
+            return replica:safe_uri()
+        end
     end,
 }
 

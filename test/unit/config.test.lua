@@ -29,7 +29,6 @@ check(cfg)
 replica.uri = 'uri:uri@uri'
 
 -- Name is not string.
-check(cfg)
 replica.name = 100
 check(cfg)
 replica.name = 'storage'
@@ -177,3 +176,8 @@ cfg.sync_timeout = 0
 _ = lcfg.check(cfg)
 cfg.sync_timeout = 10.5
 _ = lcfg.check(cfg)
+
+-- gh-91: Name is optional.
+replica.name = nil
+_ = lcfg.check(cfg)
+replica.name = 'storage'

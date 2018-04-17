@@ -85,7 +85,7 @@ end
 
 local replica_template = {
     {'uri', {type = 'non-empty string', name = 'URI', check = check_uri}},
-    {'name', {type = 'string', name = "Name"}},
+    {'name', {type = 'string', name = "Name", is_optional = true}},
     {'zone', {type = {'string', 'number'}, name = "Zone", is_optional = true}},
     {'master', {
         type = 'boolean', name = "Master", is_optional = true, default = false,
