@@ -578,23 +578,8 @@ local function wait_masters_connect(replicasets)
     end
 end
 
---
--- Close all connections of all replicas.
---
-local function destroy(replicasets)
-    for _, rs in pairs(replicasets) do
-        if rs.master and rs.master.conn then
-            rs.master.conn:close()
-        end
-        if rs.replica and rs.replica.conn then
-            rs.replica.conn:close()
-        end
-    end
-end
-
 return {
     buildall = buildall,
     calculate_etalon_balance = cluster_calculate_etalon_balance,
-    destroy = destroy,
     wait_masters_connect = wait_masters_connect,
 }

@@ -1440,8 +1440,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     if cfg.weights or cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
-    local old_replicasets = M.replicasets
-    if old_replicasets then
+    if M.replicasets then
         log.info("Starting reconfiguration of replica %s", this_replica_uuid)
     else
         log.info("Starting configuration of replica %s", this_replica_uuid)
@@ -1452,7 +1451,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg, old_replicasets)
+    local new_replicasets = lreplicaset.buildall(cfg, M.replicasets)
     local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
@@ -1573,10 +1572,8 @@ local function storage_cfg(cfg, this_replica_uuid)
         M.rebalancer_fiber:cancel()
         M.rebalancer_fiber = nil
     end
-
-    if old_replicasets then
-        lreplicaset.destroy(old_replicasets)
-    end
+    -- Destroy connections, not used in a new configuration.
+    collectgarbage()
 end
 
 --------------------------------------------------------------------------------

@@ -457,13 +457,12 @@ end
 
 local function router_cfg(cfg)
     cfg = lcfg.check(cfg)
-    local old_replicasets = M.replicasets
-    if not old_replicasets then
+    if not M.replicasets then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
-    local new_replicasets = lreplicaset.buildall(cfg, old_replicasets)
+    local new_replicasets = lreplicaset.buildall(cfg, M.replicasets)
     local total_bucket_count = cfg.bucket_count
     local collect_lua_garbage = cfg.collect_lua_garbage
     lcfg.remove_non_box_options(cfg)
@@ -498,9 +497,8 @@ local function router_cfg(cfg)
         log.info('Start discovery fiber')
         lfiber.create(util.reloadable_fiber_f, M, 'discovery_f', 'Discovery')
     end
-    if old_replicasets then
-        lreplicaset.destroy(old_replicasets)
-    end
+    -- Destroy connections, not used in a new configuration.
+    collectgarbage()
 end
 
 --------------------------------------------------------------------------------
