@@ -10,12 +10,7 @@ description = {
     license  = 'BSD',
 }
 dependencies = {
-    'tarantool >= 1.7.7';
-}
-external_dependencies = {
-    TARANTOOL = {
-        header = 'tarantool/module.h';
-    };
+    'tarantool >= 1.10.0';
 }
 build = {
     type = 'cmake';
