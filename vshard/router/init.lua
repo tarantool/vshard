@@ -144,6 +144,10 @@ local function discovery_f(module_version)
                 end
                 replicaset.bucket_count = #active_buckets
                 for _, bucket_id in pairs(active_buckets) do
+                    local old_rs = M.route_map[bucket_id]
+                    if old_rs and old_rs ~= replicaset then
+                        old_rs.bucket_count = old_rs.bucket_count - 1
+                    end
                     M.route_map[bucket_id] = replicaset
                 end
             end
