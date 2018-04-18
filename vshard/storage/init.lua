@@ -1785,7 +1785,6 @@ M.rebalancer_f = rebalancer_f
 -- These functions are saved in M not for atomic reload, but for
 -- unit testing.
 --
-M.find_sharded_spaces = find_sharded_spaces
 M.find_garbage_bucket = find_garbage_bucket
 M.collect_garbage_step = collect_garbage_step
 M.collect_garbage_f = collect_garbage_f
@@ -1827,5 +1826,6 @@ return {
     internal = M,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,
+    sharded_spaces = find_sharded_spaces,
     module_version = function() return M.module_version end,
 }

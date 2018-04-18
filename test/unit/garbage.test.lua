@@ -5,7 +5,7 @@ fiber = require('fiber')
 test_run:cmd("setopt delimiter ';'")
 function show_sharded_spaces()
     local result = {}
-    for k, space in pairs(vshard.storage.internal.find_sharded_spaces()) do
+    for k, space in pairs(vshard.storage.sharded_spaces()) do
         table.insert(result, space.name)
     end
     return result
@@ -22,6 +22,9 @@ vshard.storage.internal.collect_bucket_garbage_interval = vshard.consts.DEFAULT_
 
 s = box.schema.create_space('test')
 _ = s:create_index('pk')
+--
+-- gh-96: public API to see all sharded spaces.
+--
 show_sharded_spaces()
 
 sk = s:create_index('bucket_id', {parts = {{2, 'string'}}})
