@@ -261,12 +261,26 @@ function wait_discovery()
     end
 end;
 test_run:cmd("setopt delimiter ''");
+-- Pin some buckets to ensure, that pinned buckets are discovered
+-- too.
+test_run:switch('storage_1_a')
+first_active = box.space._bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 1})[1].id
+vshard.storage.bucket_pin(first_active)
+test_run:switch('storage_2_a')
+first_active = box.space._bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 1})[1].id
+vshard.storage.bucket_pin(first_active)
+test_run:switch('router_1')
 wait_discovery()
 calculate_known_buckets()
 test_run:grep_log('router_1', 'was 1, became 1500')
 info = vshard.router.info()
 info.bucket
 info.alerts
+test_run:switch('storage_1_a')
+vshard.storage.bucket_unpin(first_active)
+test_run:switch('storage_2_a')
+vshard.storage.bucket_unpin(first_active)
+test_run:switch('router_1')
 
 --
 -- Ensure the discovery procedure works continuously.

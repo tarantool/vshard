@@ -606,6 +606,9 @@ local function buckets_discovery()
     for _, bucket in status:pairs({consts.BUCKET.ACTIVE}) do
         table.insert(ret, bucket.id)
     end
+    for _, bucket in status:pairs({consts.BUCKET.PINNED}) do
+        table.insert(ret, bucket.id)
+    end
     return ret
 end
 
