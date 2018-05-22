@@ -608,7 +608,10 @@ local function router_info()
         -- * network_timeout - timeout for requests, updated on
         --   each 10 success and 2 failed requests. The greater
         --   timeout, the worse network feels itself.
-        local rs_info = {uuid = replicaset.uuid}
+        local rs_info = {
+            uuid = replicaset.uuid,
+            bucket = {}
+        }
         state.replicasets[replicaset.uuid] = rs_info
 
         -- Build master info.
@@ -662,13 +665,16 @@ local function router_info()
         known_bucket_count = known_bucket_count + replicaset.bucket_count
         if rs_info.master.status ~= 'available' then
             if rs_info.replica.status ~= 'available' then
+                rs_info.bucket.unreachable = replicaset.bucket_count
                 bucket_info.unreachable = bucket_info.unreachable +
                                           replicaset.bucket_count
             else
+                rs_info.bucket.available_ro = replicaset.bucket_count
                 bucket_info.available_ro = bucket_info.available_ro +
                                            replicaset.bucket_count
             end
         else
+            rs_info.bucket.available_rw = replicaset.bucket_count
             bucket_info.available_rw = bucket_info.available_rw +
                                        replicaset.bucket_count
         end

@@ -139,6 +139,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      bucket:
+        available_rw: 0
       uuid: ac522f65-aa94-4134-9f64-51ee384f1a54
       master: *0
     cbf06940-0790-498b-948d-042b62cf3d29:
@@ -147,6 +149,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3302
         uuid: 3de2e3e1-9ebe-4d0d-abb1-26d301b84633
+      bucket:
+        available_ro: 10
       uuid: cbf06940-0790-498b-948d-042b62cf3d29
       master:
         network_timeout: 0.5

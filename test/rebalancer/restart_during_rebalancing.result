@@ -233,6 +233,8 @@ info
         status: available
         uri: storage@127.0.0.1:3305
         uuid: ad40a200-730e-401a-9400-30dbd96dedbd
+      bucket:
+        available_rw: 750
       uuid: ffdfc117-5089-40a8-99f5-0aa914aa2275
       master: *0
     3e9bdda9-ce19-4f9f-b630-116f5dbc7fef:
@@ -241,6 +243,8 @@ info
         status: available
         uri: storage@127.0.0.1:3307
         uuid: 535df17b-c325-466c-9320-77f1190c749c
+      bucket:
+        available_rw: 750
       uuid: 3e9bdda9-ce19-4f9f-b630-116f5dbc7fef
       master: *1
     739fe4fb-2850-4cde-9637-10150724c5eb:
@@ -249,6 +253,8 @@ info
         status: available
         uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
+      bucket:
+        available_rw: 750
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master: *2
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
@@ -257,6 +263,8 @@ info
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 7223fc89-1a0d-480b-a33e-a8d2b117b13d
+      bucket:
+        available_rw: 750
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master: *3
   bucket:

@@ -494,6 +494,7 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 -- Monitoring
 --
 -- All is ok, when all servers are up.
+-- gh-103: show bucket info for each replicaset.
 vshard.router.info()
 ---
 - replicasets:
@@ -503,6 +504,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3303
         uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      bucket:
+        available_rw: 3
       uuid: <replicaset_2>
       master: *0
     <replicaset_1>:
@@ -511,6 +514,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3301
         uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+      bucket:
+        available_rw: 1
       uuid: <replicaset_1>
       master: *1
   bucket:
@@ -549,6 +554,8 @@ info.replicasets[rs.uuid]
     status: unreachable
     uri: storage@127.0.0.1:3301
     uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  bucket:
+    unreachable: 1
   uuid: <replicaset_1>
   master: *0
 ...
@@ -586,6 +593,8 @@ info.replicasets[rs.uuid]
     status: available
     uri: storage@127.0.0.1:3301
     uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+  bucket:
+    available_ro: 1
   uuid: <replicaset_1>
   master:
     status: missing

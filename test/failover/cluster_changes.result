@@ -76,6 +76,8 @@ vshard.router.info()
     971279ef-5c38-4d14-86ee-0e4a56567955:
       replica:
         status: missing
+      bucket:
+        available_rw: 0
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master:
         network_timeout: 0.5
@@ -85,6 +87,8 @@ vshard.router.info()
     739fe4fb-2850-4cde-9637-10150724c5eb:
       replica:
         status: missing
+      bucket:
+        available_rw: 0
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         network_timeout: 0.5
@@ -94,6 +98,8 @@ vshard.router.info()
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
       replica:
         status: missing
+      bucket:
+        available_rw: 0
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master:
         network_timeout: 0.5
@@ -127,6 +133,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3308
         uuid: dbcf1aaa-4e50-4753-bf06-aaba76297624
+      bucket:
+        available_rw: 0
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master:
         network_timeout: 0.5
@@ -139,6 +147,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
+      bucket:
+        available_rw: 0
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         network_timeout: 0.5
@@ -151,6 +161,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
+      bucket:
+        available_rw: 0
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master: *0
   bucket:
@@ -277,6 +289,8 @@ info
     971279ef-5c38-4d14-86ee-0e4a56567955:
       replica: &0
         status: missing
+      bucket:
+        unreachable: 0
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master: *0
     739fe4fb-2850-4cde-9637-10150724c5eb:
@@ -285,6 +299,8 @@ info
         status: available
         uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
+      bucket:
+        available_ro: 0
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         status: missing
@@ -294,6 +310,8 @@ info
         status: available
         uri: storage@127.0.0.1:3306
         uuid: e2ed64b7-5c3a-4878-9ced-b71a034bd67f
+      bucket:
+        available_ro: 0
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master:
         status: missing
@@ -371,6 +389,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3308
         uuid: dbcf1aaa-4e50-4753-bf06-aaba76297624
+      bucket:
+        available_rw: 0
       uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
       master:
         network_timeout: 0.5
@@ -383,6 +403,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3304
         uuid: 56bb8450-9526-442b-ba96-b96cc38ee2f9
+      bucket:
+        available_rw: 0
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master:
         network_timeout: 0.5
@@ -395,6 +417,8 @@ vshard.router.info()
         status: available
         uri: storage@127.0.0.1:3305
         uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
+      bucket:
+        available_rw: 0
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master: *0
   bucket:

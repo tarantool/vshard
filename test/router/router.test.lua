@@ -205,6 +205,7 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 --
 
 -- All is ok, when all servers are up.
+-- gh-103: show bucket info for each replicaset.
 vshard.router.info()
 
 -- Remove replica and master connections to trigger alert
