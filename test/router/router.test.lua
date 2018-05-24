@@ -89,6 +89,19 @@ vshard.router.bootstrap()
 vshard.router.bootstrap()
 
 --
+-- gh-108: negative bucket count on discovery.
+--
+vshard.router.internal.route_map = {}
+rets = {}
+function do_echo() table.insert(rets, vshard.router.callro(1, 'echo', {1})) end
+f1 = fiber.create(do_echo) f2 = fiber.create(do_echo)
+while f1:status() ~= 'dead' and f2:status() ~= 'dead' do fiber.sleep(0.01) end
+vshard.router.info()
+rets
+rs1.bucket_count
+rs2.bucket_count
+
+--
 -- Test lua errors.
 --
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})

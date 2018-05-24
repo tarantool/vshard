@@ -37,10 +37,10 @@ end
 local function bucket_set(bucket_id, replicaset)
     assert(replicaset)
     local old_replicaset = M.route_map[bucket_id]
-    if old_replicaset then
-        old_replicaset.bucket_count = old_replicaset.bucket_count - 1
-    end
-    if replicaset ~= old_replicaset then
+    if old_replicaset ~= replicaset then
+        if old_replicaset then
+            old_replicaset.bucket_count = old_replicaset.bucket_count - 1
+        end
         replicaset.bucket_count = replicaset.bucket_count + 1
     end
     M.route_map[bucket_id] = replicaset

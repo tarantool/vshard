@@ -218,6 +218,69 @@ vshard.router.bootstrap()
   message: Cluster is already bootstrapped
 ...
 --
+-- gh-108: negative bucket count on discovery.
+--
+vshard.router.internal.route_map = {}
+---
+...
+rets = {}
+---
+...
+function do_echo() table.insert(rets, vshard.router.callro(1, 'echo', {1})) end
+---
+...
+f1 = fiber.create(do_echo) f2 = fiber.create(do_echo)
+---
+...
+while f1:status() ~= 'dead' and f2:status() ~= 'dead' do fiber.sleep(0.01) end
+---
+...
+vshard.router.info()
+---
+- replicasets:
+    <replicaset_2>:
+      replica: &0
+        network_timeout: 0.5
+        status: available
+        uri: storage@127.0.0.1:3303
+        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+      bucket:
+        available_rw: 1
+      uuid: <replicaset_2>
+      master: *0
+    <replicaset_1>:
+      replica: &1
+        network_timeout: 0.5
+        status: available
+        uri: storage@127.0.0.1:3301
+        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+      bucket:
+        available_rw: 0
+      uuid: <replicaset_1>
+      master: *1
+  bucket:
+    unreachable: 0
+    available_ro: 0
+    unknown: 2999
+    available_rw: 1
+  status: 1
+  alerts:
+  - ['UNKNOWN_BUCKETS', '2999 buckets are not discovered']
+...
+rets
+---
+- - 1
+  - 1
+...
+rs1.bucket_count
+---
+- 0
+...
+rs2.bucket_count
+---
+- 1
+...
+--
 -- Test lua errors.
 --
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
