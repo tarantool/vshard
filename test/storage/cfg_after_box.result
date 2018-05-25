@@ -1,0 +1,96 @@
+test_run = require('test_run').new()
+---
+...
+--
+-- gh-110: Tarantool has a bug: when box.cfg{} is called with
+-- no arguments, then
+-- box.cfg{instance/replicaset_uuid = box.info.uuid/cluster.uuid}
+-- does not work.
+-- Vshard must not include these uuids in config when it is called
+-- not the first time.
+--
+test_run:cmd("create server storage_1_1 with script='storage/storage_1_1.lua'")
+---
+- true
+...
+test_run:cmd("start server storage_1_1")
+---
+- true
+...
+test_run:switch('storage_1_1')
+---
+- true
+...
+vshard.storage.cfg(cfg, instance_uuid)
+---
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:cmd("stop server storage_1_1")
+---
+- true
+...
+test_run:cmd("cleanup server storage_1_1")
+---
+- true
+...
+test_run:cmd("create server storage_1_2 with script='storage/storage_1_2.lua'")
+---
+- true
+...
+test_run:cmd("start server storage_1_2")
+---
+- true
+...
+test_run:switch('storage_1_2')
+---
+- true
+...
+util.check_error(vshard.storage.cfg, cfg, instance_uuid)
+---
+- 'Instance UUID mismatch: already set "8a274925-a26d-47fc-9e1b-af88ce939412" but
+  "8a274925-a26d-47fc-9e1b-af88ce000000" in arguments'
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:cmd("stop server storage_1_2")
+---
+- true
+...
+test_run:cmd("cleanup server storage_1_2")
+---
+- true
+...
+test_run:cmd("create server storage_1_3 with script='storage/storage_1_3.lua'")
+---
+- true
+...
+test_run:cmd("start server storage_1_3")
+---
+- true
+...
+test_run:switch('storage_1_3')
+---
+- true
+...
+util.check_error(vshard.storage.cfg, cfg, instance_uuid)
+---
+- 'Replicaset UUID mismatch: already set "8a274925-a26d-47fc-9e1b-af88ce939412" but
+  "8a274925-a26d-47fc-9e1b-af88ce000000" in vshard config'
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:cmd("stop server storage_1_3")
+---
+- true
+...
+test_run:cmd("cleanup server storage_1_3")
+---
+- true
+...

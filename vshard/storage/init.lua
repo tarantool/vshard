@@ -1496,8 +1496,22 @@ local function storage_cfg(cfg, this_replica_uuid)
     if was_master == is_master then
         cfg.read_only = not is_master
     end
-    cfg.instance_uuid = this_replica.uuid
-    cfg.replicaset_uuid = this_replicaset.uuid
+    if type(box.cfg) == 'function' then
+        cfg.instance_uuid = this_replica.uuid
+        cfg.replicaset_uuid = this_replicaset.uuid
+    else
+        local info = box.info
+        if this_replica_uuid ~= info.uuid then
+            error(string.format('Instance UUID mismatch: already set "%s" '..
+                                'but "%s" in arguments', info.uuid,
+                                this_replica_uuid))
+        end
+        if this_replicaset.uuid ~= info.cluster.uuid then
+            error(string.format('Replicaset UUID mismatch: already set "%s" '..
+                                'but "%s" in vshard config', info.cluster.uuid,
+                                this_replicaset.uuid))
+        end
+    end
     local total_bucket_count = cfg.bucket_count
     local rebalancer_disbalance_threshold = cfg.rebalancer_disbalance_threshold
     local rebalancer_max_receiving = cfg.rebalancer_max_receiving
