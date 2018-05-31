@@ -33,11 +33,11 @@ factor of the data. Recommended value is 3 or more. The number of routers
 are not limited, because routers are completely stateless. We recommend to
 increase the number of routers when existing instance become CPU or I/O bound.
 
-**Router** and **Storage** applications perform completely differents set of
+**Router** and **Storage** applications perform completely different set of
 functions and they should be deployed to different Tarantool instances.
 Despite the fact that it is technically possible to place `router` application
 to every Storage node, this approach is highly discouraged and should be
-avoided on the productional deployments.
+avoided on the production deployments.
 
 All **Storage** instances can be deployed with absolutely identical instance
 (configuration) file. A **Storage** application automatically self-identifies
@@ -51,16 +51,16 @@ For example:
 
 - `storage_1_a` - storage node #1 for replicaset#1
 - `storage_1_b` - storage node #2 for replicaset#1
-- `storage_1_c` - storage node #2 for replicaset#1
-- `storage_1_a` - storage node #1 for replicaset#2
+- `storage_1_c` - storage node #3 for replicaset#1
+- `storage_2_a` - storage node #1 for replicaset#2
 - ...
 
-All Router instances are also can be deployed with absolutely identical
+All Router instances also can be deployed with absolutely identical
 instance (configuration) file. Instance names are not important
 for routers because routers are stateless and know nothing about each other.
 
 All cluster nodes must have identical cluster topology for proper operation.
-It is your obligation to ensure that this configuration is indetical.
+It is your obligation to ensure that this configuration is identical.
 We suggest to use some configuration management tool, like Ansible or Puppet
 to deploy the cluster.
 
@@ -110,14 +110,21 @@ local cfg = {
 * `rebalancer_max_receiving` maximal bucket count that can be received in parallel by single replicaset. This count must be limited, because else, when a new replicaset is added to a cluster, the rebalancer would send to it very big amount of buckets from existing replicasets - it produces heavy load on a new replicaset to apply all these buckets.
 
 Example of usage `rebalancer_max_receiving`:<br>
-Suppose it to be equal to 100, total bucket count is 1000 and there are 3 replicasets with 333, 333 and 334 buckets. When a new replicaset is added, each replicaset's etalon bucket count becomes 250. And the new replicaset does not receive 250 buckets at once - it receives 100, 100 and 50 sequentialy instead.
+Suppose it to be equal to 100, total bucket count is 1000 and there are
+3 replicasets with 333, 333 and 334 buckets. When a new replicaset is
+added, each replicaset's etalon bucket count becomes 250. And the new
+replicaset does not receive 250 buckets at once - it receives 100, 100
+and 50 sequentially instead.
 
 ### Replicas weight configuration
 
 A router sends all read-write request to a master replica only (with master = true in config). For read-only requests the sharding can use weights, if they are specified. The weights are used for failovering and for sending read-only requests not only to master replica, but to the 'nearest' available replica. Weights are used exactly to define distances between replicas in scope of a replicaset.
 
-You can use weights, for example, to define phisical distance between router and each replica in each replicaset - in such a case read-only requests are beeing sent to the literaly nearest replica.<br>
-Or by weights you can define, which replicas are more powerfull and can process more requests per second.
+You can use weights, for example, to define physical distance between
+router and each replica in each replicaset - in such a case read-only
+requests are being sent to the literally nearest replica.<br>
+Or by weights you can define, which replicas are more powerful and can
+process more requests per second.
 
 The idea is to specify for each router and replica their zone, and fill matrix of relative zone weights. It allows to use different weights in different zones for the same zone.
 
@@ -167,7 +174,12 @@ The last requirement to allow weighted routing is specification `zone` parameter
 
 The sharding has builtin rebalancer, which periodically wakes up and moves data from one node to another by buckets. It takes all tuples from all spaces on a node with the same bucket id and moves to a more free node.
 
-To help rebalancer with its work you can specify replicaset weights. The weights are not the same weights as replica ones, defined in the section above. The bigger replicaset weight, the more buckets it can store. You can consider weights as relative data amount on a replicaset. For example, if one replicaset has weight 100 and another has 200, then the second will store twice more buckets against the first one.
+To help rebalancer with its work you can specify replicaset weights. The
+weights are not the same weights as replica ones, defined in the section
+above. The bigger replicaset weight, the more buckets it can store. You
+can consider weights as relative data amount on a replicaset. For
+example, if one replicaset has weight 100 and another has 200, then the
+second will store twice more buckets then the first one.
 
 By default, all weights of all replicasets are equal.
 
@@ -177,8 +189,10 @@ All other fields are passed to box.cfg() as is without any modifications.
 
 **Replicaset Parameters**:
 
-* `[UUID] - string` - replaceset unique identifier, generate random one using `uuidgen(1)`;
-* `replicas - table` - a map of replicas with key = replica UUID and value = instance (see below details);
+* `[UUID] - string` - replicaset unique identifier, generate random one
+  using `uuidgen(1)`;
+* `replicas - table` - a map of replicas with key = replica UUID and
+  value = instance (see details below);
 * `weight - number` - rebalancing weight - the less it is, the less buckets it stores.
 
 **Instance Parameters**:
@@ -221,10 +235,10 @@ for sample configuration.
 
 ## Defining Schema
 
-Database Schema are stored on storages and routers know nothing about
+Database Schema is stored on storages and routers know nothing about
 spaces and tuples.
 
-Spaces should be defined your storage application using `box.once()`:
+Spaces should be defined in your storage application using `box.once()`:
 
 ```Lua
 box.once("testapp:schema:1", function()
@@ -278,7 +292,7 @@ same replicaset.
 
 ## Router public API
 
-All client's requests should be send to routers.
+All client's requests should be sent to routers.
 
 #### `vshard.router.bootstrap()`
 
@@ -339,14 +353,22 @@ vshard.router.info()
 
 **Returns:** original return value from `func` or nil and error object.
 Error object has type attribute equal to 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).
-* `ShardingError` - returned on errors, specific for sharding: replicaset unavailability, master absense, wrong bucket id etc. It has attribute `code` with one of values from vshard.error.code, optional `message` with human readable error description, and other attributes, specific for concrete error code;
+* `ShardingError` - returned on errors, specific for sharding:
+  replicaset unavailability, master absence, wrong bucket id etc. It has
+  attribute `code` with one of values from vshard.error.code, optional
+  `message` with human readable error description, and other attributes,
+  specific for concrete error code;
 * Other errors: see tarantool errors.
 
 `route()` and `routeall()` returns replicaset objects. Replicaset has two methods:
 
 #### `replicaset.callro(func, args, opts)`
 
-Call a function `func` on a nearest available replica (distances are defined using `replica.zone` and `cfg.weights` matrix - see sections above) with a specified arguments. It is recommended to call only read-only functions using `callro()`, because a function can be executed not on a master.
+Call a function `func` on a nearest available replica (distances are
+defined using `replica.zone` and `cfg.weights` matrix - see sections
+above) with a specified arguments. It is recommended to call only
+read-only functions using `callro()`, because the function can be
+executed not on a master.
 
 #### `replicaset.callrw(func, args, opts)`
 
@@ -420,7 +442,8 @@ unix/:./data/storage_1_a.control> vshard.storage.bucket_stat(1)
 
 #### `vshard.storage.bucket_delete_garbage(bucket_id)`
 
-Force garbage collection for `bucket_id`.
+Force garbage collection for `bucket_id` (in case the bucket was
+transferred to a different replicaset).
 
 #### `status, result = bucket_collect(bucket_id)`
 
@@ -449,12 +472,12 @@ Use only for manual recovery or initial redistribution.
 
 #### `status = bucket_force_drop(bucket_id)`
 
-Force removal of `bucket_id` fro, this replicaset.
+Force removal of `bucket_id` from this replicaset.
 Use only for manual recovery or initial redistribution.
 
 #### `status = bucket_send(bucket_id, to)`
 
-Transfer `bucket_id` from the current replicaset to remote replicaset.
+Transfer `bucket_id` from the current replicaset to a remote replicaset.
 
 **Parameters:**
 
@@ -463,7 +486,7 @@ Transfer `bucket_id` from the current replicaset to remote replicaset.
 
 ### `status = bucket_recv(bucket_id, from, data)`
 
-Receive `bucket_id` from remote replicaset.
+Receive `bucket_id` from a remote replicaset.
 
 **Parameters:**
 
@@ -491,7 +514,14 @@ This shard-to-vbucket mapping is stored in a table in one of Tarantool’s syste
 
 Apart from the mapping table, the bucket id is also stored in a special field of every tuple of every table participating in sharding.
 
-Once a shard receives any request (except for SELECT) from an application, this shard checks the bucket id specified in the request against the table of bucket ids that belong to a given node. If the specified bucket id is invalid, the request gets terminated with the following error: “wrong bucket”. Otherwise the request is executed, and all the data created in the process is assigned the bucket id specified in the request. Note that the request can only modify the data that has the same bucket id as the request itself.
+Once a shard receives any request (except for SELECT) from an
+application, this shard checks the bucket id specified in the request
+against the table of bucket ids that belong to a given node. If the
+specified bucket id is invalid, the request gets terminated with the
+following error: “wrong bucket”. Otherwise the request is executed, and
+all the data created in the process is assigned the bucket id specified
+in the request. Note that the request should only modify the data that
+has the same bucket id as the request itself.
 
 Storing bucket ids both in the data itself and the mapping table ensures data consistency regardless of the application logic and makes rebalancing transparent for the application. Storing the mapping table in a system space ensures sharding is performed consistently in case of a failover, as all the replicas in a shard share a common table state.
 
@@ -501,13 +531,13 @@ On their way from the application to the sharded cluster, all the requests pass 
 
 * the number of shards and their placement;
 * the rebalancing process;
-* the occurrence of a failover caused by the shutdown of a replica. 
+* the occurrence of a failover caused by the shutdown of a replica.
 
 A router can also calculate a bucket id on its own provided that the application clearly defines rules for calculating a bucket id based on the request data. To do it, a router needs to be aware of the data schema.
 
 A router is stateless and doesn’t store the cluster topology. Nor does it rebalance data.
 A router is a separate program component that can be implemented both in the storage and application layers, and its placement is application-driven.
- 
+
 A router maintains a constant pool of connections to all the storages that is created at startup. Creating it this way helps avoid configuration errors. Once a pool is created, a router caches the current state of the \_vbucket table to speed up the routing. In case a bucket id is moved to another storage as a result of data rebalancing or one of the shards fails over to a replica, a router updates the routing table in a way that's transparent for the application.
 
 Sharding is not integrated into any centralized configuration storage system. It is assumed that the application itself handles all the interactions with such systems and passes sharding parameters. That said, the configuration can be changed dynamically - for example, when adding or deleting one or several shards:
