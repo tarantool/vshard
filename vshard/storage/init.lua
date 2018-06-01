@@ -393,7 +393,7 @@ local function sync(timeout)
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
-            if replica.downstream and
+            if replica.downstream and replica.downstream.vclock and
                not vclock_lesseq(vclock, replica.downstream.vclock) then
                 done = false
             end
@@ -1680,7 +1680,8 @@ local function storage_info()
         local redundancy = 0
         for id, replica in pairs(box.info.replication) do
             if replica.uuid ~= M.this_replica.uuid then
-                if replica.downstream == nil then
+                if replica.downstream == nil or
+                   replica.downstream.vclock == nil then
                     table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
                                                      replica.uuid))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
