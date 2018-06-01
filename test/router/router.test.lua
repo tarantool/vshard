@@ -361,6 +361,34 @@ vshard.router.sync()
 util.check_error(vshard.router.sync, "xxx")
 vshard.router.sync(100500)
 
+--
+-- gh-81: Check that user passed self arg.
+-- This check ensures that in case a vshard user called an
+-- object method like this: object.method() instead of
+-- object:method(), an appropriate help-error returns.
+--
+_, replicaset = next(vshard.router.internal.replicasets)
+error_messages = {}
+
+test_run:cmd("setopt delimiter ';'")
+for _, func in pairs(getmetatable(replicaset).__index) do
+    local ok, msg = pcall(func, "arg_of_wrong_type")
+    table.insert(error_messages, msg:match("Use .*"))
+end;
+test_run:cmd("setopt delimiter ''");
+error_messages
+
+_, replica = next(replicaset.replicas)
+error_messages = {}
+
+test_run:cmd("setopt delimiter ';'")
+for _, func in pairs(getmetatable(replica).__index) do
+    local ok, msg = pcall(func, "arg_of_wrong_type")
+    table.insert(error_messages, msg:match("Use .*"))
+end;
+test_run:cmd("setopt delimiter ''");
+error_messages
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 

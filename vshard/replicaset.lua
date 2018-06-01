@@ -48,6 +48,7 @@ local lerror = require('vshard.error')
 local fiber = require('fiber')
 local luri = require('uri')
 local ffi = require('ffi')
+local gsc = require('vshard.util').generate_self_checker
 
 --
 -- on_connect() trigger for net.box
@@ -377,6 +378,14 @@ local replicaset_mt = {
     };
     __tostring = replicaset_tostring;
 }
+--
+-- Wrap self methods with a sanity checker.
+--
+local index = {}
+for name, func in pairs(replicaset_mt.__index) do
+    index[name] = gsc("replicaset", name, replicaset_mt, func)
+end
+replicaset_mt.__index = index
 
 local replica_mt = {
     __index = {
@@ -397,6 +406,11 @@ local replica_mt = {
         end
     end,
 }
+index = {}
+for name, func in pairs(replica_mt.__index) do
+    index[name] = gsc("replica", name, replica_mt, func)
+end
+replica_mt.__index = index
 
 --
 -- Calculate for each replicaset its etalon bucket count.

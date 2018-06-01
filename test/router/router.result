@@ -977,6 +977,70 @@ util.check_error(vshard.router.sync, "xxx")
 vshard.router.sync(100500)
 ---
 ...
+--
+-- gh-81: Check that user passed self arg.
+-- This check ensures that in case a vshard user called an
+-- object method like this: object.method() instead of
+-- object:method(), an appropriate help-error returns.
+--
+_, replicaset = next(vshard.router.internal.replicasets)
+---
+...
+error_messages = {}
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+for _, func in pairs(getmetatable(replicaset).__index) do
+    local ok, msg = pcall(func, "arg_of_wrong_type")
+    table.insert(error_messages, msg:match("Use .*"))
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+error_messages
+---
+- - Use replicaset:callro(...) instead of replicaset.callro(...)
+  - Use replicaset:connect_master(...) instead of replicaset.connect_master(...)
+  - Use replicaset:connect_replica(...) instead of replicaset.connect_replica(...)
+  - Use replicaset:rebind_connections(...) instead of replicaset.rebind_connections(...)
+  - Use replicaset:down_replica_priority(...) instead of replicaset.down_replica_priority(...)
+  - Use replicaset:call(...) instead of replicaset.call(...)
+  - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
+  - Use replicaset:connect(...) instead of replicaset.connect(...)
+  - Use replicaset:callrw(...) instead of replicaset.callrw(...)
+  - Use replicaset:connect_all(...) instead of replicaset.connect_all(...)
+...
+_, replica = next(replicaset.replicas)
+---
+...
+error_messages = {}
+---
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+for _, func in pairs(getmetatable(replica).__index) do
+    local ok, msg = pcall(func, "arg_of_wrong_type")
+    table.insert(error_messages, msg:match("Use .*"))
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+error_messages
+---
+- - Use replica:is_connected(...) instead of replica.is_connected(...)
+  - Use replica:safe_uri(...) instead of replica.safe_uri(...)
+...
 _ = test_run:cmd("switch default")
 ---
 ...

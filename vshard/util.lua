@@ -48,7 +48,35 @@ local function reloadable_fiber_f(M, func_name, worker_name)
     end
 end
 
+--
+-- Wrap a given function to check that self argument is passed.
+-- New function returns an error in case one called a method
+-- like object.func instead of object:func.
+-- Returning wrapped function to a user and using raw functions
+-- inside of a module improves speed.
+-- This function can be used only in case the second argument is
+-- not of the "table" type or has different metatable.
+-- @param obj_name Name of the called object. Used only for error
+--        message construction.
+-- @param func_name Name of the called function. Used only for an
+--        error message construction.
+-- @param mt Meta table of self argument.
+-- @param func A function which is about to be wrapped.
+--
+-- @retval Wrapped function.
+--
+local function generate_self_checker(obj_name, func_name, mt, func)
+    return function (self, ...)
+        if getmetatable(self) ~= mt then
+            local fmt = 'Use %s:%s(...) instead of %s.%s(...)'
+            error(string.format(fmt, obj_name, func_name, obj_name, func_name))
+        end
+        return func(self, ...)
+    end
+end
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_f = reloadable_fiber_f,
+    generate_self_checker = generate_self_checker,
 }
