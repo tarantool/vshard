@@ -36,6 +36,7 @@ if not M then
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
+            ERRINJ_LONG_RECEIVE = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -228,7 +229,7 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
     end
     if remote_bucket.status == consts.BUCKET.RECEIVING and
        local_bucket.status == consts.BUCKET.SENDING then
-        return M.rebalancer_sending_bucket ~= local_bucket.id
+        return true
     end
     return false
 end
@@ -278,6 +279,11 @@ local function recovery_step()
         if not destination or not destination.master then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
+            new_count = new_count + 1
+            goto continue
+        end
+        -- Do not touch a bucket beeing sent right now.
+        if M.rebalancer_sending_bucket == bucket.id then
             new_count = new_count + 1
             goto continue
         end
@@ -539,6 +545,9 @@ local function bucket_recv(bucket_id, from, data)
 
     box.commit()
     M.buckets_to_recovery[bucket_id] = nil
+    if M.errinj.ERRINJ_LONG_RECEIVE then
+        box.error(box.error.TIMEOUT)
+    end
     return true
 end
 
