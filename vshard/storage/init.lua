@@ -808,8 +808,8 @@ local function find_garbage_bucket(bucket_index, control)
     local iterations = 0
     local bucket_generation = control.bucket_generation
     while true do
-        while M.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
-            lfiber.sleep(0.1)
+        while M.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
+            lfiber.sleep(0.01)
         end
         -- Get next bucket id from a space.
         local t = bucket_index:select({curr_bucket}, {iterator='GE', limit=1})

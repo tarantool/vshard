@@ -53,6 +53,7 @@ control.bucket_generation_collected
 s:truncate()
 control.bucket_generation_collected = -1
 control.bucket_generation = 1
+_ = _bucket:on_replace(function(old_tuple) if old_tuple ~= nil then control.bucket_generation = control.bucket_generation + 1 end end)
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = true
 f = fiber.create(function() garbage_step(control) end)
 _bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
