@@ -552,10 +552,16 @@ local function bucket_recv(bucket_id, from, data)
 end
 
 --
--- Find spaces with index having the specified name.
+-- Find spaces with index having the specified (in cfg) name.
+-- The function result is cached using `schema_version`.
 -- @retval Map of type {space_id = <space object>}.
 --
+local sharded_spaces_cache_schema_version = nil
+local sharded_spaces_cache = nil
 local function find_sharded_spaces()
+    if sharded_spaces_cache_schema_version == box.internal.schema_version() then
+        return sharded_spaces_cache
+    end
     local spaces = {}
     local idx = M.shard_index
     for k, space in pairs(box.space) do
@@ -567,6 +573,8 @@ local function find_sharded_spaces()
             end
         end
     end
+    sharded_spaces_cache_schema_version = box.internal.schema_version()
+    sharded_spaces_cache = spaces
     return spaces
 end
 
@@ -1817,6 +1825,7 @@ M.collect_garbage_step = collect_garbage_step
 M.collect_garbage_f = collect_garbage_f
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
+M.cached_find_sharded_spaces = find_sharded_spaces
 
 if not rawget(_G, '__module_vshard_storage') then
     rawset(_G, '__module_vshard_storage', M)
@@ -1853,6 +1862,8 @@ return {
     internal = M,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,
-    sharded_spaces = find_sharded_spaces,
+    sharded_spaces = function()
+        return table.deepcopy(find_sharded_spaces())
+    end,
     module_version = function() return M.module_version end,
 }

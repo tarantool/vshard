@@ -59,6 +59,15 @@ s:drop()
 s2:drop()
 
 --
+-- gh-111: cache sharded spaces based on schema version
+--
+cached_spaces = vshard.storage.internal.cached_find_sharded_spaces()
+cached_spaces == vshard.storage.internal.cached_find_sharded_spaces()
+s = box.schema.create_space('test')
+cached_spaces == vshard.storage.internal.cached_find_sharded_spaces()
+s:drop()
+
+--
 -- Test garbage buckets detection.
 --
 find_garbage = vshard.storage.internal.find_garbage_bucket
