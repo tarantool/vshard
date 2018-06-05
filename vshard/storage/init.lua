@@ -452,8 +452,7 @@ local function bucket_check_state(bucket_id, mode)
            mode == 'write' and bucket_is_writable(bucket))
 ::finish::
     return bucket, errcode and
-           lerror.vshard(errcode, {bucket_id = bucket_id,
-                                   destination = bucket and bucket.destination})
+           lerror.vshard(errcode, bucket_id, bucket and bucket.destination)
 end
 
 --
@@ -514,8 +513,7 @@ local function bucket_recv(bucket_id, from, data)
 
     local bucket = box.space._bucket:get({bucket_id})
     if bucket ~= nil then
-        return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS,
-                                  {bucket_id = bucket_id})
+        return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS, bucket_id)
     end
 
     box.begin()
@@ -719,14 +717,12 @@ local function bucket_send(bucket_id, destination)
     end
     local replicaset = M.replicasets[destination]
     if replicaset == nil then
-        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET,
-                                  {replicaset_uuid = destination})
+        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
     end
 
     if destination == box.info.cluster.uuid then
-        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF,
-                                  {bucket_id = bucket_id,
-                                   replicaset_uuid = replicaset_uuid})
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, replicaset_uuid,
+                                  bucket_id)
     end
 
     local data = bucket_collect_internal(bucket_id)
@@ -1260,8 +1256,7 @@ end
 --
 local function rebalancer_apply_routes(routes)
     if is_this_replicaset_locked() then
-        return false, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED, nil,
-                                    "Replicaset is locked");
+        return false, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED);
     end
     assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool

@@ -2,6 +2,111 @@ local ffi = require('ffi')
 local json = require('json')
 
 --
+-- Error messages description.
+-- * name -- Key by which an error code can be retrieved from
+--   the expoted by the module `code` dictionary.
+-- * msg -- Error message which can use `args` using
+--   `string.format` notation.
+-- * args -- Names of arguments passed while constructing an
+--   error. After constructed, an error-object contains provided
+--   arguments by the names specified in the field.
+--
+local error_message_template = {
+    [1] = {
+        name = 'WRONG_BUCKET',
+        args = {'bucket_id', 'destination'}
+    },
+    [2] = {
+        name = 'NON_MASTER',
+        args = {'bucket_id', 'destination'}
+    },
+    [3] = {
+        name = 'BUCKET_ALREADY_EXISTS',
+        args = {'bucket_id'}
+    },
+    [4] = {
+        name = 'NO_SUCH_REPLICASET',
+        args = {'replicaset_uuid'}
+    },
+    [5] = {
+        name = 'MOVE_TO_SELF',
+        args = {'replicaset_uuid', 'bucket_id'}
+    },
+    [6] = {
+         name = 'MISSING_MASTER',
+         msg = 'Master is not configured for replicaset %s',
+         args = {'replicaset_uuid'}
+    },
+    [7] = {
+        name = 'TRANSFER_IS_IN_PROGRESS',
+        args = {'bucket_id', 'destination'}
+    },
+    [8] = {
+        name = 'UNREACHABLE_REPLICASET',
+        msg = 'There is no active replicas in replicaset %s',
+        args = {'unreachable_uuid', 'bucket_id'}
+    },
+    [9] = {
+        name = 'NO_ROUTE_TO_BUCKET',
+        args = {'bucket_id'}
+    },
+    [10] = {
+        name = 'NON_EMPTY',
+        msg = 'Cluster is already bootstrapped'
+    },
+    [11] = {
+        name = 'UNREACHABLE_MASTER',
+        msg = 'Master of replicaset %s is unreachable: %s',
+        args = {'uuid', 'reason'}
+    },
+    [12] = {
+        name = 'OUT_OF_SYNC',
+        msg = 'Replica is out of sync'
+    },
+    [13] = {
+        name = 'HIGH_REPLICATION_LAG',
+        msg = 'High replication lag: %f',
+        args = {'lag'}
+    },
+    [14] = {
+        name = 'UNREACHABLE_REPLICA',
+        msg = "Replica %s isn't active",
+        args = {'unreachable_uuid'}
+    },
+    [15] = {
+        name = 'LOW_REDUNDANCY',
+        msg = 'Only one replica is active'
+    },
+    [16] = {
+        name = 'INVALID_REBALANCING',
+        msg = 'Sending and receiving buckets at same time is not allowed'
+    },
+    [17] = {
+        name = 'SUBOPTIMAL_REPLICA',
+        msg = 'A current read replica in replicaset %s is not optimal'
+    },
+    [18] = {
+        name = 'UNKNOWN_BUCKETS',
+        msg = '%d buckets are not discovered',
+        arg = {'not_discovered_cnt'}
+    },
+    [19] = {
+        name = 'REPLICASET_IS_LOCKED',
+        msg = 'Replicaset is locked'
+    }
+}
+
+--
+-- User-visible error_name -> error_number dictionary.
+--
+local error_code = {}
+for code, err in pairs(error_message_template) do
+    assert(type(code) == 'number')
+    assert(error_code[err.name] == nil, "Dublicate error name")
+    error_code[err.name] = code
+end
+
+--
 -- There are 2 error types:
 -- * box_error - it is created on tarantool errors: client error,
 --   oom error, socket error etc. It has type = one of tarantool
@@ -16,14 +121,35 @@ local function box_error(original_error)
     return setmetatable(original_error:unpack(), {__tostring = json.encode})
 end
 
-local function vshard_error(code, args, msg)
-    local ret = setmetatable({type = 'ShardingError', code = code,
-                              message = msg}, {__tostring = json.encode})
-    if args then
-        for k, v in pairs(args) do
-            ret[k] = v
-        end
+--
+-- Construct an vshard error.
+-- @param code Number, one of error_code constants.
+-- @param ... Arguments from `error_message_template` `args`
+--        field. Caller have to pass at least as many arguments
+--        as `msg` field requires.
+-- @retval ShardingError object.
+--
+local function vshard_error(code, ...)
+    local format = error_message_template[code]
+    assert(format, 'Error message format is not found.')
+    local args_passed_cnt = select('#', ...)
+    local args = format.args or {}
+    assert(#args == args_passed_cnt,
+           string.format('Wrong number of arguments are passed to %s error',
+                         format.name))
+    local ret = setmetatable({}, {__tostring = json.encode})
+    -- Save error arguments.
+    for i = 1, #args do
+        ret[args[i]] = select(i, ...)
     end
+    if format.msg then
+        ret.message = string.format(format.msg, ...)
+    else
+        ret.message = string.format('%s: %s', format.name, ret)
+    end
+    ret.type = 'ShardingError'
+    ret.code = code
+    ret.name = format.name
     return ret
 end
 
@@ -45,70 +171,6 @@ local function make_error(e)
     end
 end
 
-local error_code = {
-    WRONG_BUCKET = 1,
-    NON_MASTER = 2,
-    BUCKET_ALREADY_EXISTS = 3,
-    NO_SUCH_REPLICASET = 4,
-    MOVE_TO_SELF = 5,
-    MISSING_MASTER = 6,
-    TRANSFER_IS_IN_PROGRESS = 7,
-    UNREACHABLE_REPLICASET = 8,
-    NO_ROUTE_TO_BUCKET = 9,
-    NON_EMPTY = 10,
-    UNREACHABLE_MASTER = 11,
-    OUT_OF_SYNC = 12,
-    HIGH_REPLICATION_LAG = 13,
-    UNREACHABLE_REPLICA = 14,
-    LOW_REDUNDANCY = 15,
-    INVALID_REBALANCING = 16,
-    SUBOPTIMAL_REPLICA = 17,
-    UNKNOWN_BUCKETS = 18,
-    REPLICASET_IS_LOCKED = 19,
-}
-
-local error_message_template = {
-    [error_code.MISSING_MASTER] = {
-         name = 'MISSING_MASTER',
-         msg = 'Master is not configured for replicaset %s'
-    },
-    [error_code.UNREACHABLE_MASTER] = {
-        name = 'UNREACHABLE_MASTER',
-        msg = 'Master of replicaset %s is unreachable: %s'
-    },
-    [error_code.OUT_OF_SYNC] = {
-        name = 'OUT_OF_SYNC',
-        msg = 'Replica is out of sync'
-    },
-    [error_code.HIGH_REPLICATION_LAG] = {
-        name = 'HIGH_REPLICATION_LAG',
-        msg = 'High replication lag: %f'
-    },
-    [error_code.UNREACHABLE_REPLICA] = {
-        name = 'UNREACHABLE_REPLICA',
-        msg = "Replica %s isn't active"
-    },
-    [error_code.UNREACHABLE_REPLICASET] = {
-        name = 'UNREACHABLE_REPLICASET',
-        msg = 'There is no active replicas in replicaset %s'
-    },
-    [error_code.LOW_REDUNDANCY] = {
-        name = 'LOW_REDUNDANCY',
-        msg = 'Only one replica is active'
-    },
-    [error_code.INVALID_REBALANCING] = {
-        name = 'INVALID_REBALANCING',
-        msg = 'Sending and receiving buckets at same time is not allowed'
-    },
-    [error_code.SUBOPTIMAL_REPLICA] = {
-        name = 'SUBOPTIMAL_REPLICA',
-        msg = 'A current read replica in replicaset %s is not optimal'
-    },
-    [error_code.UNKNOWN_BUCKETS] = {
-        name = 'UNKNOWN_BUCKETS',
-        msg = '%d buckets are not discovered',
-    }
-}
 
 local function make_alert(code, ...)
     local format = error_message_template[code]

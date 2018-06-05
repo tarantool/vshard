@@ -114,8 +114,8 @@ end
 local function replicaset_connect_master(replicaset)
     local master = replicaset.master
     if master == nil then
-        return nil, lerror.vshard(lerror.code.MASTER_IS_MISSING,
-                                  {replicaset_uuid = replicaset.uuid})
+        return nil, lerror.vshard(lerror.code.MISSING_MASTER,
+                                  replicaset.uuid)
     end
     return replicaset_connect_to_replica(replicaset, master)
 end

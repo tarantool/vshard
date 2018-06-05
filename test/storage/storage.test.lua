@@ -137,6 +137,11 @@ vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
 --
 -- Bucket transfer
 --
+
+-- Transfer to unknown replicaset.
+vshard.storage.bucket_send(1, 'unknown uuid')
+
+-- Successful transfer.
 vshard.storage.bucket_send(1, replicaset2_uuid)
 _ = test_run:cmd("switch storage_2_a")
 vshard.storage.buckets_info()

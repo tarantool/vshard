@@ -594,9 +594,11 @@ vshard.storage.call(1, 'read', 'customer_lookup', {1})
 vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 ---
 - null
-- type: ShardingError
-  bucket_id: 100500
+- bucket_id: 100500
   code: 1
+  type: ShardingError
+  message: 'WRONG_BUCKET: {"bucket_id":100500}'
+  name: WRONG_BUCKET
 ...
 --
 -- Test not existing space in bucket data.
@@ -614,6 +616,17 @@ vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
 --
 -- Bucket transfer
 --
+-- Transfer to unknown replicaset.
+vshard.storage.bucket_send(1, 'unknown uuid')
+---
+- null
+- code: 4
+  type: ShardingError
+  name: NO_SUCH_REPLICASET
+  replicaset_uuid: unknown uuid
+  message: 'NO_SUCH_REPLICASET: {"replicaset_uuid":"unknown uuid"}'
+...
+-- Successful transfer.
 vshard.storage.bucket_send(1, replicaset2_uuid)
 ---
 - true

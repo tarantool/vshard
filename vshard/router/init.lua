@@ -85,8 +85,7 @@ local function bucket_discovery(bucket_id)
         if last_err.type == 'ClientError' and
            last_err.code == box.error.NO_CONNECTION then
             err = lerror.vshard(lerror.code.UNREACHABLE_REPLICASET,
-                                {bucket_id = bucket_id,
-                                 unreachable_uuid = unreachable_uuid})
+                                unreachable_uuid, bucket_id)
         else
             err = lerror.make(last_err)
         end
@@ -97,9 +96,7 @@ local function bucket_discovery(bucket_id)
         -- bucket was found to be RECEIVING on one replicaset, and
         -- was not found on other replicasets (it was sent during
         -- discovery).
-        err = lerror.vshard(lerror.code.NO_ROUTE_TO_BUCKET,
-                            {bucket_id = bucket_id,
-                             unreachable_uuid = unreachable_uuid})
+        err = lerror.vshard(lerror.code.NO_ROUTE_TO_BUCKET, bucket_id)
     end
 
     return nil, err
@@ -519,8 +516,7 @@ local function cluster_bootstrap()
             return nil, err
         end
         if count > 0 then
-            return nil, lerror.vshard(lerror.code.NON_EMPTY, {},
-                                      'Cluster is already bootstrapped')
+            return nil, lerror.vshard(lerror.code.NON_EMPTY)
         end
     end
     lreplicaset.calculate_etalon_balance(M.replicasets, M.total_bucket_count)

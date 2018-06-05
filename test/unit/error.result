@@ -4,6 +4,9 @@ test_run = require('test_run').new()
 vshard = require('vshard')
 ---
 ...
+util = require('util')
+---
+...
 lerror = vshard.error
 ---
 ...
@@ -20,13 +23,13 @@ tostring(box_error)
 ---
 - '{"type":"ClientError","code":78,"message":"Timeout exceeded","trace":[{"file":"[C]","line":4294967295}]}'
 ...
-vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, {uuid = 'uuid', reason = 'reason'}, 'message 1 2 3')
+vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, 'uuid', 'reason')
 ---
 ...
 tostring(vshard_error)
 ---
-- '{"reason":"reason","code":11,"type":"ShardingError","uuid":"uuid","message":"message
-  1 2 3"}'
+- '{"reason":"reason","code":11,"type":"ShardingError","name":"UNREACHABLE_MASTER","uuid":"uuid","message":"Master
+  of replicaset uuid is unreachable: reason"}'
 ...
 log = require('log')
 ---
@@ -37,6 +40,33 @@ log.info('Log error: %s', vshard_error)
 test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"')
 ---
 - '"reason":"reason","code":11,"type":"ShardingError"'
+...
+--
+-- Part of gh-100: check `error.vshard`.
+--
+lerror.vshard(lerror.code.WRONG_BUCKET, 'arg1', 'arg2')
+---
+- bucket_id: arg1
+  code: 1
+  type: ShardingError
+  name: WRONG_BUCKET
+  message: 'WRONG_BUCKET: {"bucket_id":"arg1","destination":"arg2"}'
+  destination: arg2
+...
+-- Pass less args than msg requires.
+util.check_error(lerror.vshard, lerror.code.MISSING_MASTER)
+---
+- Wrong number of arguments are passed to MISSING_MASTER error
+...
+-- Pass more args than `args` field contains.
+util.check_error(lerror.vshard, lerror.code.MISSING_MASTER, 'arg1', 'arg2')
+---
+- Wrong number of arguments are passed to MISSING_MASTER error
+...
+-- Pass wrong format code.
+util.check_error(lerror.vshard, 'Wrong format code', 'arg1', 'arg2')
+---
+- Error message format is not found.
 ...
 function raise_lua_err() assert(false) end
 ---
