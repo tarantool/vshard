@@ -427,32 +427,29 @@ local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
     local bucket = box.space._bucket:get({bucket_id})
-    local errcode = nil
+    local reason = nil
     if not bucket then
-        errcode = lerror.code.WRONG_BUCKET
-        goto finish
+        reason = 'Not found'
     elseif mode == 'read' then
-        if not bucket_is_readable(bucket) then
-            errcode = lerror.code.WRONG_BUCKET
-            goto finish
+        if bucket_is_readable(bucket) then
+            return bucket
         end
+        reason = 'read is prohibited'
     elseif not bucket_is_writable(bucket) then
         if bucket_is_transfer_in_progress(bucket) then
-            errcode = lerror.code.TRANSFER_IS_IN_PROGRESS
-        else
-            errcode = lerror.code.WRONG_BUCKET
+            return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
+                                         bucket_id, bucket.destination)
         end
-        goto finish
+        reason = 'write is prohibited'
     elseif M.this_replicaset.master ~= M.this_replica then
-        errcode = lerror.code.NON_MASTER
-        goto finish
+        return bucket, lerror.vshard(lerror.code.NON_MASTER,
+                                     M.this_replica.uuid,
+                                     M.this_replicaset.uuid)
+    else
+        return bucket
     end
-    assert(not errcode)
-    assert(mode == 'read' and bucket_is_readable(bucket) or
-           mode == 'write' and bucket_is_writable(bucket))
-::finish::
-    return bucket, errcode and
-           lerror.vshard(errcode, bucket_id, bucket and bucket.destination)
+    return bucket, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, reason,
+                                 bucket and bucket.destination)
 end
 
 --
@@ -721,8 +718,8 @@ local function bucket_send(bucket_id, destination)
     end
 
     if destination == box.info.cluster.uuid then
-        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, replicaset_uuid,
-                                  bucket_id)
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
+                                  replicaset_uuid)
     end
 
     local data = bucket_collect_internal(bucket_id)

@@ -198,7 +198,7 @@ util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 - bucket_id: 1
   code: 9
   type: ShardingError
-  message: 'NO_ROUTE_TO_BUCKET: {"bucket_id":1}'
+  message: Bucket 1 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
@@ -206,7 +206,7 @@ replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 - bucket_id: 1
   code: 9
   type: ShardingError
-  message: 'NO_ROUTE_TO_BUCKET: {"bucket_id":1}'
+  message: Bucket 1 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
 vshard.router.bootstrap()
@@ -320,7 +320,7 @@ replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
 - bucket_id: 0
   code: 9
   type: ShardingError
-  message: 'NO_ROUTE_TO_BUCKET: {"bucket_id":0}'
+  message: Bucket 0 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
@@ -361,7 +361,8 @@ util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 ---
 - null
 - {'bucket_id': 1, 'code': 7, 'type': 'ShardingError', 'destination': '<replicaset_1>',
-  'name': 'TRANSFER_IS_IN_PROGRESS', 'message': 'TRANSFER_IS_IN_PROGRESS: {"bucket_id":1,"destination":"<replicaset_1>"}'}
+  'name': 'TRANSFER_IS_IN_PROGRESS', 'message': 'Bucket 1 is transferring to replicaset
+    <replicaset_1>'}
 ...
 test_run:cmd('switch storage_2_a')
 ---
@@ -433,7 +434,7 @@ vshard.router.route(vshard.consts.DEFAULT_BUCKET_COUNT + 100)
 - bucket_id: 3100
   code: 9
   type: ShardingError
-  message: 'NO_ROUTE_TO_BUCKET: {"bucket_id":3100}'
+  message: Bucket 3100 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
 util.check_error(vshard.router.route, 'asdfg')
@@ -968,8 +969,10 @@ test_run:cmd("switch router_1")
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
 - null
-- {'bucket_id': 1, 'code': 2, 'type': 'ShardingError', 'message': 'NON_MASTER: {"bucket_id":1}',
-  'name': 'NON_MASTER'}
+- {'replica_uuid': '1e02ae8a-afc0-4e91-ba34-843a356b8ed7', 'replicaset_uuid': '<replicaset_2>',
+  'type': 'ShardingError', 'message': 'Replica 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+    is not a master for replicaset <replicaset_2> anymore',
+  'name': 'NON_MASTER', 'code': 2}
 ...
 -- Reconfigure router and test that the WRITE request does work
 vshard.router.cfg(cfg)

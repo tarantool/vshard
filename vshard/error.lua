@@ -14,23 +14,28 @@ local json = require('json')
 local error_message_template = {
     [1] = {
         name = 'WRONG_BUCKET',
-        args = {'bucket_id', 'destination'}
+        msg = 'Cannot perform action with bucket %d, reason: %s',
+        args = {'bucket_id', 'reason', 'destination'}
     },
     [2] = {
         name = 'NON_MASTER',
-        args = {'bucket_id', 'destination'}
+        msg = 'Replica %s is not a master for replicaset %s anymore',
+        args = {'replica_uuid', 'replicaset_uuid'}
     },
     [3] = {
         name = 'BUCKET_ALREADY_EXISTS',
+        msg = 'Bucket %d already exists',
         args = {'bucket_id'}
     },
     [4] = {
         name = 'NO_SUCH_REPLICASET',
+        msg = 'Replicaset %s not found',
         args = {'replicaset_uuid'}
     },
     [5] = {
         name = 'MOVE_TO_SELF',
-        args = {'replicaset_uuid', 'bucket_id'}
+        msg = 'Cannot move: bucket %d is already on replicaset %s',
+        args = {'bucket_id', 'replicaset_uuid'}
     },
     [6] = {
          name = 'MISSING_MASTER',
@@ -39,6 +44,7 @@ local error_message_template = {
     },
     [7] = {
         name = 'TRANSFER_IS_IN_PROGRESS',
+        msg = 'Bucket %d is transferring to replicaset %s',
         args = {'bucket_id', 'destination'}
     },
     [8] = {
@@ -48,6 +54,7 @@ local error_message_template = {
     },
     [9] = {
         name = 'NO_ROUTE_TO_BUCKET',
+        msg = 'Bucket %d cannot be found. Is rebalancing in progress?',
         args = {'bucket_id'}
     },
     [10] = {
@@ -102,6 +109,7 @@ local error_message_template = {
 local error_code = {}
 for code, err in pairs(error_message_template) do
     assert(type(code) == 'number')
+    assert(err.msg, 'msg is required field')
     assert(error_code[err.name] == nil, "Dublicate error name")
     error_code[err.name] = code
 end
@@ -142,11 +150,7 @@ local function vshard_error(code, ...)
     for i = 1, #args do
         ret[args[i]] = select(i, ...)
     end
-    if format.msg then
-        ret.message = string.format(format.msg, ...)
-    else
-        ret.message = string.format('%s: %s', format.name, ret)
-    end
+    ret.message = string.format(format.msg, ...)
     ret.type = 'ShardingError'
     ret.code = code
     ret.name = format.name

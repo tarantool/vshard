@@ -595,9 +595,10 @@ vshard.storage.call(100500, 'read', 'customer_lookup', {1})
 ---
 - null
 - bucket_id: 100500
+  reason: Not found
   code: 1
   type: ShardingError
-  message: 'WRONG_BUCKET: {"bucket_id":100500}'
+  message: 'Cannot perform action with bucket 100500, reason: Not found'
   name: WRONG_BUCKET
 ...
 --
@@ -624,7 +625,7 @@ vshard.storage.bucket_send(1, 'unknown uuid')
   type: ShardingError
   name: NO_SUCH_REPLICASET
   replicaset_uuid: unknown uuid
-  message: 'NO_SUCH_REPLICASET: {"replicaset_uuid":"unknown uuid"}'
+  message: Replicaset unknown uuid not found
 ...
 -- Successful transfer.
 vshard.storage.bucket_send(1, replicaset2_uuid)

@@ -44,14 +44,20 @@ test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"
 --
 -- Part of gh-100: check `error.vshard`.
 --
-lerror.vshard(lerror.code.WRONG_BUCKET, 'arg1', 'arg2')
+lerror.vshard(lerror.code.WRONG_BUCKET, 1, 'arg2', 'arg3')
 ---
-- bucket_id: arg1
+- bucket_id: 1
+  reason: arg2
   code: 1
-  type: ShardingError
+  destination: arg3
   name: WRONG_BUCKET
-  message: 'WRONG_BUCKET: {"bucket_id":"arg1","destination":"arg2"}'
-  destination: arg2
+  message: 'Cannot perform action with bucket 1, reason: arg2'
+  type: ShardingError
+...
+-- Pass an arg of a wrong type.
+util.check_error(lerror.vshard, lerror.code.WRONG_BUCKET, 'arg1', 'arg2', 100)
+---
+- 'bad argument #2 to ''format'' (number expected, got string)'
 ...
 -- Pass less args than msg requires.
 util.check_error(lerror.vshard, lerror.code.MISSING_MASTER)

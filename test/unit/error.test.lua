@@ -20,7 +20,9 @@ test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"
 --
 -- Part of gh-100: check `error.vshard`.
 --
-lerror.vshard(lerror.code.WRONG_BUCKET, 'arg1', 'arg2')
+lerror.vshard(lerror.code.WRONG_BUCKET, 1, 'arg2', 'arg3')
+-- Pass an arg of a wrong type.
+util.check_error(lerror.vshard, lerror.code.WRONG_BUCKET, 'arg1', 'arg2', 100)
 -- Pass less args than msg requires.
 util.check_error(lerror.vshard, lerror.code.MISSING_MASTER)
 -- Pass more args than `args` field contains.
