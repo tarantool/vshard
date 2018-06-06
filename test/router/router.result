@@ -328,17 +328,17 @@ test_run:cmd('switch storage_2_a')
 ---
 - true
 ...
-box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING})
+box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, '<replicaset_1>'})
 ---
-- [1, 'sending']
+- [1, 'sending', '<replicaset_1>']
 ...
 test_run:cmd('switch storage_1_a')
 ---
 - true
 ...
-box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING})
+box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, '<replicaset_2>'})
 ---
-- [1, 'receiving']
+- [1, 'receiving', '<replicaset_2>']
 ...
 test_run:cmd('switch router_1')
 ---
@@ -353,7 +353,7 @@ vshard.router.call(1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 ---
 - null
-- {'type': 'ShardingError', 'code': 7, 'bucket_id': 1}
+- {'type': 'ShardingError', 'bucket_id': 1, 'code': 7, 'destination': '<replicaset_1>'}
 ...
 test_run:cmd('switch storage_2_a')
 ---
@@ -369,7 +369,7 @@ test_run:cmd('switch storage_1_a')
 ...
 box.space._bucket:delete({1})
 ---
-- [1, 'receiving']
+- [1, 'receiving', '<replicaset_2>']
 ...
 test_run:cmd('switch router_1')
 ---

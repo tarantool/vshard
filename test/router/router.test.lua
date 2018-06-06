@@ -119,9 +119,9 @@ replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
 
 test_run:cmd('switch storage_2_a')
-box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING})
+box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, 'cbf06940-0790-498b-948d-042b62cf3d29'})
 test_run:cmd('switch storage_1_a')
-box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING})
+box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, 'ac522f65-aa94-4134-9f64-51ee384f1a54'})
 test_run:cmd('switch router_1')
 -- Ok to read sending bucket.
 vshard.router.call(1, 'read', 'echo', {123})
