@@ -57,11 +57,36 @@ check(cfg)
 cfg.sharding['rsid2'] = nil
 
 -- UUID duplicate in different replicasets.
-replicaset2 = {replicas = {['id3'] = {uri = 'uri:uri@uri2', name = 'storage', master = true}}}
+replicaset2 = {replicas = {['id3'] = {uri = 'uri:uri@uri2', name = 'storage2', master = true}}}
 cfg.sharding['rsid2'] = replicaset2
-replicaset3 = {replicas = {['id3'] = {uri = 'uri:uri@uri3', name = 'storage', master = true}}}
+replicaset3 = {replicas = {['id3'] = {uri = 'uri:uri@uri3', name = 'storage3', master = false}}}
 cfg.sharding['rsid3'] = replicaset3
 check(cfg)
+cfg.sharding['rsid3'] = nil
+cfg.sharding['rsid2'] = nil
+
+--
+-- gh-101: Log warning in case replica.name duplicate found.
+--
+
+-- name duplicate in one replicaset.
+replica2_1 = {uri = 'uri:uri@uri2_1', name = 'dup_name1', master = true}
+replica2_2 = {uri = 'uri:uri@uri2_2', name = 'dup_name1', master = false}
+replicaset2 = {replicas = {['id2'] = replica2_1, ['id3'] = replica2_2}}
+cfg.sharding['rsid2'] = replicaset2
+_ = check(cfg)
+test_run:grep_log('default', 'Duplicate replica.name is found: dup_name1')
+cfg.sharding['rsid2'] = nil
+
+-- name duplicate in different replicasets.
+replica2 = {uri = 'uri:uri@uri2', name = 'dup_name2', master = true}
+replica3 = {uri = 'uri:uri@uri3', name = 'dup_name2', master = true}
+replicaset2 = {replicas = {['id2'] = replica2}}
+replicaset3 = {replicas = {['id3'] = replica3}}
+cfg.sharding['rsid2'] = replicaset2
+cfg.sharding['rsid3'] = replicaset3
+_ = check(cfg)
+test_run:grep_log('default', 'Duplicate replica.name is found: dup_name2')
 cfg.sharding['rsid2'] = nil
 cfg.sharding['rsid3'] = nil
 

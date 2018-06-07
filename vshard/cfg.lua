@@ -141,6 +141,7 @@ end
 local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
+    local names = {}
     for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
@@ -159,6 +160,19 @@ local function check_sharding(sharding)
                 error(string.format('Duplicate uuid %s', replica_uuid))
             end
             uuids[replica_uuid] = true
+            -- Log warning in case replica.name duplicate is
+            -- found. Message appears once for each unique
+            -- duplicate.
+            local name = replica.name
+            if name then
+                if names[name] == nil then
+                    names[name] = 1
+                elseif names[name] == 1 then
+                    log.warn('Duplicate replica.name is found: %s', name)
+                    -- Next duplicates should not be reported.
+                    names[name] = 2
+                end
+            end
         end
     end
 end
