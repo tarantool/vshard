@@ -1,6 +1,7 @@
 -- vshard.util
 local log = require('log')
 local fiber = require('fiber')
+local json = require('json')
 
 --
 -- Extract parts of a tuple.
@@ -75,8 +76,109 @@ local function generate_self_checker(obj_name, func_name, mt, func)
     end
 end
 
+--
+-- Get datastructure diff
+-- old and new should not contain @add ...
+-- @param old 
+--
+local service_fields = {'@add', '@del', '@change'}
+local function data_diff(old, new, result)
+    assert(type(new) == 'table') 
+    assert(type(old) == 'table') 
+    result = result or {}
+    for _, sf in pairs(service_fields) do
+        result[sf] = {}
+        assert(old[sf] == nil)
+        assert(new[sf] == nil)
+    end
+    for k, v in pairs(new) do
+        if old[k] == nil then
+            result['@add'][k] = table.deepcopy(v)
+        end
+        if type(v) == 'table' and type(old[k]) == 'table' then
+            local child = {}
+            result[k] = child
+            data_diff(old, new, child)
+            if not next(child) then
+                resuld[k] = nil
+            end
+        elseif v ~= old[k] then
+            result['@change'][k] = {old[k], v}
+        end
+    end
+    for k, v in pairs(old) do
+        if new[k] == nil then
+            result['@del'][k] = table.deepcopy(v)
+        end
+    end
+    for _, sf in pairs(service_fields) do
+        if not next(result[sf]) then
+            result[sf] = nil
+        end
+    end
+    return result
+end
+
+
+local consistent_json
+local function is_primitive_type(xtype)
+    local ptypes = {"string", "number", "boolean"}
+    for _,t in ipairs(ptypes) do
+        if xtype == t then return true end
+    end
+    return false
+end
+
+local function consistent_json_array(data)
+    local res = {}
+    for _,item in ipairs(data) do
+        table.insert(res,consistent_json(item))
+    end
+    return string.format("[%s]", table.concat(res, ","))
+end
+
+local function consistent_json_object(data)
+    local res = {}
+    local ordered_fnames = {}
+    for k, v in pairs(data) do
+        table.insert(ordered_fnames, k)
+    end
+    table.sort(ordered_fnames)
+    for _, name in ipairs(ordered_fnames) do
+        local item = data[name]
+        local inner = consistent_json(item)
+        inner = string.format([[%s:%s]], json.encode(name), inner)
+        table.insert(res, inner)
+    end
+    return string.format("{%s}", table.concat(res, ","))
+end
+
+-- Takes lua data structure and produces consistent json.
+-- Consistent means that the very same json would be created
+-- for the same data.
+-- @param data Lua data structure.
+--
+-- @retval consistend_json String. Json replesentation of the
+--         data.
+consistent_json = function (data)
+    local xtype = type(data)
+    if is_primitive_type(xtype) then
+        return json.encode(data)
+    end
+    if xtype ~= "table" then
+        raise_error("data type is not supported: %s", xtype)
+    end
+    -- array
+    if #data > 0 then
+        return consistent_json_array(data)
+    end
+    -- object (dict)
+    return consistent_json_object(data)
+end
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_f = reloadable_fiber_f,
     generate_self_checker = generate_self_checker,
+    consistent_json = consistent_json,
 }
