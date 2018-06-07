@@ -11,10 +11,14 @@ util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 test_run:cmd('create server router_1 with script="router/router_1.lua"')
 test_run:cmd('start server router_1')
 test_run:switch('storage_1_a')
+cfg.collect_bucket_garbage_interval = 100
+vshard.storage.cfg(cfg, names.storage_1_a)
 vshard.storage.rebalancer_disable()
 for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:switch('storage_2_a')
+cfg.collect_bucket_garbage_interval = 100
+vshard.storage.cfg(cfg, names.storage_2_a)
 vshard.storage.rebalancer_disable()
 for i = 101, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
@@ -39,7 +43,7 @@ test_run:switch('storage_2_a')
 box.space._bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.SENT}, {'=', 3, replicasets[1]}})
 
 test_run:switch('router_1')
-vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 1})
+_ = vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 1})
 
 -- Wait reconfiguration durigin timeout, if a replicaset was not
 -- found by bucket.destination from WRONG_BUCKET or
@@ -80,8 +84,10 @@ err
 -- detect it and end with ok.
 --
 require('log').info(string.rep('a', 1000))
+vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+call_retval = nil
 f = fiber.create(do_call, 100)
-while not test_run:grep_log('router_1', 'please update configuration') do fiber.sleep(0.1) end
+while not test_run:grep_log('router_1', 'please update configuration', 1000) do fiber.sleep(0.1) end
 vshard.router.internal.replicasets[replicasets[2]] = save_rs2
 while not call_retval do fiber.sleep(0.1) end
 call_retval

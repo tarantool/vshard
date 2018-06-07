@@ -34,6 +34,12 @@ test_run:switch('storage_1_a')
 ---
 - true
 ...
+cfg.collect_bucket_garbage_interval = 100
+---
+...
+vshard.storage.cfg(cfg, names.storage_1_a)
+---
+...
 vshard.storage.rebalancer_disable()
 ---
 ...
@@ -43,6 +49,12 @@ for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 test_run:switch('storage_2_a')
 ---
 - true
+...
+cfg.collect_bucket_garbage_interval = 100
+---
+...
+vshard.storage.cfg(cfg, names.storage_2_a)
+---
 ...
 vshard.storage.rebalancer_disable()
 ---
@@ -106,12 +118,8 @@ test_run:switch('router_1')
 ---
 - true
 ...
-vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 1})
+_ = vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 1})
 ---
-- null
-- type: ShardingError
-  bucket_id: 100
-  code: 9
 ...
 -- Wait reconfiguration durigin timeout, if a replicaset was not
 -- found by bucket.destination from WRONG_BUCKET or
@@ -197,10 +205,16 @@ err
 require('log').info(string.rep('a', 1000))
 ---
 ...
+vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+---
+...
+call_retval = nil
+---
+...
 f = fiber.create(do_call, 100)
 ---
 ...
-while not test_run:grep_log('router_1', 'please update configuration') do fiber.sleep(0.1) end
+while not test_run:grep_log('router_1', 'please update configuration', 1000) do fiber.sleep(0.1) end
 ---
 ...
 vshard.router.internal.replicasets[replicasets[2]] = save_rs2
