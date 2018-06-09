@@ -444,6 +444,15 @@ non_dynamic_cfg = table.copy(cfg)
 non_dynamic_cfg.shard_index = 'non_default_name'
 util.check_error(vshard.router.cfg, non_dynamic_cfg)
 
+-- Error during reconfigure process.
+vshard.router.route(1):callro('echo', {'some_data'})
+vshard.router.internal.errinj.ERRINJ_CFG = true
+old_internal = table.copy(vshard.router.internal)
+util.check_error(vshard.router.cfg, cfg)
+vshard.router.internal.errinj.ERRINJ_CFG = false
+util.has_same_fields(old_internal, vshard.router.internal)
+vshard.router.route(1):callro('echo', {'some_data'})
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 

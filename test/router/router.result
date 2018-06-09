@@ -1156,6 +1156,36 @@ util.check_error(vshard.router.cfg, non_dynamic_cfg)
 ---
 - Non-dynamic option shard_index cannot be reconfigured
 ...
+-- Error during reconfigure process.
+vshard.router.route(1):callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+vshard.router.internal.errinj.ERRINJ_CFG = true
+---
+...
+old_internal = table.copy(vshard.router.internal)
+---
+...
+util.check_error(vshard.router.cfg, cfg)
+---
+- 'Error injection: cfg'
+...
+vshard.router.internal.errinj.ERRINJ_CFG = false
+---
+...
+util.has_same_fields(old_internal, vshard.router.internal)
+---
+- true
+...
+vshard.router.route(1):callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
 _ = test_run:cmd("switch default")
 ---
 ...

@@ -732,6 +732,42 @@ util.check_error(vshard.storage.cfg, non_dynamic_cfg, names.storage_1_a)
 ---
 - Non-dynamic option bucket_count cannot be reconfigured
 ...
+-- Error during reconfigure process.
+_, rs = next(vshard.storage.internal.replicasets)
+---
+...
+rs:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+vshard.storage.internal.errinj.ERRINJ_CFG = true
+---
+...
+old_internal = table.copy(vshard.storage.internal)
+---
+...
+util.check_error(vshard.storage.cfg, cfg, names.storage_1_a)
+---
+- 'Error injection: cfg'
+...
+vshard.storage.internal.errinj.ERRINJ_CFG = false
+---
+...
+util.has_same_fields(old_internal, vshard.storage.internal)
+---
+- true
+...
+_, rs = next(vshard.storage.internal.replicasets)
+---
+...
+rs:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
 _ = test_run:cmd("switch default")
 ---
 ...

@@ -33,6 +33,7 @@ if not M then
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
         errinj = {
+            ERRINJ_CFG = false,
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
@@ -1560,6 +1561,14 @@ local function storage_cfg(cfg, this_replica_uuid)
     local shard_index = cfg.shard_index
     local collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
     local collect_lua_garbage = cfg.collect_lua_garbage
+
+    -- It is considered that all possible errors during cfg
+    -- process occur only before this place.
+    -- This check should be placed as late as possible.
+    if M.errinj.ERRINJ_CFG then
+        error('Error injection: cfg')
+    end
+
     --
     -- Sync timeout is a special case - it must be updated before
     -- all other options to allow a user to demote a master with

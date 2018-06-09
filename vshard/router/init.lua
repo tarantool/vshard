@@ -11,6 +11,7 @@ local M = rawget(_G, '__module_vshard_router')
 if not M then
     M = {
         errinj = {
+            ERRINJ_CFG = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -485,6 +486,12 @@ local function router_cfg(cfg)
     log.info("Calling box.cfg()...")
     for k, v in pairs(cfg) do
         log.info({[k] = v})
+    end
+    -- It is considered that all possible errors during cfg
+    -- process occur only before this place.
+    -- This check should be placed as late as possible.
+    if M.errinj.ERRINJ_CFG then
+        error('Error injection: cfg')
     end
     box.cfg(cfg)
     log.info("Box has been configured")

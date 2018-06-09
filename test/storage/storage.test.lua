@@ -182,6 +182,17 @@ non_dynamic_cfg = table.copy(cfg)
 non_dynamic_cfg.bucket_count = require('vshard.consts').DEFAULT_BUCKET_COUNT + 1
 util.check_error(vshard.storage.cfg, non_dynamic_cfg, names.storage_1_a)
 
+-- Error during reconfigure process.
+_, rs = next(vshard.storage.internal.replicasets)
+rs:callro('echo', {'some_data'})
+vshard.storage.internal.errinj.ERRINJ_CFG = true
+old_internal = table.copy(vshard.storage.internal)
+util.check_error(vshard.storage.cfg, cfg, names.storage_1_a)
+vshard.storage.internal.errinj.ERRINJ_CFG = false
+util.has_same_fields(old_internal, vshard.storage.internal)
+_, rs = next(vshard.storage.internal.replicasets)
+rs:callro('echo', {'some_data'})
+
 _ = test_run:cmd("switch default")
 
 test_run:drop_cluster(REPLICASET_2)

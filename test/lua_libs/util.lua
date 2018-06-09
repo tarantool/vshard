@@ -69,9 +69,33 @@ local function wait_master(test_run, replicaset, master)
     log.info('Slaves are connected to a master "%s"', master)
 end
 
+--
+-- Check that data has at least all etalon's fields and they are
+-- equal.
+-- @param etalon Table which fields should be found in `data`.
+-- @param data Table which is checked against `etalon`.
+--
+-- @retval Boolean indicator of equality and if is not equal, then
+--         table of names of fields which are different in `data`.
+--
+local function has_same_fields(etalon, data)
+    assert(type(etalon) == 'table' and type(data) == 'table')
+    local diff = {}
+    for k, v in pairs(etalon) do
+        if v ~= data[k] then
+            table.insert(diff, k)
+        end
+    end
+    if #diff > 0 then
+        return false, diff
+    end
+    return true
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
     collect_timeouts = collect_timeouts,
     wait_master = wait_master,
+    has_same_fields = has_same_fields,
 }
