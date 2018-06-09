@@ -1,5 +1,17 @@
 local log = require('log')
 local lfiber = require('fiber')
+
+local MODULE_INTERNALS = '__module_vshard_router'
+-- Reload requirements, in case this module is reloaded manually.
+if rawget(_G, MODULE_INTERNALS) then
+    local vshard_modules = {
+        'vshard.consts', 'vshard.error', 'vshard.cfg',
+        'vshard.hash', 'vshard.replicaset', 'vshard.util',
+    }
+    for _, module in pairs(vshard_modules) do
+        package.loaded[module] = nil
+    end
+end
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
@@ -7,15 +19,20 @@ local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 
-local M = rawget(_G, '__module_vshard_router')
+local M = rawget(_G, MODULE_INTERNALS)
 if not M then
     M = {
+        ---------------- Common module attributes ----------------
+        -- The last passed configuration.
+        current_cfg = nil,
         errinj = {
             ERRINJ_CFG = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
         },
+        -- Time to outdate old objects on reload.
+        connection_outdate_delay = nil,
         -- Bucket map cache.
         route_map = {},
         -- All known replicasets used for bucket re-balancing
@@ -479,12 +496,13 @@ local function router_cfg(cfg)
     else
         log.info('Starting router reconfiguration')
     end
-    local new_replicasets = lreplicaset.buildall(cfg, M.replicasets)
+    local new_replicasets = lreplicaset.buildall(cfg)
     local total_bucket_count = cfg.bucket_count
     local collect_lua_garbage = cfg.collect_lua_garbage
-    lcfg.remove_non_box_options(cfg)
+    local box_cfg = table.copy(cfg)
+    lcfg.remove_non_box_options(box_cfg)
     log.info("Calling box.cfg()...")
-    for k, v in pairs(cfg) do
+    for k, v in pairs(box_cfg) do
         log.info({[k] = v})
     end
     -- It is considered that all possible errors during cfg
@@ -493,18 +511,18 @@ local function router_cfg(cfg)
     if M.errinj.ERRINJ_CFG then
         error('Error injection: cfg')
     end
-    box.cfg(cfg)
+    box.cfg(box_cfg)
     log.info("Box has been configured")
+    M.connection_outdate_delay = cfg.connection_outdate_delay
     M.total_bucket_count = total_bucket_count
     M.collect_lua_garbage = collect_lua_garbage
-    M.replicasets = new_replicasets
     M.current_cfg = new_cfg
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
     -- fully moved old replicasets, and not fully built new ones.
-    for _, replicaset in pairs(new_replicasets) do
-        replicaset:rebind_connections()
-    end
+    lreplicaset.rebind_replicasets(new_replicasets, M.replicasets,
+                                   M.connection_outdate_delay)
+    M.replicasets = new_replicasets
     -- Now the new replicasets are fully built. Can establish
     -- connections and yield.
     for _, replicaset in pairs(new_replicasets) do
@@ -793,14 +811,15 @@ end
 -- About functions, saved in M, and reloading see comment in
 -- storage/init.lua.
 --
-M.discovery_f = discovery_f
-M.failover_f = failover_f
-
-if not rawget(_G, '__module_vshard_router') then
-    rawset(_G, '__module_vshard_router', M)
+if not rawget(_G, MODULE_INTERNALS) then
+    rawset(_G, MODULE_INTERNALS, M)
 else
+    router_cfg(M.current_cfg)
     M.module_version = M.module_version + 1
 end
+
+M.discovery_f = discovery_f
+M.failover_f = failover_f
 
 return {
     cfg = router_cfg;

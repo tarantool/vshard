@@ -100,6 +100,11 @@ local error_message_template = {
     [19] = {
         name = 'REPLICASET_IS_LOCKED',
         msg = 'Replicaset is locked'
+    },
+    [20] = {
+        name = 'OBJECT_IS_OUTDATED',
+        msg = 'Object is outdated after module reload/reconfigure. ' ..
+              'Use new instance.'
     }
 }
 

@@ -2,20 +2,34 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
-local consts = require('vshard.consts')
-local lerror = require('vshard.error')
-local util = require('vshard.util')
-local lcfg = require('vshard.cfg')
-local lreplicaset = require('vshard.replicaset')
 local trigger = require('internal.trigger')
 
-local M = rawget(_G, '__module_vshard_storage')
+local MODULE_INTERNALS = '__module_vshard_storage'
+-- Reload requirements, in case this module is reloaded manually.
+if rawget(_G, MODULE_INTERNALS) then
+    local vshard_modules = {
+        'vshard.consts', 'vshard.error', 'vshard.cfg',
+        'vshard.replicaset', 'vshard.util',
+    }
+    for _, module in pairs(vshard_modules) do
+        package.loaded[module] = nil
+    end
+end
+local consts = require('vshard.consts')
+local lerror = require('vshard.error')
+local lcfg = require('vshard.cfg')
+local lreplicaset = require('vshard.replicaset')
+local util = require('vshard.util')
+
+local M = rawget(_G, MODULE_INTERNALS)
 if not M then
     --
     -- The module is loaded for the first time.
     --
     M = {
         ---------------- Common module attributes ----------------
+        -- The last passed configuration.
+        current_cfg = nil,
         --
         -- All known replicasets used for bucket re-balancing.
         -- See format in replicaset.lua.
@@ -1497,7 +1511,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg, M.replicasets)
+    local new_replicasets = lreplicaset.buildall(cfg)
     local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
@@ -1576,7 +1590,6 @@ local function storage_cfg(cfg, this_replica_uuid)
     --
     local old_sync_timeout = M.sync_timeout
     M.sync_timeout = cfg.sync_timeout
-    lcfg.remove_non_box_options(cfg)
 
     if was_master and not is_master then
         local_on_master_disable_prepare()
@@ -1585,7 +1598,9 @@ local function storage_cfg(cfg, this_replica_uuid)
         local_on_master_enable_prepare()
     end
 
-    local ok, err = pcall(box.cfg, cfg)
+    local box_cfg = table.copy(cfg)
+    lcfg.remove_non_box_options(box_cfg)
+    local ok, err = pcall(box.cfg, box_cfg)
     while M.errinj.ERRINJ_CFG_DELAY do
         lfiber.sleep(0.01)
     end
@@ -1604,10 +1619,8 @@ local function storage_cfg(cfg, this_replica_uuid)
     local uri = luri.parse(this_replica.uri)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
 
+    lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     M.replicasets = new_replicasets
-    for _, replicaset in pairs(new_replicasets) do
-        replicaset:rebind_connections()
-    end
     M.this_replicaset = this_replicaset
     M.this_replica = this_replica
     M.total_bucket_count = total_bucket_count
@@ -1846,6 +1859,14 @@ end
 -- restarted (or is restarted from M.background_f, which is not
 -- changed) and continues use old func1 and func2.
 --
+
+if not rawget(_G, MODULE_INTERNALS) then
+    rawset(_G, MODULE_INTERNALS, M)
+else
+    storage_cfg(M.current_cfg, M.this_replica.uuid)
+    M.module_version = M.module_version + 1
+end
+
 M.recovery_f = recovery_f
 M.collect_garbage_f = collect_garbage_f
 M.rebalancer_f = rebalancer_f
@@ -1860,12 +1881,6 @@ M.collect_garbage_f = collect_garbage_f
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
 M.cached_find_sharded_spaces = find_sharded_spaces
-
-if not rawget(_G, '__module_vshard_storage') then
-    rawset(_G, '__module_vshard_storage', M)
-else
-    M.module_version = M.module_version + 1
-end
 
 return {
     sync = sync,

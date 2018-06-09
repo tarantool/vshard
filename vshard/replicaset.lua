@@ -21,6 +21,7 @@
 --                                  requests to the replica>,
 --             net_sequential_fail = <count of sequential failed
 --                                    requests to the replica>,
+--             is_outdated = nil/true,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -34,6 +35,7 @@
 --      etalon_bucket_count = <bucket count, that must be stored
 --                             on this replicaset to reach the
 --                             balance in a cluster>,
+--      is_outdated = nil/true,
 --  }
 --
 -- replicasets = {
@@ -48,7 +50,8 @@ local lerror = require('vshard.error')
 local fiber = require('fiber')
 local luri = require('uri')
 local ffi = require('ffi')
-local gsc = require('vshard.util').generate_self_checker
+local util = require('vshard.util')
+local gsc = util.generate_self_checker
 
 --
 -- on_connect() trigger for net.box
@@ -337,26 +340,38 @@ local function replicaset_tostring(replicaset)
                          master)
 end
 
+local outdate_replicasets
 --
--- Rebind connections of old replicas to new ones.
+-- Copy netbox connections from old replica objects to new ones
+-- and outdate old objects.
+-- @param replicasets New replicasets
+-- @param old_replicasets Replicasets and replicas to be outdated.
+-- @param outdate_delay Number of seconds; delay to outdate
+--        old objects.
 --
-local function replicaset_rebind_connections(replicaset)
-    for _, replica in pairs(replicaset.replicas) do
-        local old_replica = replica.old_replica
-        if old_replica then
-            local conn = old_replica.conn
-            replica.conn = conn
-            replica.down_ts = old_replica.down_ts
-            replica.net_timeout = old_replica.net_timeout
-            replica.net_sequential_ok = old_replica.net_sequential_ok
-            replica.net_sequential_fail = old_replica.net_sequential_fail
-            if conn then
-                conn.replica = replica
-                conn.replicaset = replicaset
-                old_replica.conn = nil
+local function rebind_replicasets(replicasets, old_replicasets, outdate_delay)
+    for replicaset_uuid, replicaset in pairs(replicasets) do
+        local old_replicaset = old_replicasets and
+                               old_replicasets[replicaset_uuid]
+        for replica_uuid, replica in pairs(replicaset.replicas) do
+            local old_replica = old_replicaset and
+                                old_replicaset.replicas[replica_uuid]
+            if old_replica then
+                local conn = old_replica.conn
+                replica.conn = conn
+                replica.down_ts = old_replica.down_ts
+                replica.net_timeout = old_replica.net_timeout
+                replica.net_sequential_ok = old_replica.net_sequential_ok
+                replica.net_sequential_fail = old_replica.net_sequential_fail
+                if conn then
+                    conn.replica = replica
+                    conn.replicaset = replicaset
+                end
             end
-            replica.old_replica = nil
         end
+    end
+    if old_replicasets then
+        util.async_task(outdate_delay, outdate_replicasets, old_replicasets)
     end
 end
 
@@ -369,7 +384,6 @@ local replicaset_mt = {
         connect_master = replicaset_connect_master;
         connect_all = replicaset_connect_all;
         connect_replica = replicaset_connect_to_replica;
-        rebind_connections = replicaset_rebind_connections;
         down_replica_priority = replicaset_down_replica_priority;
         up_replica_priority = replicaset_up_replica_priority;
         call = replicaset_master_call;
@@ -411,6 +425,49 @@ for name, func in pairs(replica_mt.__index) do
     index[name] = gsc("replica", name, replica_mt, func)
 end
 replica_mt.__index = index
+
+--
+-- Meta-methods of outdated objects.
+-- They define only attributes from corresponding metatables to
+-- make user able to access fields of old objects.
+--
+local function outdated_warning(...)
+    return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED)
+end
+
+local outdated_replicaset_mt = {
+    __index = {
+        is_outdated = true
+    }
+}
+for fname, func in pairs(replicaset_mt.__index) do
+    outdated_replicaset_mt.__index[fname] = outdated_warning
+end
+
+local outdated_replica_mt = {
+    __index = {
+        is_outdated = true
+    }
+}
+for fname, func in pairs(replica_mt.__index) do
+    outdated_replica_mt.__index[fname] = outdated_warning
+end
+
+--
+-- Outdate replicaset and replica objects:
+--  * Set outdated_metatables.
+--  * Remove connections.
+--
+outdate_replicasets = function(replicasets)
+    for _, replicaset in pairs(replicasets) do
+        setmetatable(replicaset, outdated_replicaset_mt)
+        for _, replica in pairs(replicaset.replicas) do
+            setmetatable(replica, outdated_replica_mt)
+            replica.conn = nil
+        end
+    end
+    log.info('Old replicaset and replica objects are outdated.')
+end
 
 --
 -- Calculate for each replicaset its etalon bucket count.
@@ -503,7 +560,7 @@ end
 --
 -- Update/build replicasets from configuration
 --
-local function buildall(sharding_cfg, old_replicasets)
+local function buildall(sharding_cfg)
     local new_replicasets = {}
     local weights = sharding_cfg.weights
     local zone = sharding_cfg.zone
@@ -515,8 +572,6 @@ local function buildall(sharding_cfg, old_replicasets)
     end
     local curr_ts = fiber.time()
     for replicaset_uuid, replicaset in pairs(sharding_cfg.sharding) do
-        local old_replicaset = old_replicasets and
-                               old_replicasets[replicaset_uuid]
         local new_replicaset = setmetatable({
             replicas = {},
             uuid = replicaset_uuid,
@@ -526,8 +581,6 @@ local function buildall(sharding_cfg, old_replicasets)
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
-            local old_replica = old_replicaset and
-                                old_replicaset.replicas[replica_uuid]
             -- The old replica is saved in the new object to
             -- rebind its connection at the end of a
             -- router/storage reconfiguration.
@@ -535,7 +588,7 @@ local function buildall(sharding_cfg, old_replicasets)
                 uri = replica.uri, name = replica.name, uuid = replica_uuid,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
-                down_ts = curr_ts, old_replica = old_replica,
+                down_ts = curr_ts,
             }, replica_mt)
             new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then
@@ -596,4 +649,5 @@ return {
     buildall = buildall,
     calculate_etalon_balance = cluster_calculate_etalon_balance,
     wait_masters_connect = wait_masters_connect,
+    rebind_replicasets = rebind_replicasets,
 }

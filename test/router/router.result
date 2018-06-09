@@ -1024,11 +1024,10 @@ error_messages
 - - Use replicaset:callro(...) instead of replicaset.callro(...)
   - Use replicaset:connect_master(...) instead of replicaset.connect_master(...)
   - Use replicaset:connect_replica(...) instead of replicaset.connect_replica(...)
-  - Use replicaset:rebind_connections(...) instead of replicaset.rebind_connections(...)
   - Use replicaset:down_replica_priority(...) instead of replicaset.down_replica_priority(...)
   - Use replicaset:call(...) instead of replicaset.call(...)
-  - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
   - Use replicaset:connect(...) instead of replicaset.connect(...)
+  - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
   - Use replicaset:callrw(...) instead of replicaset.callrw(...)
   - Use replicaset:connect_all(...) instead of replicaset.connect_all(...)
 ...

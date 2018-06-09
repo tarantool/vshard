@@ -87,6 +87,16 @@ _ = require('vshard.storage')
 vshard.storage.module_version()
 check_reloaded()
 
+--
+-- Outdate old replicaset and replica objects.
+--
+_, rs = next(vshard.storage.internal.replicasets)
+package.loaded["vshard.storage"] = nil
+_ = require('vshard.storage')
+rs.callro(rs, 'echo', {'some_data'})
+_, rs = next(vshard.storage.internal.replicasets)
+rs.callro(rs, 'echo', {'some_data'})
+
 test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

@@ -174,6 +174,132 @@ vshard.router.module_version()
 check_reloaded()
 ---
 ...
+--
+-- Outdate old replicaset and replica objects.
+--
+rs = vshard.router.route(1)
+---
+...
+rs:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+package.loaded["vshard.router"] = nil
+---
+...
+_ = require('vshard.router')
+---
+...
+-- Make sure outdate async task has had cpu time.
+while not rs.is_outdated do fiber.sleep(0.001) end
+---
+...
+rs.callro(rs, 'echo', {'some_data'})
+---
+- null
+- type: ShardingError
+  name: OBJECT_IS_OUTDATED
+  message: Object is outdated after module reload/reconfigure. Use new instance.
+  code: 20
+...
+vshard.router = require('vshard.router')
+---
+...
+rs = vshard.router.route(1)
+---
+...
+rs:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+-- Test `connection_outdate_delay`.
+old_connection_delay = cfg.connection_outdate_delay
+---
+...
+cfg.connection_outdate_delay = 0.3
+---
+...
+vshard.router.cfg(cfg)
+---
+...
+cfg.connection_outdate_delay = old_connection_delay
+---
+...
+vshard.router.internal.connection_outdate_delay = nil
+---
+...
+rs_new = vshard.router.route(1)
+---
+...
+rs_old = rs
+---
+...
+_, replica_old = next(rs_old.replicas)
+---
+...
+rs_new:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+-- Check old objets are still valid.
+rs_old:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+replica_old.conn ~= nil
+---
+- true
+...
+fiber.sleep(0.2)
+---
+...
+rs_old:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
+replica_old.conn ~= nil
+---
+- true
+...
+replica_old.is_outdated == nil
+---
+- true
+...
+fiber.sleep(0.2)
+---
+...
+rs_old:callro('echo', {'some_data'})
+---
+- null
+- type: ShardingError
+  name: OBJECT_IS_OUTDATED
+  message: Object is outdated after module reload/reconfigure. Use new instance.
+  code: 20
+...
+replica_old.conn == nil
+---
+- true
+...
+replica_old.is_outdated == true
+---
+- true
+...
+rs_new:callro('echo', {'some_data'})
+---
+- some_data
+- null
+- null
+...
 test_run:switch('default')
 ---
 - true
