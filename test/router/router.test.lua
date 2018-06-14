@@ -411,6 +411,32 @@ for bucket, old_rs in pairs(bucket_to_old_rs) do
         error("route_map was not updataed.")
     end
 end;
+
+--
+-- Check route_map is not filled with old replica objects after
+-- reconfigure.
+--
+-- Simulate long `callro`.
+vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true;
+while vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY ~= 'waiting' do
+    vshard.router.discovery_wakeup()
+    fiber.sleep(0.02)
+end;
+vshard.router.cfg(cfg);
+vshard.router.internal.route_map = {};
+vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false;
+-- Do discovery iteration. Upload buckets from the
+-- first replicaset.
+while not next(vshard.router.internal.route_map) do
+    vshard.router.discovery_wakeup()
+    fiber.sleep(0.01)
+end;
+new_replicasets = {};
+for _, rs in pairs(vshard.router.internal.replicasets) do
+    new_replicasets[rs] = true
+end;
+_, rs = next(vshard.router.internal.route_map);
+new_replicasets[rs] == true;
 test_run:cmd("setopt delimiter ''");
 
 _ = test_run:cmd("switch default")

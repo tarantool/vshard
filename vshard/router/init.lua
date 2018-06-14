@@ -13,6 +13,7 @@ if not M then
         errinj = {
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
+            ERRINJ_LONG_DISCOVERY = false,
         },
         -- Bucket map cache.
         route_map = {},
@@ -127,10 +128,20 @@ local function discovery_f(module_version)
     local iterations_until_lua_gc =
         consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
     while module_version == M.module_version do
-        for _, replicaset in pairs(M.replicasets) do
+        local old_replicasets = M.replicasets
+        for rs_uuid, replicaset in pairs(M.replicasets) do
             local active_buckets, err =
                 replicaset:callro('vshard.storage.buckets_discovery', {},
                                   {timeout = 2})
+            while M.errinj.ERRINJ_LONG_DISCOVERY do
+                M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
+                lfiber.sleep(0.01)
+            end
+            -- Renew replicasets object captured by the for loop
+            -- in case of reconfigure and reload events.
+            if M.replicasets ~= old_replicasets then
+                break
+            end
             if not active_buckets then
                 log.error('Error during discovery %s: %s', replicaset, err)
             else
