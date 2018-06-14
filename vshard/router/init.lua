@@ -491,11 +491,9 @@ local function router_cfg(cfg)
     end
     lreplicaset.wait_masters_connect(new_replicasets)
     if M.failover_fiber == nil then
-        log.info('Start failover fiber')
         lfiber.create(util.reloadable_fiber_f, M, 'failover_f', 'Failover')
     end
     if M.discovery_fiber == nil then
-        log.info('Start discovery fiber')
         lfiber.create(util.reloadable_fiber_f, M, 'discovery_f', 'Discovery')
     end
     -- Destroy connections, not used in a new configuration.

@@ -696,10 +696,8 @@ local function local_on_master_enable()
     M.collect_bucket_garbage_fiber =
         lfiber.create(util.reloadable_fiber_f, M, 'collect_garbage_f',
                       'Garbage collector')
-    log.info("GC is started")
     M.recovery_fiber =
         lfiber.create(util.reloadable_fiber_f, M, 'recovery_f', 'Recovery')
-    log.info('Recovery is started')
     -- TODO: check current status
     log.info("Took on replicaset master role")
 end
@@ -1589,7 +1587,6 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     if min_master == this_replica then
         if not M.rebalancer_fiber then
-            log.info('Run rebalancer')
             M.rebalancer_fiber = lfiber.create(util.reloadable_fiber_f, M,
                                                'rebalancer_f', 'Rebalancer')
         else
