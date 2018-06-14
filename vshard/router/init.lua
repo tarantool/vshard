@@ -475,8 +475,6 @@ local function router_cfg(cfg)
     log.info("Box has been configured")
     M.total_bucket_count = total_bucket_count
     M.collect_lua_garbage = collect_lua_garbage
-    -- TODO: update existing route map in-place
-    M.route_map = {}
     M.replicasets = new_replicasets
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
@@ -489,6 +487,11 @@ local function router_cfg(cfg)
     for _, replicaset in pairs(new_replicasets) do
         replicaset:connect_all()
     end
+    -- Update existing route map in-place.
+    for bucket, rs in pairs(M.route_map) do
+        M.route_map[bucket] = M.replicasets[rs.uuid]
+    end
+
     lreplicaset.wait_masters_connect(new_replicasets)
     if M.failover_fiber == nil then
         lfiber.create(util.reloadable_fiber_f, M, 'failover_f', 'Failover')

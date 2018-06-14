@@ -389,6 +389,30 @@ end;
 test_run:cmd("setopt delimiter ''");
 error_messages
 
+--
+-- gh-117: Preserve route_map on router.cfg.
+--
+bucket_to_old_rs = {}
+bucket_cnt = 0
+test_run:cmd("setopt delimiter ';'")
+for bucket, rs in pairs(vshard.router.internal.route_map) do
+    bucket_to_old_rs[bucket] = rs
+    bucket_cnt = bucket_cnt + 1
+end;
+bucket_cnt;
+vshard.router.cfg(cfg);
+for bucket, old_rs in pairs(bucket_to_old_rs) do
+    local old_uuid = old_rs.uuid
+    local rs = vshard.router.internal.route_map[bucket]
+    if not rs or not old_uuid == rs.uuid then
+        error("Bucket lost during reconfigure.")
+    end
+    if rs == old_rs then
+        error("route_map was not updataed.")
+    end
+end;
+test_run:cmd("setopt delimiter ''");
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 
