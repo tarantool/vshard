@@ -41,9 +41,6 @@ test_run:switch('box_1_a')
 _bucket = box.space._bucket
 ---
 ...
-cfg.bucket_count = 200
----
-...
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 ---
 ...

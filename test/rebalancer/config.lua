@@ -76,6 +76,8 @@ function remove_second_replicaset_first_stage()
 end
 
 return {
+    -- Use small number of buckets to speedup tests.
+    bucket_count = 200,
     sharding = sharding,
     rebalancer_disbalance_threshold = 0.01,
     shard_index = 'vbucket',

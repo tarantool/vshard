@@ -32,7 +32,6 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 test_run:switch('box_1_a')
 fiber = require('fiber')
 _bucket = box.space._bucket
-cfg.bucket_count = 200
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 
 --
@@ -179,7 +178,6 @@ space:select{}
 -- to a new location.
 -- (See point (8) in the test plan)
 --
-cfg.bucket_count = 200
 cfg.rebalancer_max_receiving = 10
 switch_rs1_master()
 vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)

@@ -83,20 +83,17 @@ log = require('log')
 log.info(string.rep('a', 1000))
 ---
 ...
-for i = 1, vshard.consts.DEFAULT_BUCKET_COUNT do box.space._bucket:replace({i, vshard.consts.BUCKET.ACTIVE}) end
+for i = 1, 200 do box.space._bucket:replace({i, vshard.consts.BUCKET.ACTIVE}) end
 ---
 ...
 test_run:switch('router_1')
 ---
 - true
 ...
-util = require('rebalancer_utils')
----
-...
-util.set_bucket_count(vshard.consts.DEFAULT_BUCKET_COUNT)
----
-...
 for i = 1, 4 do vshard.router.discovery_wakeup() end
+---
+...
+util = require('rebalancer_utils')
 ---
 ...
 util.start_loading()
@@ -201,7 +198,7 @@ test_run:switch('router_1')
 start = fiber.time()
 ---
 ...
-while vshard.router.info().bucket.available_rw ~= vshard.consts.DEFAULT_BUCKET_COUNT do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
+while vshard.router.info().bucket.available_rw ~= 200 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 ---
 ...
 fiber.sleep(10 - (fiber.time() - start))
@@ -234,7 +231,7 @@ info
         uri: storage@127.0.0.1:3305
         uuid: ad40a200-730e-401a-9400-30dbd96dedbd
       bucket:
-        available_rw: 750
+        available_rw: 50
       uuid: ffdfc117-5089-40a8-99f5-0aa914aa2275
       master: *0
     3e9bdda9-ce19-4f9f-b630-116f5dbc7fef:
@@ -244,7 +241,7 @@ info
         uri: storage@127.0.0.1:3307
         uuid: 535df17b-c325-466c-9320-77f1190c749c
       bucket:
-        available_rw: 750
+        available_rw: 50
       uuid: 3e9bdda9-ce19-4f9f-b630-116f5dbc7fef
       master: *1
     739fe4fb-2850-4cde-9637-10150724c5eb:
@@ -254,7 +251,7 @@ info
         uri: storage@127.0.0.1:3301
         uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
       bucket:
-        available_rw: 750
+        available_rw: 50
       uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
       master: *2
     832bbba0-9699-4aa1-907d-c7c7af61f5c9:
@@ -264,14 +261,14 @@ info
         uri: storage@127.0.0.1:3303
         uuid: 7223fc89-1a0d-480b-a33e-a8d2b117b13d
       bucket:
-        available_rw: 750
+        available_rw: 50
       uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
       master: *3
   bucket:
     unreachable: 0
     available_ro: 0
     unknown: 0
-    available_rw: 3000
+    available_rw: 200
   status: 0
   alerts: []
 ...
@@ -289,8 +286,8 @@ test_run:switch('fullbox_1_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 750
-  total: 750
+  active: 50
+  total: 50
   garbage: 0
   pinned: 0
   sending: 0
@@ -310,8 +307,8 @@ test_run:switch('fullbox_2_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 750
-  total: 750
+  active: 50
+  total: 50
   garbage: 0
   pinned: 0
   sending: 0
@@ -331,8 +328,8 @@ test_run:switch('fullbox_3_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 750
-  total: 750
+  active: 50
+  total: 50
   garbage: 0
   pinned: 0
   sending: 0
@@ -352,8 +349,8 @@ test_run:switch('fullbox_4_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 750
-  total: 750
+  active: 50
+  total: 50
   garbage: 0
   pinned: 0
   sending: 0

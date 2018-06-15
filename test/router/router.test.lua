@@ -439,6 +439,11 @@ _, rs = next(vshard.router.internal.route_map);
 new_replicasets[rs] == true;
 test_run:cmd("setopt delimiter ''");
 
+-- gh-114: Check non-dynamic option change during reconfigure.
+non_dynamic_cfg = table.copy(cfg)
+non_dynamic_cfg.shard_index = 'non_default_name'
+util.check_error(vshard.router.cfg, non_dynamic_cfg)
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 

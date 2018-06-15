@@ -24,7 +24,6 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 
 test_run:switch('box_1_a')
 _bucket = box.space._bucket
-cfg.bucket_count = 200
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
 vshard.storage.rebalancer_disable()

@@ -36,12 +36,11 @@ test_run:switch('fullbox_1_a')
 vshard.storage.rebalancer_disable()
 log = require('log')
 log.info(string.rep('a', 1000))
-for i = 1, vshard.consts.DEFAULT_BUCKET_COUNT do box.space._bucket:replace({i, vshard.consts.BUCKET.ACTIVE}) end
+for i = 1, 200 do box.space._bucket:replace({i, vshard.consts.BUCKET.ACTIVE}) end
 
 test_run:switch('router_1')
-util = require('rebalancer_utils')
-util.set_bucket_count(vshard.consts.DEFAULT_BUCKET_COUNT)
 for i = 1, 4 do vshard.router.discovery_wakeup() end
+util = require('rebalancer_utils')
 util.start_loading()
 fiber.sleep(2)
 
@@ -105,7 +104,7 @@ while killer:status() ~= 'dead' do fiber.sleep(0.1) end
 test_run:switch('router_1')
 -- Wait until all GC, recovery-discovery finish work.
 start = fiber.time()
-while vshard.router.info().bucket.available_rw ~= vshard.consts.DEFAULT_BUCKET_COUNT do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
+while vshard.router.info().bucket.available_rw ~= 200 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 fiber.sleep(10 - (fiber.time() - start))
 info = vshard.router.info()
 -- Do not show concrete timeouts. They are not stable.

@@ -16,10 +16,10 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 --
 
 test_run:switch('box_2_a')
-vshard.storage.bucket_force_create(1501, 1500)
+vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('box_1_a')
-vshard.storage.bucket_force_create(1, 1500)
+vshard.storage.bucket_force_create(1, 100)
 
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 
@@ -202,13 +202,13 @@ test_run:cmd("setopt delimiter ''");
 -- rebalancer will face with unreachability of the perfect
 -- balance.
 --
-for i = 1, 800 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
+for i = 1, 60 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
 status:count({vshard.consts.BUCKET.PINNED})
 rs1_cfg.weight = 0.5
 vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
--- The perfect balance is now 200-400-400, but on the replicaset 1
--- 800 buckets are pinned, so the actual balance is 800-1100-1100.
+-- The perfect balance is now 40-80-80, but on the replicaset 1
+-- 60 buckets are pinned, so the actual balance is 60-70-70.
 info = vshard.storage.info().bucket
 info.active
 info.pinned

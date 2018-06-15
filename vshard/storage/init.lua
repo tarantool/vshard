@@ -1450,7 +1450,8 @@ local function storage_cfg(cfg, this_replica_uuid)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
-    cfg = lcfg.check(cfg)
+    cfg = lcfg.check(cfg, M.current_cfg)
+    local new_cfg = table.copy(cfg)
     if cfg.weights or cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
@@ -1576,6 +1577,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     M.shard_index = shard_index
     M.collect_bucket_garbage_interval = collect_bucket_garbage_interval
     M.collect_lua_garbage = collect_lua_garbage
+    M.current_cfg = new_cfg
 
     if was_master and not is_master then
         local_on_master_disable()

@@ -1145,6 +1145,17 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
+-- gh-114: Check non-dynamic option change during reconfigure.
+non_dynamic_cfg = table.copy(cfg)
+---
+...
+non_dynamic_cfg.shard_index = 'non_default_name'
+---
+...
+util.check_error(vshard.router.cfg, non_dynamic_cfg)
+---
+- Non-dynamic option shard_index cannot be reconfigured
+...
 _ = test_run:cmd("switch default")
 ---
 ...

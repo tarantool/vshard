@@ -177,6 +177,11 @@ for _, new_replicaset in pairs(new_replicasets) do
 end;
 test_run:cmd("setopt delimiter ''");
 
+-- gh-114: Check non-dynamic option change during reconfigure.
+non_dynamic_cfg = table.copy(cfg)
+non_dynamic_cfg.bucket_count = require('vshard.consts').DEFAULT_BUCKET_COUNT + 1
+util.check_error(vshard.storage.cfg, non_dynamic_cfg, names.storage_1_a)
+
 _ = test_run:cmd("switch default")
 
 test_run:drop_cluster(REPLICASET_2)

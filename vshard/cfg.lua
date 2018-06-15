@@ -220,15 +220,33 @@ local cfg_template = {
 }
 
 --
--- Check sharding config on correctness. Check types, name and uri
--- uniqueness, master count (in each replicaset must by <= 1).
+-- Names of options which cannot be changed during reconfigure.
 --
-local function cfg_check(shard_cfg)
+local non_dynamic_options = {
+    'bucket_count', 'shard_index'
+}
+
+--
+-- Check sharding config on correctness. Check types, name and uri
+-- uniqueness, master count (in each replicaset must be <= 1).
+--
+local function cfg_check(shard_cfg, old_cfg)
     if type(shard_cfg) ~= 'table' then
         error('Сonfig must be map of options')
     end
     shard_cfg = table.deepcopy(shard_cfg)
     validate_config(shard_cfg, cfg_template)
+    if not old_cfg then
+        return shard_cfg
+    end
+    -- Check non-dynamic after default values are added.
+    for _, f_name in pairs(non_dynamic_options) do
+        -- New option may be added in new vshard version.
+        if shard_cfg[f_name] ~= old_cfg[f_name] then
+           error(string.format('Non-dynamic option %s ' ..
+                               'cannot be reconfigured', f_name))
+        end
+    end
     return shard_cfg
 end
 

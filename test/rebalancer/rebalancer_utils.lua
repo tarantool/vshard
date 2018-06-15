@@ -2,7 +2,7 @@ local write_iterations = 0
 local read_iterations = 0
 local write_fiber = 'none'
 local read_fiber = 'none'
-local bucket_count = 100
+local bucket_count = 200
 
 local log = require('log')
 
@@ -71,5 +71,4 @@ return {
 	stop_loading = stop_loading,
 	start_loading = start_loading,
 	check_loading_result = check_loading_result,
-	set_bucket_count = function(new_count) bucket_count = new_count end,
 }

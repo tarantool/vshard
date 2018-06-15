@@ -33,7 +33,7 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-vshard.storage.bucket_force_create(1501, 1500)
+vshard.storage.bucket_force_create(101, 100)
 ---
 - true
 ...
@@ -41,7 +41,7 @@ test_run:switch('box_1_a')
 ---
 - true
 ...
-vshard.storage.bucket_force_create(1, 1500)
+vshard.storage.bucket_force_create(1, 100)
 ---
 - true
 ...
@@ -97,7 +97,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 1500
+- 100
 ...
 info.lock
 ---
@@ -135,7 +135,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 1500
+- 100
 ...
 info.lock
 ---
@@ -278,7 +278,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 1500
+- 100
 ...
 info.lock
 ---
@@ -290,7 +290,7 @@ test_run:switch('box_2_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 500
+- 34
 ...
 test_run:switch('box_3_a')
 ---
@@ -298,7 +298,7 @@ test_run:switch('box_3_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 1000
+- 66
 ...
 --
 -- Test bucket pinning. At first, return to the default
@@ -366,7 +366,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 vshard.storage.info().bucket.active
 ---
-- 1000
+- 67
 ...
 status = box.space._bucket.index.status
 ---
@@ -443,12 +443,12 @@ test_run:cmd("setopt delimiter ''");
 -- rebalancer will face with unreachability of the perfect
 -- balance.
 --
-for i = 1, 800 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
+for i = 1, 60 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
 ---
 ...
 status:count({vshard.consts.BUCKET.PINNED})
 ---
-- 800
+- 60
 ...
 rs1_cfg.weight = 0.5
 ---
@@ -459,18 +459,18 @@ vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 ---
 ...
--- The perfect balance is now 200-400-400, but on the replicaset 1
--- 800 buckets are pinned, so the actual balance is 800-1100-1100.
+-- The perfect balance is now 40-80-80, but on the replicaset 1
+-- 60 buckets are pinned, so the actual balance is 60-70-70.
 info = vshard.storage.info().bucket
 ---
 ...
 info.active
 ---
-- 800
+- 60
 ...
 info.pinned
 ---
-- 800
+- 60
 ...
 test_run:switch('box_2_a')
 ---
@@ -478,7 +478,7 @@ test_run:switch('box_2_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 1100
+- 70
 ...
 test_run:switch('box_3_a')
 ---
@@ -486,7 +486,7 @@ test_run:switch('box_3_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 1100
+- 70
 ...
 test_run:cmd("switch default")
 ---

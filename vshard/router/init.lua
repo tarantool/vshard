@@ -468,7 +468,8 @@ end
 --------------------------------------------------------------------------------
 
 local function router_cfg(cfg)
-    cfg = lcfg.check(cfg)
+    cfg = lcfg.check(cfg, M.current_cfg)
+    local new_cfg = table.copy(cfg)
     if not M.replicasets then
         log.info('Starting router configuration')
     else
@@ -487,6 +488,7 @@ local function router_cfg(cfg)
     M.total_bucket_count = total_bucket_count
     M.collect_lua_garbage = collect_lua_garbage
     M.replicasets = new_replicasets
+    M.current_cfg = new_cfg
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
     -- fully moved old replicasets, and not fully built new ones.

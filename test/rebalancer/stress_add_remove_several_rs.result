@@ -54,24 +54,18 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-cfg.bucket_count = 100
----
-...
 cfg.rebalancer_max_receiving = 2
 ---
 ...
 vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
 ---
 ...
-for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+for i = 1, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---
 ...
 test_run:switch('box_1_a')
 ---
 - true
-...
-cfg.bucket_count = 100
----
 ...
 cfg.rebalancer_max_receiving = 2
 ---
@@ -87,9 +81,6 @@ test_run:switch('router_1')
 - true
 ...
 util = require('rebalancer_utils')
----
-...
-cfg.bucket_count = 100
 ---
 ...
 vshard.router.cfg(cfg)
@@ -303,7 +294,7 @@ test_run:switch('box_1_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 25
+- 50
 ...
 check_consistency()
 ---
@@ -315,7 +306,7 @@ test_run:switch('box_2_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 25
+- 50
 ...
 check_consistency()
 ---
@@ -327,7 +318,7 @@ test_run:switch('box_3_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 25
+- 50
 ...
 check_consistency()
 ---
@@ -339,7 +330,7 @@ test_run:switch('box_4_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 25
+- 50
 ...
 check_consistency()
 ---
@@ -496,7 +487,7 @@ test_run:switch('box_1_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 50
+- 100
 ...
 check_consistency()
 ---
@@ -508,7 +499,7 @@ test_run:switch('box_2_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 50
+- 100
 ...
 check_consistency()
 ---

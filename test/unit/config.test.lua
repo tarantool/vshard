@@ -217,3 +217,9 @@ lcfg.check(cfg)['sharding']
 replica.uri = 'user:password@localhost'
 lcfg.check(cfg)['sharding']
 replica.url = old_uri
+
+-- gh-114: Check non-dynamic option change during reconfigure.
+cfg_with_non_default = table.copy(cfg)
+cfg.shard_index = nil
+cfg_with_non_default.shard_index = 'non_default_name'
+util.check_error(lcfg.check, cfg, cfg_with_non_default)
