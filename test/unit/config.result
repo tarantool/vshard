@@ -506,3 +506,43 @@ _ = lcfg.check(cfg)
 replica.name = 'storage'
 ---
 ...
+-- gh-47: Check uri
+old_uri = replica.url
+---
+...
+replica.uri = 'invalid uri'
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- 'Invalid URI: invalid uri'
+...
+replica.uri = '127.0.0.1'
+---
+...
+lcfg.check(cfg)['sharding']
+---
+- replicaset_uuid:
+    replicas:
+      replica_uuid:
+        uri: 127.0.0.1
+        name: storage
+        master: true
+    weight: 100000
+...
+replica.uri = 'user:password@localhost'
+---
+...
+lcfg.check(cfg)['sharding']
+---
+- replicaset_uuid:
+    replicas:
+      replica_uuid:
+        uri: user:password@localhost
+        name: storage
+        master: true
+    weight: 100000
+...
+replica.url = old_uri
+---
+...

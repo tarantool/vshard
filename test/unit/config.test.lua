@@ -206,3 +206,14 @@ _ = lcfg.check(cfg)
 replica.name = nil
 _ = lcfg.check(cfg)
 replica.name = 'storage'
+
+-- gh-47: Check uri
+old_uri = replica.url
+replica.uri = 'invalid uri'
+util.check_error(lcfg.check, cfg)
+
+replica.uri = '127.0.0.1'
+lcfg.check(cfg)['sharding']
+replica.uri = 'user:password@localhost'
+lcfg.check(cfg)['sharding']
+replica.url = old_uri
