@@ -138,11 +138,15 @@ end
 --------------------------------------------------------------------------------
 -- Schema
 --------------------------------------------------------------------------------
-
 local function storage_schema_v1(username, password)
     log.info("Initializing schema")
-    box.schema.user.create(username, {password = password})
-    box.schema.user.grant(username, 'replication')
+    box.schema.user.create(username, {
+        password = password,
+        if_not_exists = true,
+    })
+    -- Replication may has not been granted, if user exists.
+    box.schema.user.grant(username, 'replication', nil, nil,
+                          {if_not_exists = true})
 
     local bucket = box.schema.space.create('_bucket')
     bucket:format({
