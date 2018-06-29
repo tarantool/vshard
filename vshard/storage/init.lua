@@ -10,6 +10,7 @@ if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
+        'vshard.storage.reload_evolution'
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -20,12 +21,16 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
+local reload_evolution = require('vshard.storage.reload_evolution')
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
     --
     -- The module is loaded for the first time.
     --
+    -- !!!WARNING: any change of this table must be reflected in
+    -- `vshard.storage.reload_evolution` module to guarantee
+    -- reloadability of the module.
     M = {
         ---------------- Common module attributes ----------------
         -- The last passed configuration.
@@ -105,6 +110,11 @@ if not M then
         -- a destination replicaset must drop already received
         -- data.
         rebalancer_sending_bucket = 0,
+
+        ------------------------- Reload -------------------------
+        -- Version of the loaded module. This number is used on
+        -- reload to determine which upgrade scripts to run.
+        reload_version = reload_evolution.version,
     }
 end
 
@@ -1864,6 +1874,7 @@ end
 if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
+    reload_evolution.upgrade(M)
     storage_cfg(M.current_cfg, M.this_replica.uuid)
     M.module_version = M.module_version + 1
 end

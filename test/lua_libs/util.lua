@@ -1,5 +1,6 @@
 local fiber = require('fiber')
 local log = require('log')
+local fio = require('fio')
 
 local function check_error(func, ...)
     local pstatus, status, err = pcall(func, ...)
@@ -92,10 +93,29 @@ local function has_same_fields(etalon, data)
     return true
 end
 
+-- Git directory of the project. Used in evolution tests to
+-- fetch old versions of vshard.
+local SOURCEDIR = os.getenv('PACKPACK_GIT_SOURCEDIR')
+if not SOURCEDIR then
+    SOURCEDIR = os.getenv('SOURCEDIR')
+end
+if not SOURCEDIR then
+    local script_path = debug.getinfo(1).source:match("@?(.*/)")
+    script_path = fio.abspath(script_path)
+    SOURCEDIR = fio.abspath(script_path .. '/../../../')
+end
+
+local BUILDDIR = os.getenv('BUILDDIR')
+if not BUILDDIR then
+    BUILDDIR = SOURCEDIR
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
     collect_timeouts = collect_timeouts,
     wait_master = wait_master,
     has_same_fields = has_same_fields,
+    SOURCEDIR = SOURCEDIR,
+    BUILDDIR = BUILDDIR,
 }

@@ -41,7 +41,7 @@ env:
 script:
   - git describe --long
   - git clone https://github.com/packpack/packpack.git packpack
-  - packpack/packpack
+  - packpack/packpack -e PACKPACK_GIT_SOURCEDIR=/source/
 
 before_deploy:
   - ls -l build/
