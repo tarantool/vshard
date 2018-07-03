@@ -128,6 +128,9 @@ local function discovery_f(module_version)
     local iterations_until_lua_gc =
         consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
     while module_version == M.module_version do
+        while not next(M.replicasets) do
+            lfiber.sleep(consts.DISCOVERY_INTERVAL)
+        end
         local old_replicasets = M.replicasets
         for rs_uuid, replicaset in pairs(M.replicasets) do
             local active_buckets, err =
