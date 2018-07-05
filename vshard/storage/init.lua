@@ -354,6 +354,7 @@ local function recovery_f(module_version)
     while module_version == M.module_version do
         local ok, err = pcall(recovery_step)
         if not ok then
+            box.rollback()
             log.error('Error during buckets recovery: %s', err)
         end
         lfiber.sleep(consts.RECOVERY_INTERVAL)
@@ -474,6 +475,15 @@ end
 -- @param first_bucket_id Identifier of a first bucket in a range.
 -- @param count Bucket range length to insert. By default is 1.
 --
+local function bucket_force_create_impl(first_bucket_id, count)
+    local _bucket = box.space._bucket
+    box.begin()
+    for i = first_bucket_id, first_bucket_id + count - 1 do
+        _bucket:insert({i, consts.BUCKET.ACTIVE})
+    end
+    box.commit()
+end
+
 local function bucket_force_create(first_bucket_id, count)
     if type(first_bucket_id) ~= 'number' or
        (count ~= nil and (type(count) ~= 'number' or
@@ -481,13 +491,11 @@ local function bucket_force_create(first_bucket_id, count)
         error('Usage: bucket_force_create(first_bucket_id, count)')
     end
     count = count or 1
-
-    local _bucket = box.space._bucket
-    box.begin()
-    for i = first_bucket_id, first_bucket_id + count - 1 do
-        _bucket:insert({i, consts.BUCKET.ACTIVE})
+    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
+    if not ok then
+        box.rollback()
+        return nil, err
     end
-    box.commit()
     return true
 end
 
@@ -507,26 +515,21 @@ end
 --
 -- Receive bucket with its data
 --
-local function bucket_recv(bucket_id, from, data)
-    if type(bucket_id) ~= 'number' or type(data) ~= 'table' then
-        error('Usage: bucket_recv(bucket_id, data)')
-    end
-
-    local bucket = box.space._bucket:get({bucket_id})
+local function bucket_recv_impl(bucket_id, from, data)
+    local _bucket = box.space._bucket
+    local bucket = _bucket:get({bucket_id})
     if bucket ~= nil then
         return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS, bucket_id)
     end
 
     box.begin()
     M.buckets_to_recovery[bucket_id] = true
-    bucket = box.space._bucket:insert({bucket_id, consts.BUCKET.RECEIVING,
-                                       from})
+    bucket = _bucket:insert({bucket_id, consts.BUCKET.RECEIVING, from})
     -- Fill spaces with data
     for _, row in ipairs(data) do
         local space_id, space_data = row[1], row[2]
         local space = box.space[space_id]
         if space == nil then
-            box.rollback()
             -- Tarantool doesn't provide API to create box.error objects
             -- https://github.com/tarantool/tarantool/issues/3031
             local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
@@ -540,10 +543,26 @@ local function bucket_recv(bucket_id, from, data)
     end
 
     -- Activate bucket
-    bucket = box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+    bucket = _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
 
     box.commit()
     M.buckets_to_recovery[bucket_id] = nil
+    return true
+end
+
+local function bucket_recv(bucket_id, from, data)
+    if type(bucket_id) ~= 'number' or type(data) ~= 'table' then
+        error('Usage: bucket_recv(bucket_id, data)')
+    end
+    local ok, status, err = pcall(bucket_recv_impl, bucket_id, from, data)
+    if not ok then
+        box.rollback()
+        return nil, status
+    end
+    if not status then
+        box.rollback()
+        return nil, err
+    end
     if M.errinj.ERRINJ_LONG_RECEIVE then
         box.error(box.error.TIMEOUT)
     end
@@ -851,13 +870,23 @@ end
 -- @param bucket_index Index containing bucket_id in a first part.
 -- @param bucket_id Garbage bucket identifier.
 --
-local function collect_garbage_bucket_in_space(space, bucket_index, bucket_id)
+local function collect_garbage_bucket_in_space_impl(space, bucket_index,
+                                                    bucket_id)
     local pk_parts = space.index[0].parts
     box.begin()
     for _, tuple in bucket_index:pairs({bucket_id}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
     end
     box.commit()
+end
+
+local function collect_garbage_bucket_in_space(space, bucket_index, bucket_id)
+    local ok, err = pcall(collect_garbage_bucket_in_space_impl, space,
+                          bucket_index, bucket_id)
+    if not ok then
+        box.rollback()
+        error(err)
+    end
 end
 
 --
@@ -1025,26 +1054,27 @@ function collect_garbage_f(module_version)
                 goto continue
             end
             status, empty_sent_buckets = pcall(collect_garbage_update_bucket)
-            if M.module_version ~= module_version then
-                return
-            end
             if not status then
+                box.rollback()
                 log.error('Error during empty buckets processing: %s',
                           empty_sent_buckets)
                 control.bucket_generation = control.bucket_generation + 1
                 goto continue
+            end
+            if M.module_version ~= module_version then
+                return
             end
         end
         if lfiber.time() - buckets_for_redirect_ts >=
            consts.BUCKET_SENT_GARBAGE_DELAY then
             local status, err = pcall(collect_garbage_drop_redirects,
                                       buckets_for_redirect)
-            if M.module_version ~= module_version then
-                return
-            end
             if not status then
+                box.rollback()
                 log.error('Error during deletion of empty sent buckets: %s',
                           err)
+            elseif M.module_version ~= module_version then
+                return
             else
                 buckets_for_redirect = empty_sent_buckets
                 empty_sent_buckets = {}

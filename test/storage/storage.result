@@ -237,7 +237,8 @@ vshard.storage.buckets_info()
 ...
 vshard.storage.bucket_force_create(1) -- error
 ---
-- error: Duplicate key exists in unique index 'pk' in space '_bucket'
+- null
+- Duplicate key exists in unique index 'pk' in space '_bucket'
 ...
 vshard.storage.bucket_force_drop(1)
 ---
