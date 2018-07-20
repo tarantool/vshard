@@ -95,7 +95,7 @@ local error_message_template = {
     [18] = {
         name = 'UNKNOWN_BUCKETS',
         msg = '%d buckets are not discovered',
-        arg = {'not_discovered_cnt'}
+        args = {'not_discovered_cnt'}
     },
     [19] = {
         name = 'REPLICASET_IS_LOCKED',
