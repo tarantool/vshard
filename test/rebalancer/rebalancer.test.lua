@@ -5,7 +5,7 @@ REPLICASET_2 = { 'box_2_a', 'box_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
-util = require('util')
+util = require('lua_libs.util')
 util.wait_master(test_run, REPLICASET_1, 'box_1_a')
 util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 

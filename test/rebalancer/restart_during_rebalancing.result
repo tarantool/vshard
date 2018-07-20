@@ -25,7 +25,7 @@ test_run:create_cluster(REPLICASET_3, 'rebalancer')
 test_run:create_cluster(REPLICASET_4, 'rebalancer')
 ---
 ...
-util = require('util')
+util = require('lua_libs.util')
 ---
 ...
 util.wait_master(test_run, REPLICASET_1, 'fullbox_1_a')
