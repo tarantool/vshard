@@ -1500,13 +1500,14 @@ end
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
-local function storage_cfg(cfg, this_replica_uuid)
+
+local function storage_cfg(cfg, this_replica_uuid, is_reload)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
     cfg = lcfg.check(cfg, M.current_cfg)
-    local new_cfg = table.copy(cfg)
-    if cfg.weights or cfg.zone then
+    local vshard_cfg, box_cfg = lcfg.split(cfg)
+    if vshard_cfg.weights or vshard_cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
     if M.replicasets then
@@ -1520,7 +1521,7 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     local this_replicaset
     local this_replica
-    local new_replicasets = lreplicaset.buildall(cfg)
+    local new_replicasets = lreplicaset.buildall(vshard_cfg)
     local min_master
     for rs_uuid, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
@@ -1544,47 +1545,6 @@ local function storage_cfg(cfg, this_replica_uuid)
         log.info('I am master')
     end
 
-    -- Do not change 'read_only' option here - if a master is
-    -- disabled and there are triggers on master disable, then
-    -- they would not be able to modify anything, if 'read_only'
-    -- had been set here. 'Read_only' is set in
-    -- local_on_master_disable after triggers and is unset in
-    -- local_on_master_enable before triggers.
-    --
-    -- If a master role of the replica is not changed, then
-    -- 'read_only' can be set right here.
-    cfg.listen = cfg.listen or this_replica.uri
-    if cfg.replication == nil and this_replicaset.master and not is_master then
-        cfg.replication = {this_replicaset.master.uri}
-    else
-        cfg.replication = {}
-    end
-    if was_master == is_master then
-        cfg.read_only = not is_master
-    end
-    if type(box.cfg) == 'function' then
-        cfg.instance_uuid = this_replica.uuid
-        cfg.replicaset_uuid = this_replicaset.uuid
-    else
-        local info = box.info
-        if this_replica_uuid ~= info.uuid then
-            error(string.format('Instance UUID mismatch: already set "%s" '..
-                                'but "%s" in arguments', info.uuid,
-                                this_replica_uuid))
-        end
-        if this_replicaset.uuid ~= info.cluster.uuid then
-            error(string.format('Replicaset UUID mismatch: already set "%s" '..
-                                'but "%s" in vshard config', info.cluster.uuid,
-                                this_replicaset.uuid))
-        end
-    end
-    local total_bucket_count = cfg.bucket_count
-    local rebalancer_disbalance_threshold = cfg.rebalancer_disbalance_threshold
-    local rebalancer_max_receiving = cfg.rebalancer_max_receiving
-    local shard_index = cfg.shard_index
-    local collect_bucket_garbage_interval = cfg.collect_bucket_garbage_interval
-    local collect_lua_garbage = cfg.collect_lua_garbage
-
     -- It is considered that all possible errors during cfg
     -- process occur only before this place.
     -- This check should be placed as late as possible.
@@ -1598,7 +1558,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     -- a new sync timeout.
     --
     local old_sync_timeout = M.sync_timeout
-    M.sync_timeout = cfg.sync_timeout
+    M.sync_timeout = vshard_cfg.sync_timeout
 
     if was_master and not is_master then
         local_on_master_disable_prepare()
@@ -1607,39 +1567,75 @@ local function storage_cfg(cfg, this_replica_uuid)
         local_on_master_enable_prepare()
     end
 
-    local box_cfg = table.copy(cfg)
-    lcfg.remove_non_box_options(box_cfg)
-    local ok, err = pcall(box.cfg, box_cfg)
-    while M.errinj.ERRINJ_CFG_DELAY do
-        lfiber.sleep(0.01)
-    end
-    if not ok then
-        M.sync_timeout = old_sync_timeout
-        if was_master and not is_master then
-            local_on_master_disable_abort()
+    if not is_reload then
+        -- Do not change 'read_only' option here - if a master is
+        -- disabled and there are triggers on master disable, then
+        -- they would not be able to modify anything, if 'read_only'
+        -- had been set here. 'Read_only' is set in
+        -- local_on_master_disable after triggers and is unset in
+        -- local_on_master_enable before triggers.
+        --
+        -- If a master role of the replica is not changed, then
+        -- 'read_only' can be set right here.
+        box_cfg.listen = box_cfg.listen or this_replica.uri
+        if box_cfg.replication == nil and this_replicaset.master
+           and not is_master then
+            box_cfg.replication = {this_replicaset.master.uri}
+        else
+            box_cfg.replication = {}
         end
-        if not was_master and is_master then
-            local_on_master_enable_abort()
+        if was_master == is_master then
+            box_cfg.read_only = not is_master
         end
-        error(err)
+        if type(box.cfg) == 'function' then
+            box_cfg.instance_uuid = this_replica.uuid
+            box_cfg.replicaset_uuid = this_replicaset.uuid
+        else
+            local info = box.info
+            if this_replica_uuid ~= info.uuid then
+                error(string.format('Instance UUID mismatch: already set ' ..
+                                    '"%s" but "%s" in arguments', info.uuid,
+                                    this_replica_uuid))
+            end
+            if this_replicaset.uuid ~= info.cluster.uuid then
+                error(string.format('Replicaset UUID mismatch: already set ' ..
+                                    '"%s" but "%s" in vshard config',
+                                    info.cluster.uuid, this_replicaset.uuid))
+            end
+        end
+        local ok, err = pcall(box.cfg, box_cfg)
+        while M.errinj.ERRINJ_CFG_DELAY do
+            lfiber.sleep(0.01)
+        end
+        if not ok then
+            M.sync_timeout = old_sync_timeout
+            if was_master and not is_master then
+                local_on_master_disable_abort()
+            end
+            if not was_master and is_master then
+                local_on_master_enable_abort()
+            end
+            error(err)
+        end
+        log.info("Box has been configured")
+        local uri = luri.parse(this_replica.uri)
+        box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
     end
-
-    log.info("Box has been configured")
-    local uri = luri.parse(this_replica.uri)
-    box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
 
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets
     M.this_replicaset = this_replicaset
     M.this_replica = this_replica
-    M.total_bucket_count = total_bucket_count
-    M.rebalancer_disbalance_threshold = rebalancer_disbalance_threshold
-    M.rebalancer_max_receiving = rebalancer_max_receiving
-    M.shard_index = shard_index
-    M.collect_bucket_garbage_interval = collect_bucket_garbage_interval
-    M.collect_lua_garbage = collect_lua_garbage
-    M.current_cfg = new_cfg
+    M.total_bucket_count = vshard_cfg.bucket_count
+    M.rebalancer_disbalance_threshold =
+        vshard_cfg.rebalancer_disbalance_threshold
+    M.rebalancer_max_receiving = vshard_cfg.rebalancer_max_receiving
+    M.shard_index = vshard_cfg.shard_index
+    M.collect_bucket_garbage_interval =
+        vshard_cfg.collect_bucket_garbage_interval
+    M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
+    M.current_cfg = cfg
 
     if was_master and not is_master then
         local_on_master_disable()
@@ -1875,7 +1871,7 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     reload_evolution.upgrade(M)
-    storage_cfg(M.current_cfg, M.this_replica.uuid)
+    storage_cfg(M.current_cfg, M.this_replica.uuid, true)
     M.module_version = M.module_version + 1
 end
 
@@ -1914,7 +1910,7 @@ return {
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
     call = storage_call,
-    cfg = storage_cfg,
+    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     info = storage_info,
     buckets_info = storage_buckets_info,
     buckets_count = storage_buckets_count,

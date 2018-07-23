@@ -222,6 +222,22 @@ local cfg_template = {
 }
 
 --
+-- Split it into vshard_cfg and box_cfg parts.
+--
+local function cfg_split(cfg)
+    local vshard_cfg = {}
+    local box_cfg = {}
+    for k, v in pairs(cfg) do
+        if cfg_template[k] then
+            vshard_cfg[k] = v
+        else
+            box_cfg[k] = v
+        end
+    end
+    return vshard_cfg, box_cfg
+end
+
+--
 -- Names of options which cannot be changed during reconfigure.
 --
 local non_dynamic_options = {
@@ -252,24 +268,7 @@ local function cfg_check(shard_cfg, old_cfg)
     return shard_cfg
 end
 
---
--- Nullify non-box options.
---
-local function remove_non_box_options(cfg)
-    cfg.sharding = nil
-    cfg.weights = nil
-    cfg.zone = nil
-    cfg.bucket_count = nil
-    cfg.rebalancer_disbalance_threshold = nil
-    cfg.rebalancer_max_receiving = nil
-    cfg.shard_index = nil
-    cfg.collect_bucket_garbage_interval = nil
-    cfg.collect_lua_garbage = nil
-    cfg.sync_timeout = nil
-    cfg.connection_outdate_delay = nil
-end
-
 return {
     check = cfg_check,
-    remove_non_box_options = remove_non_box_options,
+    split = cfg_split,
 }

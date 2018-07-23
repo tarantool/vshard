@@ -491,19 +491,15 @@ end
 -- Configuration
 --------------------------------------------------------------------------------
 
-local function router_cfg(cfg)
+local function router_cfg(cfg, is_reload)
     cfg = lcfg.check(cfg, M.current_cfg)
-    local new_cfg = table.copy(cfg)
+    local vshard_cfg, box_cfg = lcfg.split(cfg)
     if not M.replicasets then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
-    local new_replicasets = lreplicaset.buildall(cfg)
-    local total_bucket_count = cfg.bucket_count
-    local collect_lua_garbage = cfg.collect_lua_garbage
-    local box_cfg = table.copy(cfg)
-    lcfg.remove_non_box_options(box_cfg)
+    local new_replicasets = lreplicaset.buildall(vshard_cfg)
     log.info("Calling box.cfg()...")
     for k, v in pairs(box_cfg) do
         log.info({[k] = v})
@@ -514,8 +510,10 @@ local function router_cfg(cfg)
     if M.errinj.ERRINJ_CFG then
         error('Error injection: cfg')
     end
-    box.cfg(box_cfg)
-    log.info("Box has been configured")
+    if not is_reload then
+        box.cfg(box_cfg)
+        log.info("Box has been configured")
+    end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
     -- fully moved old replicasets, and not fully built new ones.
@@ -526,10 +524,11 @@ local function router_cfg(cfg)
         replicaset:connect_all()
     end
     lreplicaset.wait_masters_connect(new_replicasets)
-    lreplicaset.outdate_replicasets(M.replicasets, cfg.connection_outdate_delay)
-    M.connection_outdate_delay = cfg.connection_outdate_delay
-    M.total_bucket_count = total_bucket_count
-    M.collect_lua_garbage = collect_lua_garbage
+    lreplicaset.outdate_replicasets(M.replicasets,
+                                    vshard_cfg.connection_outdate_delay)
+    M.connection_outdate_delay = vshard_cfg.connection_outdate_delay
+    M.total_bucket_count = vshard_cfg.bucket_count
+    M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     M.current_cfg = cfg
     M.replicasets = new_replicasets
     for bucket, rs in pairs(M.route_map) do
@@ -817,7 +816,7 @@ end
 if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
-    router_cfg(M.current_cfg)
+    router_cfg(M.current_cfg, true)
     M.module_version = M.module_version + 1
 end
 
@@ -825,7 +824,7 @@ M.discovery_f = discovery_f
 M.failover_f = failover_f
 
 return {
-    cfg = router_cfg;
+    cfg = function(cfg) return router_cfg(cfg, false) end;
     info = router_info;
     buckets_info = router_buckets_info;
     call = router_call;
