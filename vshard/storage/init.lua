@@ -1619,6 +1619,7 @@ local function storage_cfg(cfg, this_replica_uuid)
     box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
 
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
+    lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets
     M.this_replicaset = this_replicaset
     M.this_replica = this_replica

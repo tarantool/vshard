@@ -340,16 +340,13 @@ local function replicaset_tostring(replicaset)
                          master)
 end
 
-local outdate_replicasets
 --
 -- Copy netbox connections from old replica objects to new ones
 -- and outdate old objects.
 -- @param replicasets New replicasets
 -- @param old_replicasets Replicasets and replicas to be outdated.
--- @param outdate_delay Number of seconds; delay to outdate
---        old objects.
 --
-local function rebind_replicasets(replicasets, old_replicasets, outdate_delay)
+local function rebind_replicasets(replicasets, old_replicasets)
     for replicaset_uuid, replicaset in pairs(replicasets) do
         local old_replicaset = old_replicasets and
                                old_replicasets[replicaset_uuid]
@@ -369,9 +366,6 @@ local function rebind_replicasets(replicasets, old_replicasets, outdate_delay)
                 end
             end
         end
-    end
-    if old_replicasets then
-        util.async_task(outdate_delay, outdate_replicasets, old_replicasets)
     end
 end
 
@@ -453,12 +447,7 @@ for fname, func in pairs(replica_mt.__index) do
     outdated_replica_mt.__index[fname] = outdated_warning
 end
 
---
--- Outdate replicaset and replica objects:
---  * Set outdated_metatables.
---  * Remove connections.
---
-outdate_replicasets = function(replicasets)
+local function outdate_replicasets_f(replicasets)
     for _, replicaset in pairs(replicasets) do
         setmetatable(replicaset, outdated_replicaset_mt)
         for _, replica in pairs(replicaset.replicas) do
@@ -467,6 +456,20 @@ outdate_replicasets = function(replicasets)
         end
     end
     log.info('Old replicaset and replica objects are outdated.')
+end
+
+--
+-- Outdate replicaset and replica objects:
+--  * Set outdated_metatables.
+--  * Remove connections.
+-- @param replicasets Old replicasets to be outdated.
+-- @param outdate_delay Delay in seconds before the outdating.
+--
+local function outdate_replicasets(replicasets, outdate_delay)
+    if replicasets then
+        util.async_task(outdate_delay, outdate_replicasets_f,
+                        replicasets)
+    end
 end
 
 --
@@ -650,4 +653,5 @@ return {
     calculate_etalon_balance = cluster_calculate_etalon_balance,
     wait_masters_connect = wait_masters_connect,
     rebind_replicasets = rebind_replicasets,
+    outdate_replicasets = outdate_replicasets,
 }
