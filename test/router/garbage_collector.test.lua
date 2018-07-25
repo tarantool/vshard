@@ -13,18 +13,24 @@ test_run:cmd("start server router_1")
 --
 test_run:switch('router_1')
 fiber = require('fiber')
+lua_gc = require('vshard.lua_gc')
 cfg.collect_lua_garbage = true
-iters = vshard.consts.COLLECT_LUA_GARBAGE_INTERVAL / vshard.consts.DISCOVERY_INTERVAL
 vshard.router.cfg(cfg)
+lua_gc.internal.bg_fiber ~= nil
+-- Check that `collectgarbage()` was really called.
 a = setmetatable({}, {__mode = 'v'})
 a.k = {b = 100}
-for i = 1, iters + 1 do vshard.router.discovery_wakeup() fiber.sleep(0.01) end
+iterations = lua_gc.internal.iterations
+lua_gc.internal.bg_fiber:wakeup()
+while lua_gc.internal.iterations < iterations + 1 do fiber.sleep(0.01) end
 a.k
+lua_gc.internal.interval = 0.001
 cfg.collect_lua_garbage = false
 vshard.router.cfg(cfg)
-a.k = {b = 100}
-for i = 1, iters + 1 do vshard.router.discovery_wakeup() fiber.sleep(0.01) end
-a.k ~= nil
+lua_gc.internal.bg_fiber == nil
+iterations = lua_gc.internal.iterations
+fiber.sleep(0.01)
+iterations == lua_gc.internal.iterations
 
 test_run:switch("default")
 test_run:cmd("stop server router_1")

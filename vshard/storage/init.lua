@@ -10,7 +10,8 @@ if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
-        'vshard.storage.reload_evolution'
+        'vshard.storage.reload_evolution',
+        'vshard.lua_gc',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -21,6 +22,7 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
+local lua_gc = require('vshard.lua_gc')
 local reload_evolution = require('vshard.storage.reload_evolution')
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -75,8 +77,7 @@ if not M then
         collect_bucket_garbage_fiber = nil,
         -- Do buckets garbage collection once per this time.
         collect_bucket_garbage_interval = nil,
-        -- If true, then bucket garbage collection fiber starts to
-        -- call collectgarbage() periodically.
+        -- Boolean lua_gc state (create periodic gc task).
         collect_lua_garbage = nil,
 
         -------------------- Bucket recovery ---------------------
@@ -1063,9 +1064,6 @@ function collect_garbage_f()
     -- buckets_for_redirect is deleted, it gets empty_sent_buckets
     -- for next deletion.
     local empty_sent_buckets = {}
-    local iterations_until_lua_gc =
-        consts.COLLECT_LUA_GARBAGE_INTERVAL / M.collect_bucket_garbage_interval
-
     while M.module_version == module_version do
         -- Check if no changes in buckets configuration.
         if control.bucket_generation_collected ~= control.bucket_generation then
@@ -1106,12 +1104,6 @@ function collect_garbage_f()
             end
         end
 ::continue::
-        iterations_until_lua_gc = iterations_until_lua_gc - 1
-        if iterations_until_lua_gc == 0 and M.collect_lua_garbage then
-            iterations_until_lua_gc = consts.COLLECT_LUA_GARBAGE_INTERVAL /
-                                      M.collect_bucket_garbage_interval
-            collectgarbage()
-        end
         lfiber.sleep(M.collect_bucket_garbage_interval)
     end
 end
@@ -1660,6 +1652,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         M.rebalancer_fiber:cancel()
         M.rebalancer_fiber = nil
     end
+    lua_gc.set_state(M.collect_lua_garbage, consts.COLLECT_LUA_GARBAGE_INTERVAL)
     -- Destroy connections, not used in a new configuration.
     collectgarbage()
 end

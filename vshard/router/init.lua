@@ -7,6 +7,7 @@ if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.hash', 'vshard.replicaset', 'vshard.util',
+        'vshard.lua_gc',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -18,6 +19,7 @@ local lcfg = require('vshard.cfg')
 local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
+local lua_gc = require('vshard.lua_gc')
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
@@ -43,8 +45,7 @@ if not M then
         discovery_fiber = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
-        -- If true, then discovery fiber starts to call
-        -- collectgarbage() periodically.
+        -- Boolean lua_gc state (create periodic gc task).
         collect_lua_garbage = nil,
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -147,8 +148,6 @@ end
 --
 local function discovery_f()
     local module_version = M.module_version
-    local iterations_until_lua_gc =
-        consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
     while module_version == M.module_version do
         while not next(M.replicasets) do
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
@@ -183,12 +182,6 @@ local function discovery_f()
                     end
                     M.route_map[bucket_id] = replicaset
                 end
-            end
-            iterations_until_lua_gc = iterations_until_lua_gc - 1
-            if M.collect_lua_garbage and iterations_until_lua_gc == 0 then
-                iterations_until_lua_gc =
-                    consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
-                collectgarbage()
             end
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
         end
@@ -542,6 +535,7 @@ local function router_cfg(cfg, is_reload)
         M.discovery_fiber = util.reloadable_fiber_create('vshard.discovery', M,
                                                          'discovery_f')
     end
+    lua_gc.set_state(M.collect_lua_garbage, consts.COLLECT_LUA_GARBAGE_INTERVAL)
     -- Destroy connections, not used in a new configuration.
     collectgarbage()
 end
