@@ -38,11 +38,11 @@ end
 -- reload of that module.
 -- See description of parameters in `reloadable_fiber_create`.
 --
-local function reloadable_fiber_main_loop(module, func_name)
+local function reloadable_fiber_main_loop(module, func_name, data)
     log.info('%s has been started', func_name)
     local func = module[func_name]
 ::restart_loop::
-    local ok, err = pcall(func)
+    local ok, err = pcall(func, data)
     -- yield serves two purposes:
     --  * makes this fiber cancellable
     --  * prevents 100% cpu consumption
@@ -60,7 +60,7 @@ local function reloadable_fiber_main_loop(module, func_name)
     log.info('module is reloaded, restarting')
     -- luajit drops this frame if next function is called in
     -- return statement.
-    return M.reloadable_fiber_main_loop(module, func_name)
+    return M.reloadable_fiber_main_loop(module, func_name, data)
 end
 
 --
@@ -74,11 +74,13 @@ end
 -- @param module Module which can be reloaded.
 -- @param func_name Name of a function to be executed in the
 --        module.
+-- @param data Data to be passed to the specified function.
 -- @retval New fiber.
 --
-local function reloadable_fiber_create(fiber_name, module, func_name)
+local function reloadable_fiber_create(fiber_name, module, func_name, data)
     assert(type(fiber_name) == 'string')
-    local xfiber = fiber.create(reloadable_fiber_main_loop, module, func_name)
+    local xfiber = fiber.create(reloadable_fiber_main_loop, module, func_name,
+                                data)
     xfiber:name(fiber_name)
     return xfiber
 end

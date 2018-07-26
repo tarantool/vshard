@@ -37,7 +37,7 @@ test_run:cmd('switch router_1')
 util = require('util')
 ---
 ...
-rs1 = vshard.router.internal.replicasets[replicasets[1]]
+rs1 = vshard.router.static.replicasets[replicasets[1]]
 ---
 ...
 min_timeout = vshard.consts.CALL_TIMEOUT_MIN

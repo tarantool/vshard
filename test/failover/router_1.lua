@@ -42,7 +42,7 @@ end
 function priority_order()
 	local ret = {}
 	for _, uuid in pairs(rs_uuid) do
-		local rs = vshard.router.internal.replicasets[uuid]
+		local rs = vshard.router.static.replicasets[uuid]
 		local sorted = {}
 		for _, replica in pairs(rs.priority_list) do
 			local z

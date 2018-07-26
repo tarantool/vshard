@@ -229,7 +229,7 @@ vshard.router.cfg(cfg)
 cfg.connection_outdate_delay = old_connection_delay
 ---
 ...
-vshard.router.internal.connection_outdate_delay = nil
+vshard.router.static.connection_outdate_delay = nil
 ---
 ...
 rs_new = vshard.router.route(1)

@@ -105,7 +105,12 @@ local error_message_template = {
         name = 'OBJECT_IS_OUTDATED',
         msg = 'Object is outdated after module reload/reconfigure. ' ..
               'Use new instance.'
-    }
+    },
+    [21] = {
+        name = 'ROUTER_ALREADY_EXISTS',
+        msg = 'Router with name %s already exists',
+        args = {'name'},
+    },
 }
 
 --

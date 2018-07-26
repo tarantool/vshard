@@ -74,7 +74,7 @@ echo_count
 
 -- Ensure that replica_up_ts is updated periodically.
 test_run:switch('router_1')
-rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
+rs1 = vshard.router.static.replicasets[rs_uuid[1]]
 while not rs1.replica_up_ts do fiber.sleep(0.1) end
 old_up_ts = rs1.replica_up_ts
 while rs1.replica_up_ts == old_up_ts do fiber.sleep(0.1) end

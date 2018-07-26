@@ -20,7 +20,7 @@ vshard.router.cfg(cfg)
 -- Check that already run failover step is restarted on
 -- configuration change (if some replicasets are removed from
 -- config).
-rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
+rs1 = vshard.router.static.replicasets[rs_uuid[1]]
 while not rs1.replica or not rs1.replica.conn:is_connected() do fiber.sleep(0.1) end
 vshard.router.internal.errinj.ERRINJ_FAILOVER_CHANGE_CFG = true
 wait_state('Configuration has changed, restart ')

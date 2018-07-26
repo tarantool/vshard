@@ -174,7 +174,7 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rs1 = vshard.router.internal.replicasets[rs_uuid[1]]
+rs1 = vshard.router.static.replicasets[rs_uuid[1]]
 ---
 ...
 while not rs1.replica_up_ts do fiber.sleep(0.1) end

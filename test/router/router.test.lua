@@ -27,8 +27,8 @@ util = require('util')
 
 -- gh-24: log all connnect/disconnect events.
 test_run:grep_log('router_1', 'connected to ')
-rs1 = vshard.router.internal.replicasets[replicasets[1]]
-rs2 = vshard.router.internal.replicasets[replicasets[2]]
+rs1 = vshard.router.static.replicasets[replicasets[1]]
+rs2 = vshard.router.static.replicasets[replicasets[2]]
 fiber = require('fiber')
 while not rs1.replica or not rs2.replica do fiber.sleep(0.1) end
 -- With no zones the nearest server is master.
@@ -39,7 +39,7 @@ rs2.replica == rs2.master
 -- Part of gh-76: on reconfiguration do not recreate connections
 -- to replicas, that are kept in a new configuration.
 --
-old_replicasets = vshard.router.internal.replicasets
+old_replicasets = vshard.router.static.replicasets
 old_connections = {}
 connection_count = 0
 test_run:cmd("setopt delimiter ';'")
@@ -52,10 +52,10 @@ end;
 test_run:cmd("setopt delimiter ''");
 connection_count == 4
 vshard.router.cfg(cfg)
-new_replicasets = vshard.router.internal.replicasets
+new_replicasets = vshard.router.static.replicasets
 old_replicasets ~= new_replicasets
-rs1 = vshard.router.internal.replicasets[replicasets[1]]
-rs2 = vshard.router.internal.replicasets[replicasets[2]]
+rs1 = vshard.router.static.replicasets[replicasets[1]]
+rs2 = vshard.router.static.replicasets[replicasets[2]]
 while not rs1.replica or not rs2.replica do fiber.sleep(0.1) end
 vshard.router.discovery_wakeup()
 -- Check that netbox connections are the same.
@@ -91,7 +91,7 @@ vshard.router.bootstrap()
 --
 -- gh-108: negative bucket count on discovery.
 --
-vshard.router.internal.route_map = {}
+vshard.router.static.route_map = {}
 rets = {}
 function do_echo() table.insert(rets, vshard.router.callro(1, 'echo', {1})) end
 f1 = fiber.create(do_echo) f2 = fiber.create(do_echo)
@@ -153,7 +153,7 @@ conn = vshard.router.route(1).master.conn
 conn.state
 -- Test missing master.
 rs_uuid = 'ac522f65-aa94-4134-9f64-51ee384f1a54'
-rs = vshard.router.internal.replicasets[rs_uuid]
+rs = vshard.router.static.replicasets[rs_uuid]
 master = rs.master
 rs.master = nil
 vshard.router.route(1).master
@@ -223,7 +223,7 @@ vshard.router.info()
 
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.
-rs = vshard.router.internal.replicasets[replicasets[1]]
+rs = vshard.router.static.replicasets[replicasets[1]]
 master_conn = rs.master.conn
 replica_conn = rs.replica.conn
 rs.master.conn = nil
@@ -261,7 +261,7 @@ util.check_error(vshard.router.buckets_info, 123, '456')
 test_run:cmd("setopt delimiter ';'")
 function calculate_known_buckets()
     local known_buckets = 0
-    for _, rs in pairs(vshard.router.internal.route_map) do
+    for _, rs in pairs(vshard.router.static.route_map) do
         known_buckets = known_buckets + 1
     end
     return known_buckets
@@ -301,10 +301,10 @@ test_run:switch('router_1')
 --
 test_run:cmd("setopt delimiter ';'")
 for i = 1, 100 do
-    local rs = vshard.router.internal.route_map[i]
+    local rs = vshard.router.static.route_map[i]
     assert(rs)
     rs.bucket_count = rs.bucket_count - 1
-    vshard.router.internal.route_map[i] = nil
+    vshard.router.static.route_map[i] = nil
 end;
 test_run:cmd("setopt delimiter ''");
 calculate_known_buckets()
@@ -367,7 +367,7 @@ vshard.router.sync(100500)
 -- object method like this: object.method() instead of
 -- object:method(), an appropriate help-error returns.
 --
-_, replicaset = next(vshard.router.internal.replicasets)
+_, replicaset = next(vshard.router.static.replicasets)
 error_messages = {}
 
 test_run:cmd("setopt delimiter ';'")
@@ -395,7 +395,7 @@ error_messages
 bucket_to_old_rs = {}
 bucket_cnt = 0
 test_run:cmd("setopt delimiter ';'")
-for bucket, rs in pairs(vshard.router.internal.route_map) do
+for bucket, rs in pairs(vshard.router.static.route_map) do
     bucket_to_old_rs[bucket] = rs
     bucket_cnt = bucket_cnt + 1
 end;
@@ -403,7 +403,7 @@ bucket_cnt;
 vshard.router.cfg(cfg);
 for bucket, old_rs in pairs(bucket_to_old_rs) do
     local old_uuid = old_rs.uuid
-    local rs = vshard.router.internal.route_map[bucket]
+    local rs = vshard.router.static.route_map[bucket]
     if not rs or not old_uuid == rs.uuid then
         error("Bucket lost during reconfigure.")
     end
@@ -423,19 +423,19 @@ while vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY ~= 'waiting' do
     fiber.sleep(0.02)
 end;
 vshard.router.cfg(cfg);
-vshard.router.internal.route_map = {};
+vshard.router.static.route_map = {};
 vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false;
 -- Do discovery iteration. Upload buckets from the
 -- first replicaset.
-while not next(vshard.router.internal.route_map) do
+while not next(vshard.router.static.route_map) do
     vshard.router.discovery_wakeup()
     fiber.sleep(0.01)
 end;
 new_replicasets = {};
-for _, rs in pairs(vshard.router.internal.replicasets) do
+for _, rs in pairs(vshard.router.static.replicasets) do
     new_replicasets[rs] = true
 end;
-_, rs = next(vshard.router.internal.route_map);
+_, rs = next(vshard.router.static.route_map);
 new_replicasets[rs] == true;
 test_run:cmd("setopt delimiter ''");
 
@@ -452,6 +452,10 @@ util.check_error(vshard.router.cfg, cfg)
 vshard.router.internal.errinj.ERRINJ_CFG = false
 util.has_same_fields(old_internal, vshard.router.internal)
 vshard.router.route(1):callro('echo', {'some_data'})
+
+-- Multiple routers: check that static router can be used as an
+-- object.
+vshard.router.static:route(1):callro('echo', {'some_data'})
 
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)

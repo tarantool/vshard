@@ -13,8 +13,8 @@ test_run:cmd("start server router_1")
 test_run:cmd('switch router_1')
 util = require('util')
 
-rs1 = vshard.router.internal.replicasets[replicasets[1]]
-rs2 = vshard.router.internal.replicasets[replicasets[2]]
+rs1 = vshard.router.static.replicasets[replicasets[1]]
+rs2 = vshard.router.static.replicasets[replicasets[2]]
 
 util.collect_timeouts(rs1)
 util.collect_timeouts(rs2)

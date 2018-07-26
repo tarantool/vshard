@@ -250,7 +250,7 @@ test_run:switch('router_1')
 -- Ensure that in a case of error router internals are not
 -- changed.
 --
-not vshard.router.internal.collect_lua_garbage
+not vshard.router.static.collect_lua_garbage
 ---
 - true
 ...
@@ -264,7 +264,7 @@ vshard.router.cfg(cfg)
 ---
 - error: 'Incorrect value for option ''invalid_option'': unexpected option'
 ...
-not vshard.router.internal.collect_lua_garbage
+not vshard.router.static.collect_lua_garbage
 ---
 - true
 ...

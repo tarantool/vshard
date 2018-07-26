@@ -35,7 +35,7 @@ customer_add({customer_id = 1, bucket_id = 100, name = 'name', accounts = {}})
 test_run:switch('router_1')
 vshard.router.call(100, 'read', 'customer_lookup', {1}, {timeout = 100})
 
-vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+vshard.router.static.route_map[100] = vshard.router.static.replicasets[replicasets[1]]
 vshard.router.call(100, 'write', 'customer_add', {{customer_id = 2, bucket_id = 100, name = 'name2', accounts = {}}}, {timeout = 100})
 
 -- Create cycle.
@@ -55,9 +55,9 @@ box.space._bucket:replace({100, vshard.consts.BUCKET.SENT, replicasets[2]})
 test_run:switch('router_1')
 -- Emulate a situation, when a replicaset_2 while is unknown for
 -- router, but is already known for storages.
-save_rs2 = vshard.router.internal.replicasets[replicasets[2]]
-vshard.router.internal.replicasets[replicasets[2]] = nil
-vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+save_rs2 = vshard.router.static.replicasets[replicasets[2]]
+vshard.router.static.replicasets[replicasets[2]] = nil
+vshard.router.static.route_map[100] = vshard.router.static.replicasets[replicasets[1]]
 
 fiber = require('fiber')
 call_retval = nil
@@ -84,11 +84,11 @@ err
 -- detect it and end with ok.
 --
 require('log').info(string.rep('a', 1000))
-vshard.router.internal.route_map[100] = vshard.router.internal.replicasets[replicasets[1]]
+vshard.router.static.route_map[100] = vshard.router.static.replicasets[replicasets[1]]
 call_retval = nil
 f = fiber.create(do_call, 100)
 while not test_run:grep_log('router_1', 'please update configuration', 1000) do fiber.sleep(0.1) end
-vshard.router.internal.replicasets[replicasets[2]] = save_rs2
+vshard.router.static.replicasets[replicasets[2]] = save_rs2
 while not call_retval do fiber.sleep(0.1) end
 call_retval
 vshard.router.call(100, 'read', 'customer_lookup', {3}, {timeout = 1})

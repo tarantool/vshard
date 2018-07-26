@@ -99,11 +99,11 @@ test_run:switch('router_1')
 -- Ensure that in a case of error router internals are not
 -- changed.
 --
-not vshard.router.internal.collect_lua_garbage
+not vshard.router.static.collect_lua_garbage
 cfg.collect_lua_garbage = true
 cfg.invalid_option = 'kek'
 vshard.router.cfg(cfg)
-not vshard.router.internal.collect_lua_garbage
+not vshard.router.static.collect_lua_garbage
 cfg.invalid_option = nil
 cfg.collect_lua_garbage = nil
 vshard.router.cfg(cfg)

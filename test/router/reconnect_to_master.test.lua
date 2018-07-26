@@ -34,7 +34,7 @@ _ = test_run:cmd('stop server storage_1_a')
 
 _ = test_run:switch('router_1')
 
-reps = vshard.router.internal.replicasets
+reps = vshard.router.static.replicasets
 test_run:cmd("setopt delimiter ';'")
 function is_disconnected()
     for i, rep in pairs(reps) do
@@ -46,7 +46,7 @@ function is_disconnected()
 end;
 function count_known_buckets()
     local known_buckets = 0
-    for _, id in pairs(vshard.router.internal.route_map) do
+    for _, id in pairs(vshard.router.static.route_map) do
         known_buckets = known_buckets + 1
     end
     return known_buckets
@@ -63,7 +63,7 @@ is_disconnected()
 -- Wait until replica is connected to test alerts on unavailable
 -- master.
 fiber = require('fiber')
-while vshard.router.internal.replicasets[replicasets[1]].replica == nil do fiber.sleep(0.1) end
+while vshard.router.static.replicasets[replicasets[1]].replica == nil do fiber.sleep(0.1) end
 vshard.router.info()
 
 -- Return master.
