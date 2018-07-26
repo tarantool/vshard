@@ -116,10 +116,10 @@ vshard.router.module_version()
 check_reloaded()
 ---
 ...
-while test_run:grep_log('router_1', 'Failover has been started') == nil do fiber.sleep(0.1) end
+while test_run:grep_log('router_1', 'failover_f has been started') == nil do fiber.sleep(0.1) end
 ---
 ...
-while test_run:grep_log('router_1', 'Discovery has been started') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end
+while test_run:grep_log('router_1', 'discovery_f has been started') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end
 ---
 ...
 check_reloaded()

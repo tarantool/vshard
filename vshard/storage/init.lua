@@ -352,10 +352,10 @@ end
 -- @param module_version Module version, on which the current
 --        function had been started. If the actual module version
 --        appears to be changed, then stop recovery. It is
---        restarted in reloadable_fiber_f().
+--        restarted in reloadable_fiber.
 --
-local function recovery_f(module_version)
-    lfiber.name('vshard.recovery')
+local function recovery_f()
+    local module_version = M.module_version
     local _bucket = box.space._bucket
     M.buckets_to_recovery = {}
     for _, bucket in _bucket.index.status:pairs({consts.BUCKET.SENDING}) do
@@ -728,10 +728,9 @@ local function local_on_master_enable()
     M._on_master_enable:run()
     -- Start background process to collect garbage.
     M.collect_bucket_garbage_fiber =
-        lfiber.create(util.reloadable_fiber_f, M, 'collect_garbage_f',
-                      'Garbage collector')
+        util.reloadable_fiber_create('vshard.gc', M, 'collect_garbage_f')
     M.recovery_fiber =
-        lfiber.create(util.reloadable_fiber_f, M, 'recovery_f', 'Recovery')
+        util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
     -- TODO: check current status
     log.info("Took on replicaset master role")
 end
@@ -1024,10 +1023,10 @@ end
 -- @param module_version Module version, on which the current
 --        function had been started. If the actual module version
 --        appears to be changed, then stop GC. It is restarted
---        in reloadable_fiber_f().
+--        in reloadable_fiber.
 --
-function collect_garbage_f(module_version)
-    lfiber.name('vshard.gc')
+function collect_garbage_f()
+    local module_version = M.module_version
     -- Collector controller. Changes of _bucket increments
     -- bucket generation. Garbage collector has its own bucket
     -- generation which is <= actual. Garbage collection is
@@ -1351,8 +1350,8 @@ end
 -- Background rebalancer. Works on a storage which has the
 -- smallest replicaset uuid and which is master.
 --
-local function rebalancer_f(module_version)
-    lfiber.name('vshard.rebalancer')
+local function rebalancer_f()
+    local module_version = M.module_version
     while module_version == M.module_version do
         while not M.is_rebalancer_active do
             log.info('Rebalancer is disabled. Sleep')
@@ -1641,8 +1640,9 @@ local function storage_cfg(cfg, this_replica_uuid)
 
     if min_master == this_replica then
         if not M.rebalancer_fiber then
-            M.rebalancer_fiber = lfiber.create(util.reloadable_fiber_f, M,
-                                               'rebalancer_f', 'Rebalancer')
+            M.rebalancer_fiber =
+                util.reloadable_fiber_create('vshard.rebalancer', M,
+                                             'rebalancer_f')
         else
             log.info('Wakeup rebalancer')
             -- Configuration had changed. Time to rebalance.

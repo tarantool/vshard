@@ -10,7 +10,7 @@ if not M then
     --
     M = {
         -- Latest versions of functions.
-        reloadable_fiber_f = nil,
+        reloadable_fiber_main_loop = nil,
     }
     rawset(_G, MODULE_INTERNALS, M)
 end
@@ -34,40 +34,53 @@ end
 --
 -- Wrapper to run a func in infinite loop and restart it on
 -- errors and module reload.
--- To handle module reload and run new version of a function
--- in the module, the function should just return.
+-- This loop executes the latest version of itself in case of
+-- reload of that module.
+-- See description of parameters in `reloadable_fiber_create`.
 --
--- @param module Module which can be reloaded.
--- @param func_name Name of a function to be executed in the
---        module.
--- @param worker_name Name of the reloadable background subsystem.
---        For example: "Garbage Collector", "Recovery", "Discovery",
---        "Rebalancer". Used only for an activity logging.
---
-local function reloadable_fiber_f(module, func_name, worker_name)
-    log.info('%s has been started', worker_name)
+local function reloadable_fiber_main_loop(module, func_name)
+    log.info('%s has been started', func_name)
     local func = module[func_name]
-::reload_loop::
-    local ok, err = pcall(func, module.module_version)
-    -- yield serves two pursoses:
+::restart_loop::
+    local ok, err = pcall(func)
+    -- yield serves two purposes:
     --  * makes this fiber cancellable
     --  * prevents 100% cpu consumption
     fiber.yield()
     if not ok then
-        log.error('%s has been failed: %s', worker_name, err)
+        log.error('%s has been failed: %s', func_name, err)
         if func == module[func_name] then
-            goto reload_loop
+            goto restart_loop
         end
         -- There is a chance that error was raised during reload
         -- (or caused by reload). Perform reload in case function
         -- has been changed.
-        log.error('%s: reloadable function %s has been changed',
-                  worker_name, func_name)
+        log.error('reloadable function %s has been changed', func_name)
     end
-    log.info('%s is reloaded, restarting', worker_name)
+    log.info('module is reloaded, restarting')
     -- luajit drops this frame if next function is called in
     -- return statement.
-    return M.reloadable_fiber_f(module, func_name, worker_name)
+    return M.reloadable_fiber_main_loop(module, func_name)
+end
+
+--
+-- Create a new fiber which runs a function in a loop. This loop
+-- is aware of reload mechanism and it loads a new version of the
+-- function in that case.
+-- To handle module reload and run new version of a function
+-- in the module, the function should just return.
+-- @param fiber_name Name of a new fiber. E.g.
+--        "vshard.rebalancer".
+-- @param module Module which can be reloaded.
+-- @param func_name Name of a function to be executed in the
+--        module.
+-- @retval New fiber.
+--
+local function reloadable_fiber_create(fiber_name, module, func_name)
+    assert(type(fiber_name) == 'string')
+    local xfiber = fiber.create(reloadable_fiber_main_loop, module, func_name)
+    xfiber:name(fiber_name)
+    return xfiber
 end
 
 --
@@ -98,7 +111,7 @@ local function generate_self_checker(obj_name, func_name, mt, func)
 end
 
 -- Update latest versions of function
-M.reloadable_fiber_f = reloadable_fiber_f
+M.reloadable_fiber_main_loop = reloadable_fiber_main_loop
 
 local function sync_task(delay, task, ...)
     if delay then
@@ -121,7 +134,7 @@ end
 
 return {
     tuple_extract_key = tuple_extract_key,
-    reloadable_fiber_f = reloadable_fiber_f,
+    reloadable_fiber_create = reloadable_fiber_create,
     generate_self_checker = generate_self_checker,
     async_task = async_task,
     internal = M,

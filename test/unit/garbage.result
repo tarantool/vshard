@@ -343,7 +343,7 @@ control.bucket_generation_collected
 collect_f = vshard.storage.internal.collect_garbage_f
 ---
 ...
-f = fiber.create(collect_f, vshard.storage.module_version())
+f = fiber.create(collect_f)
 ---
 ...
 fill_spaces_with_garbage()

@@ -140,9 +140,8 @@ end
 -- Background fiber to perform discovery. It periodically scans
 -- replicasets one by one and updates route_map.
 --
-local function discovery_f(module_version)
-    lfiber.name('discovery_fiber')
-    M.discovery_fiber = lfiber.self()
+local function discovery_f()
+    local module_version = M.module_version
     local iterations_until_lua_gc =
         consts.COLLECT_LUA_GARBAGE_INTERVAL / consts.DISCOVERY_INTERVAL
     while module_version == M.module_version do
@@ -450,9 +449,8 @@ end
 -- tries to reconnect to the best replica. When the connection is
 -- established, it replaces the original replica.
 --
-local function failover_f(module_version)
-    lfiber.name('vshard.failover')
-    M.failover_fiber = lfiber.self()
+local function failover_f()
+    local module_version = M.module_version
     local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
                                  consts.FAILOVER_DOWN_TIMEOUT)
     -- This flag is used to avoid logging like:
@@ -535,10 +533,12 @@ local function router_cfg(cfg)
 
     lreplicaset.wait_masters_connect(new_replicasets)
     if M.failover_fiber == nil then
-        lfiber.create(util.reloadable_fiber_f, M, 'failover_f', 'Failover')
+        M.failover_fiber = util.reloadable_fiber_create('vshard.failover', M,
+                                                        'failover_f')
     end
     if M.discovery_fiber == nil then
-        lfiber.create(util.reloadable_fiber_f, M, 'discovery_f', 'Discovery')
+        M.discovery_fiber = util.reloadable_fiber_create('vshard.discovery', M,
+                                                         'discovery_f')
     end
     -- Destroy connections, not used in a new configuration.
     collectgarbage()

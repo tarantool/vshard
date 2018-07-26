@@ -195,7 +195,7 @@ switch_rs1_master()
 vshard.storage.cfg(cfg, names.replica_uuid.box_2_b)
 
 fiber = require('fiber')
-while not test_run:grep_log('box_2_a', "Rebalancer has been started") do fiber.sleep(0.1) end
+while not test_run:grep_log('box_2_a', "rebalancer_f has been started") do fiber.sleep(0.1) end
 while not test_run:grep_log('box_1_a', "Rebalancer location has changed") do fiber.sleep(0.1) end
 
 --

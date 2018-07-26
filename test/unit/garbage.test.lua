@@ -149,7 +149,7 @@ control.bucket_generation_collected
 -- Test continuous garbage collection via background fiber.
 --
 collect_f = vshard.storage.internal.collect_garbage_f
-f = fiber.create(collect_f, vshard.storage.module_version())
+f = fiber.create(collect_f)
 fill_spaces_with_garbage()
 -- Wait until garbage collection is finished.
 while #s2:select{} ~= 2 do fiber.sleep(0.1) end
