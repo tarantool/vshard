@@ -273,6 +273,11 @@ lua_gc.internal.bg_fiber == nil
 ---
 - true
 ...
+-- Self checker.
+util.check_error(router_2.info)
+---
+- Use router:info(...) instead of router.info(...)
+...
 _ = test_run:cmd("switch default")
 ---
 ...

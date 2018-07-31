@@ -99,6 +99,9 @@ routers[7]:cfg(configs.cfg_2)
 vshard.router.internal.collect_lua_garbage_cnt == 0
 lua_gc.internal.bg_fiber == nil
 
+-- Self checker.
+util.check_error(router_2.info)
+
 _ = test_run:cmd("switch default")
 test_run:cmd("stop server router_1")
 test_run:cmd("cleanup server router_1")
