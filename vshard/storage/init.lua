@@ -1275,13 +1275,13 @@ local function rebalancer_apply_routes_f(routes)
         for j = i, i + bucket_count - 1 do
             local bucket_id = active_buckets[j].id
             M.rebalancer_sending_bucket = bucket_id
-            local status, ret = pcall(bucket_send, bucket_id, dst_uuid)
+            local status, ret, err = pcall(bucket_send, bucket_id, dst_uuid)
             M.rebalancer_sending_bucket = 0
             if not status or ret ~= true then
                 if not status then
-                    log.error('Error during rebalancer routes applying: %s',
-                              ret)
+                    err = ret
                 end
+                log.error('Error during rebalancer routes applying: %s', err)
                 log.info('Can not apply routes')
                 return
             end
