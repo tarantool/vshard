@@ -43,9 +43,7 @@ local type_validate = {
 }
 
 local function validate_config(config, template, check_arg)
-    for _, key_template in pairs(template) do
-        local key = key_template[1]
-        local template_value = key_template[2]
+    for key, template_value in pairs(template) do
         local value = config[key]
         if not value then
             if not template_value.is_optional then
@@ -83,13 +81,13 @@ local function validate_config(config, template, check_arg)
 end
 
 local replica_template = {
-    {'uri', {type = 'non-empty string', name = 'URI', check = check_uri}},
-    {'name', {type = 'string', name = "Name", is_optional = true}},
-    {'zone', {type = {'string', 'number'}, name = "Zone", is_optional = true}},
-    {'master', {
+    uri = {type = 'non-empty string', name = 'URI', check = check_uri},
+    name = {type = 'string', name = "Name", is_optional = true},
+    zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},
+    master = {
         type = 'boolean', name = "Master", is_optional = true, default = false,
         check = check_master
-    }},
+    },
 }
 
 local function check_replicas(replicas)
@@ -100,12 +98,12 @@ local function check_replicas(replicas)
 end
 
 local replicaset_template = {
-    {'replicas', {type = 'table', name = 'Replicas', check = check_replicas}},
-    {'weight', {
+    replicas = {type = 'table', name = 'Replicas', check = check_replicas},
+    weight = {
         type = 'non-negative number', name = 'Weight', is_optional = true,
         default = 1,
-    }},
-    {'lock', {type = 'boolean', name = 'Lock', is_optional = true}},
+    },
+    lock = {type = 'boolean', name = 'Lock', is_optional = true},
 }
 
 --
@@ -177,50 +175,50 @@ local function check_sharding(sharding)
 end
 
 local cfg_template = {
-    {'sharding', {type = 'table', name = 'Sharding', check = check_sharding}},
-    {'weights', {
+    sharding = {type = 'table', name = 'Sharding', check = check_sharding},
+    weights = {
         type = 'table', name = 'Weight matrix', is_optional = true,
         check = cfg_check_weights
-    }},
-    {'shard_index', {
+    },
+    shard_index = {
         type = {'non-empty string', 'non-negative integer'},
         name = 'Shard index', is_optional = true, default = 'bucket_id',
-    }},
-    {'zone', {
+    },
+    zone = {
         type = {'string', 'number'}, name = 'Zone identifier',
         is_optional = true
-    }},
-    {'bucket_count', {
+    },
+    bucket_count = {
         type = 'positive integer', name = 'Bucket count', is_optional = true,
         default = consts.DEFAULT_BUCKET_COUNT
-    }},
-    {'rebalancer_disbalance_threshold', {
+    },
+    rebalancer_disbalance_threshold = {
         type = 'non-negative number', name = 'Rebalancer disbalance threshold',
         is_optional = true,
         default = consts.DEFAULT_REBALANCER_DISBALANCE_THRESHOLD
-    }},
-    {'rebalancer_max_receiving', {
+    },
+    rebalancer_max_receiving = {
         type = 'positive integer',
         name = 'Rebalancer max receiving bucket count', is_optional = true,
         default = consts.DEFAULT_REBALANCER_MAX_RECEIVING
-    }},
-    {'collect_bucket_garbage_interval', {
+    },
+    collect_bucket_garbage_interval = {
         type = 'positive number', name = 'Garbage bucket collect interval',
         is_optional = true,
         default = consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
-    }},
-    {'collect_lua_garbage', {
+    },
+    collect_lua_garbage = {
         type = 'boolean', name = 'Garbage Lua collect necessity',
         is_optional = true, default = false
-    }},
-    {'sync_timeout', {
+    },
+    sync_timeout = {
         type = 'non-negative number', name = 'Sync timeout', is_optional = true,
         default = consts.DEFAULT_SYNC_TIMEOUT
-    }},
-    {'connection_outdate_delay', {
+    },
+    connection_outdate_delay = {
         type = 'non-negative number', name = 'Object outdate timeout',
         is_optional = true
-    }},
+    },
 }
 
 --
