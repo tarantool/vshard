@@ -1,5 +1,6 @@
 local log = require('log')
 local lfiber = require('fiber')
+local table_new = require('table.new')
 
 local MODULE_INTERNALS = '__module_vshard_router'
 -- Reload requirements, in case this module is reloaded manually.
@@ -524,7 +525,9 @@ local function router_cfg(cfg, is_reload)
     M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     M.current_cfg = cfg
     M.replicasets = new_replicasets
-    for bucket, rs in pairs(M.route_map) do
+    local old_route_map = M.route_map
+    M.route_map = table_new(M.total_bucket_count, 0)
+    for bucket, rs in pairs(old_route_map) do
         M.route_map[bucket] = M.replicasets[rs.uuid]
     end
     if M.failover_fiber == nil then
