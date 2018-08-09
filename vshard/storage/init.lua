@@ -85,7 +85,6 @@ if not M then
         -- sent - their status is unknown. Their state must be checked
         -- periodically in recovery fiber.
         buckets_to_recovery = {},
-        buckets_to_recovery_count = 0,
         recovery_fiber = nil,
 
         ----------------------- Rebalancer -----------------------
@@ -280,7 +279,6 @@ local function recovery_step()
     -- buckets_to_recovery map.
     local recovered = {}
     local _bucket = box.space._bucket
-    local new_count = 0
     local is_empty = true
     --
     -- If a rebalancer route applier fiber had exited with error
@@ -296,6 +294,7 @@ local function recovery_step()
             log.info('Starting buckets recovery step')
         end
         is_empty = false
+        assert(M.rebalancer_sending_bucket ~= bucket_id)
         local bucket = _bucket:get{bucket_id}
         if not bucket or not bucket_is_transfer_in_progress(bucket) then
             -- Possibly, a bucket was deleted or recovered by
@@ -309,12 +308,6 @@ local function recovery_step()
         if not destination or not destination.master then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
-            new_count = new_count + 1
-            goto continue
-        end
-        -- Do not touch a bucket beeing sent right now.
-        if M.rebalancer_sending_bucket == bucket.id then
-            new_count = new_count + 1
             goto continue
         end
         local remote_bucket, err =
@@ -323,7 +316,6 @@ local function recovery_step()
         -- not be used to recovery anything. Try later.
         if not remote_bucket and (not err or err.type ~= 'ShardingError' or
                                   err.code ~= lerror.code.WRONG_BUCKET) then
-            new_count = new_count + 1
             goto continue
         end
         if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
@@ -332,8 +324,6 @@ local function recovery_step()
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             table.insert(recovered, bucket_id)
             table.insert(active, bucket_id)
-        else
-            new_count = new_count + 1
         end
 ::continue::
     end
@@ -353,7 +343,6 @@ local function recovery_step()
     for _, id in pairs(recovered) do
         M.buckets_to_recovery[id] = nil
     end
-    M.buckets_to_recovery_count = new_count
 end
 
 --
@@ -370,7 +359,9 @@ local function recovery_f()
     local _bucket = box.space._bucket
     M.buckets_to_recovery = {}
     for _, bucket in _bucket.index.status:pairs({consts.BUCKET.SENDING}) do
-        M.buckets_to_recovery[bucket.id] = true
+        if M.rebalancer_sending_bucket ~= bucket.id then
+            M.buckets_to_recovery[bucket.id] = true
+        end
     end
     for _, bucket in _bucket.index.status:pairs({consts.BUCKET.RECEIVING}) do
         M.buckets_to_recovery[bucket.id] = true
@@ -747,13 +738,9 @@ local function local_on_master_enable()
 end
 
 --
--- Send a bucket to other replicaset
+-- Send a bucket to other replicaset.
 --
-local function bucket_send(bucket_id, destination)
-    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
-        error('Usage: bucket_send(bucket_id, destination)')
-    end
-
+local function bucket_send_xc(bucket_id, destination)
     local status, err = bucket_check_state(bucket_id, 'write')
     if err then
         return nil, err
@@ -762,32 +749,56 @@ local function bucket_send(bucket_id, destination)
     if replicaset == nil then
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
     end
-
     if destination == box.info.cluster.uuid then
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
                                   replicaset_uuid)
     end
 
     local data = bucket_collect_internal(bucket_id)
-    -- In a case of OOM or exception below the recovery fiber must
-    -- handle the 'sending' bucket.
-    M.buckets_to_recovery[bucket_id] = true
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
-
     status, err = replicaset:callrw('vshard.storage.bucket_recv',
                                     {bucket_id, box.info.cluster.uuid, data})
     if not status then
         if err.type == 'ShardingError' then
             -- Rollback bucket state.
             box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-            M.buckets_to_recovery[bucket_id] = nil
         end
         return status, err
     end
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
-    M.buckets_to_recovery[bucket_id] = nil
-
     return true
+end
+
+--
+-- Exception and recovery safe version of bucket_send_xc.
+--
+local function bucket_send(bucket_id, destination)
+    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
+        error('Usage: bucket_send(bucket_id, destination)')
+    end
+    if M.rebalancer_sending_bucket ~= 0 then
+        local _b = box.space._bucket
+        local status, bucket = pcall(_b.get, _b, {M.rebalancer_sending_bucket})
+        if not status then
+            return nil, bucket
+        end
+        return nil, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
+                                  M.rebalancer_sending_bucket,
+                                  bucket.destination)
+    end
+    M.rebalancer_sending_bucket = bucket_id
+    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination)
+    M.rebalancer_sending_bucket = 0
+    if status then
+        if ret then
+            return ret
+        end
+    else
+        ret = status
+        err = ret
+    end
+    M.buckets_to_recovery[bucket_id] = true
+    return ret, err
 end
 
 --
@@ -1275,13 +1286,8 @@ local function rebalancer_apply_routes_f(routes)
         log.info('Send %d buckets to %s', bucket_count, M.replicasets[dst_uuid])
         for j = i, i + bucket_count - 1 do
             local bucket_id = active_buckets[j].id
-            M.rebalancer_sending_bucket = bucket_id
-            local status, ret, err = pcall(bucket_send, bucket_id, dst_uuid)
-            M.rebalancer_sending_bucket = 0
-            if not status or ret ~= true then
-                if not status then
-                    err = ret
-                end
+            local ret, err = bucket_send(bucket_id, dst_uuid)
+            if not ret then
                 log.error('Error during rebalancer routes applying: %s', err)
                 log.info('Can not apply routes')
                 return

@@ -21,6 +21,9 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 -- now the bucket is ACTIVE both on the source and the
 -- destination.
 --
+-- Since 113 was fixed, now recovery does not work with a bucket
+-- sending right now, so the issue is not so actual anymore.
+--
 
 test_run:switch('box_1_a')
 _bucket = box.space._bucket
@@ -54,7 +57,8 @@ wait_rebalancer_state('Apply rebalancer routes', test_run)
 -- buckets that are beeing sent right now.
 --
 fiber = require('fiber')
-while not test_run:grep_log('box_1_a', 'Finish bucket recovery step') do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
+for i = 1, 10 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
+not test_run:grep_log('box_1_a', 'Finish bucket recovery step')
 errinj.set('ERRINJ_WAL_DELAY', false)
 
 --
@@ -74,6 +78,54 @@ _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 
 test_run:switch('box_2_a')
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
+
+--
+-- Test that it is not possible to send multiple bucket at the
+-- same time, even using the public bucket_send function.
+--
+box.error.injection.set('ERRINJ_WAL_DELAY', true)
+_ = test_run:switch('box_1_a')
+_bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 2})
+ret1 = nil
+ret2 = nil
+err1 = nil
+err2 = nil
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(35, names.rs_uuid[2]) end)
+f2 = fiber.create(function() ret2, err2 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+_ = test_run:switch('box_2_a')
+box.error.injection.set('ERRINJ_WAL_DELAY', false)
+_ = test_run:switch('box_1_a')
+while f1:status() ~= 'dead' or f2:status() ~= 'dead' do fiber.sleep(0.001) end
+ret1, err1
+ret2, err2
+_bucket:get{35}
+_bucket:get{36}
+-- Bucket 35 became 'active' on box_2_a, but still is sending on
+-- box_1_a. Wait until it is marked as garbage on box_1_a by the
+-- recovery fiber.
+while _bucket:get{35} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
+_ = test_run:switch('box_2_a')
+_bucket:get{35}
+
+--
+-- Test that bucket_send is correctly handled by recovery. When
+-- bucket_send is in progress, the recovery should not touch its
+-- bucket.
+--
+_ = test_run:switch('box_2_a')
+box.error.injection.set('ERRINJ_WAL_DELAY', true)
+_ = test_run:switch('box_1_a')
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+_ = test_run:switch('box_2_a')
+while not _bucket:get{36} do fiber.sleep(0.0001) end
+_ = test_run:switch('box_1_a')
+for i = 1, 5 do vshard.storage.recovery_wakeup() end
+_bucket:get{36}
+_ = test_run:switch('box_2_a')
+_bucket:get{36}
+box.error.injection.set('ERRINJ_WAL_DELAY', false)
+_ = test_run:switch('box_1_a')
+while _bucket:get{36} and _bucket:get{36}.status == vshard.consts.BUCKET.ACTIVE do fiber.sleep(0.001) end
 
 test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)
