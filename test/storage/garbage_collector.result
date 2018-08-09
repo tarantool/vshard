@@ -97,6 +97,7 @@ while box.space._bucket:get{3} ~= nil do fiber.sleep(0.1) end
 customer:select{}
 ---
 - - [10, 1, 'user1']
+  - [11, 2, 'user2']
 ...
 test_run:switch('storage_1_b')
 ---
@@ -109,6 +110,7 @@ while box.space._bucket:get{3} ~= nil do fiber.sleep(0.1) end
 customer:select{}
 ---
 - - [10, 1, 'user1']
+  - [11, 2, 'user2']
 ...
 --
 -- gh-77: garbage collection options and Lua garbage collection.

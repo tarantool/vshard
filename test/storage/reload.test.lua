@@ -59,7 +59,7 @@ vshard.storage.module_version()
 
 check_reloaded()
 
-while test_run:grep_log('storage_2_a', 'collect_garbage_f has been started') == nil do fiber.sleep(0.1) end
+while test_run:grep_log('storage_2_a', 'gc_bucket_f has been started') == nil do fiber.sleep(0.1) end
 while test_run:grep_log('storage_2_a', 'recovery_f has been started') == nil do fiber.sleep(0.1) vshard.storage.recovery_wakeup() end
 while test_run:grep_log('storage_2_a', 'rebalancer_f has been started') == nil do fiber.sleep(0.1) vshard.storage.rebalancer_wakeup() end
 

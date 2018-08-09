@@ -7,6 +7,9 @@ vshard = require('vshard')
 fiber = require('fiber')
 ---
 ...
+engine = test_run:get_cfg('engine')
+---
+...
 test_run:cmd("setopt delimiter ';'")
 ---
 - true
@@ -34,7 +37,7 @@ vshard.storage.internal.collect_bucket_garbage_interval = vshard.consts.DEFAULT_
 -- Find nothing if no bucket_id anywhere, or there is no index
 -- by it, or bucket_id is not unsigned.
 --
-s = box.schema.create_space('test')
+s = box.schema.create_space('test', {engine = engine})
 ---
 ...
 _ = s:create_index('pk')
@@ -95,7 +98,7 @@ show_sharded_spaces()
 ---
 - - test
 ...
-s2 = box.schema.create_space('test2')
+s2 = box.schema.create_space('test2', {engine = engine})
 ---
 ...
 pk2 = s2:create_index('pk')
@@ -125,7 +128,7 @@ cached_spaces == vshard.storage.internal.cached_find_sharded_spaces()
 ---
 - true
 ...
-s = box.schema.create_space('test')
+s = box.schema.create_space('test', {engine = engine})
 ---
 ...
 cached_spaces == vshard.storage.internal.cached_find_sharded_spaces()
@@ -136,11 +139,8 @@ s:drop()
 ---
 ...
 --
--- Test garbage buckets detection.
+-- Test garbage buckets deletion from space.
 --
-find_garbage = vshard.storage.internal.find_garbage_bucket
----
-...
 format = {}
 ---
 ...
@@ -179,7 +179,15 @@ _bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
 ---
 - [5, 'garbage']
 ...
-s = box.schema.create_space('test')
+_bucket:replace{6, vshard.consts.BUCKET.GARBAGE}
+---
+- [6, 'garbage']
+...
+_bucket:replace{200, vshard.consts.BUCKET.GARBAGE}
+---
+- [200, 'garbage']
+...
+s = box.schema.create_space('test', {engine = engine})
 ---
 ...
 pk = s:create_index('pk')
@@ -204,60 +212,10 @@ s:replace{4, 2}
 ---
 - [4, 2]
 ...
-find_garbage(sk)
+gc_bucket_step_by_type = vshard.storage.internal.gc_bucket_step_by_type
 ---
 ...
-s:replace{5, 100}
----
-- [5, 100]
-...
-s:replace{6, 200}
----
-- [6, 200]
-...
-find_garbage(sk)
----
-- 100
-...
-s:delete{5}
----
-- [5, 100]
-...
-find_garbage(sk)
----
-- 200
-...
-s:delete{6}
----
-- [6, 200]
-...
-s:replace{5, 4}
----
-- [5, 4]
-...
-find_garbage(sk)
----
-- 4
-...
-s:replace{5, 5}
----
-- [5, 5]
-...
-find_garbage(sk)
----
-- 5
-...
-s:delete{5}
----
-- [5, 5]
-...
---
--- Test garbage buckets deletion.
---
-garbage_step = vshard.storage.internal.collect_garbage_step
----
-...
-s2 = box.schema.create_space('test2')
+s2 = box.schema.create_space('test2', {engine = engine})
 ---
 ...
 pk2 = s2:create_index('pk')
@@ -283,12 +241,13 @@ function fill_spaces_with_garbage()
     s:replace{6, 100}
     s:replace{7, 4}
     s:replace{8, 5}
-    for i = 7, 1107 do s:replace{i, 200} end
+    for i = 9, 1107 do s:replace{i, 200} end
     s2:replace{4, 200}
     s2:replace{5, 100}
     s2:replace{5, 300}
     s2:replace{6, 4}
     s2:replace{7, 5}
+    s2:replace{7, 6}
 end;
 ---
 ...
@@ -307,14 +266,29 @@ fill_spaces_with_garbage()
 ---
 - 1107
 ...
-garbage_step()
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 ---
-- true
+- - 5
+  - 6
+  - 200
+...
+#s2:select{}
+---
+- 4
+...
+#s:select{}
+---
+- 7
+...
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
+---
+- - 4
 ...
 s2:select{}
 ---
 - - [1, 1]
   - [3, 3]
+  - [5, 300]
 ...
 s:select{}
 ---
@@ -322,11 +296,27 @@ s:select{}
   - [2, 1]
   - [3, 2]
   - [4, 2]
+  - [5, 100]
+  - [6, 100]
 ...
 -- Nothing deleted - update collected generation.
-garbage_step()
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 ---
-- true
+- - 5
+  - 6
+  - 200
+...
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
+---
+- - 4
+...
+#s2:select{}
+---
+- 3
+...
+#s:select{}
+---
+- 6
 ...
 --
 -- Test continuous garbage collection via background fiber.
@@ -337,14 +327,11 @@ fill_spaces_with_garbage()
 _ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vshard.storage.internal.bucket_generation + 1 end)
 ---
 ...
-collect_f = vshard.storage.internal.collect_garbage_f
----
-...
-f = fiber.create(collect_f)
+f = fiber.create(vshard.storage.internal.gc_bucket_f)
 ---
 ...
 -- Wait until garbage collection is finished.
-while #s2:select{} ~= 2 do fiber.sleep(0.1) end
+while s2:count() ~= 3 or s:count() ~= 6 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 s:select{}
@@ -353,11 +340,14 @@ s:select{}
   - [2, 1]
   - [3, 2]
   - [4, 2]
+  - [5, 100]
+  - [6, 100]
 ...
 s2:select{}
 ---
 - - [1, 1]
   - [3, 3]
+  - [5, 300]
 ...
 -- Check garbage bucket is deleted by background fiber.
 _bucket:select{}
@@ -375,7 +365,7 @@ _bucket:replace{2, vshard.consts.BUCKET.SENT}
 - [2, 'sent']
 ...
 -- Wait deletion after a while.
-while _bucket:get{2} ~= nil do fiber.sleep(0.1) end
+while _bucket:get{2} ~= nil do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 _bucket:select{}
@@ -387,11 +377,14 @@ s:select{}
 ---
 - - [1, 1]
   - [2, 1]
+  - [5, 100]
+  - [6, 100]
 ...
 s2:select{}
 ---
 - - [1, 1]
   - [3, 3]
+  - [5, 300]
 ...
 --
 -- Test full lifecycle of a bucket.
@@ -412,7 +405,7 @@ _bucket:replace{4, vshard.consts.BUCKET.SENT}
 ---
 - [4, 'sent']
 ...
-while _bucket:get{4} ~= nil do fiber.sleep(0.1) end
+while _bucket:get{4} ~= nil do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 --
@@ -436,7 +429,7 @@ s:replace{6, 4}
 ---
 - [6, 4]
 ...
-while not test_run:grep_log("default", "Error during deletion of empty sent buckets") do fiber.sleep(0.1) end
+while not test_run:grep_log("default", "Error during deletion of empty sent buckets") do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 s:select{}
@@ -453,7 +446,7 @@ _bucket:select{}
 _ = _bucket:on_replace(nil, rollback_on_delete)
 ---
 ...
-while _bucket:get{4} ~= nil do fiber.sleep(0.1) end
+while _bucket:get{4} ~= nil do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 f:cancel()
@@ -491,9 +484,8 @@ s:select{}
   - [2, 1]
 ...
 -- Delete a not existing garbage bucket.
-_bucket:delete{4}
+_ = _bucket:delete{4}
 ---
-- [4, 'sent']
 ...
 s:replace{5, 4}
 ---
@@ -540,6 +532,45 @@ s:select{}
 ---
 - - [1, 1]
   - [2, 1]
+...
+--
+-- Test huge bucket count deletion.
+--
+for i = 1, 2000 do _bucket:replace{i, vshard.consts.BUCKET.GARBAGE} s:replace{i, i} s2:replace{i, i} end
+---
+...
+#_bucket:select{}
+---
+- 2000
+...
+#s:select{}
+---
+- 2000
+...
+#s2:select{}
+---
+- 2000
+...
+f = fiber.create(vshard.storage.internal.gc_bucket_f)
+---
+...
+while _bucket:count() ~= 0 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
+---
+...
+_bucket:select{}
+---
+- []
+...
+s:select{}
+---
+- []
+...
+s2:select{}
+---
+- []
+...
+f:cancel()
+---
 ...
 s2:drop()
 ---

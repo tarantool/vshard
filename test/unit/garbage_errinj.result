@@ -7,6 +7,9 @@ vshard = require('vshard')
 fiber = require('fiber')
 ---
 ...
+engine = test_run:get_cfg('engine')
+---
+...
 vshard.storage.internal.shard_index = 'bucket_id'
 ---
 ...
@@ -48,7 +51,7 @@ _bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
 ---
 - [5, 'garbage']
 ...
-s = box.schema.create_space('test')
+s = box.schema.create_space('test', {engine = engine})
 ---
 ...
 pk = s:create_index('pk')
@@ -89,7 +92,7 @@ s:replace{8, 5}
 ---
 - [8, 5]
 ...
-s2 = box.schema.create_space('test2')
+s2 = box.schema.create_space('test2', {engine = engine})
 ---
 ...
 pk2 = s2:create_index('pk')
@@ -129,13 +132,16 @@ s2:replace{7, 5}
 ---
 - [7, 5]
 ...
-garbage_step = vshard.storage.internal.collect_garbage_step
+gc_bucket_step_by_type = vshard.storage.internal.gc_bucket_step_by_type
 ---
 ...
--- Restart garbage collection.
-garbage_step()
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
-- true
+- - 4
+...
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
+---
+- - 5
 ...
 --
 -- Test _bucket generation change during garbage buckets search.
@@ -149,7 +155,7 @@ _ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vs
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = true
 ---
 ...
-f = fiber.create(function() garbage_step() end)
+f = fiber.create(function() gc_bucket_step_by_type(vshard.consts.BUCKET.SENT) gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE) end)
 ---
 ...
 _bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
@@ -185,9 +191,14 @@ _bucket:select{4}
 - - [4, 'garbage']
 ...
 -- Next step deletes garbage ok.
-garbage_step()
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
-- true
+- []
+...
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
+---
+- - 4
+  - 5
 ...
 #s:select{}
 ---

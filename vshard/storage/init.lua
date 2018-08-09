@@ -743,7 +743,7 @@ local function local_on_master_enable()
     M._on_master_enable:run()
     -- Start background process to collect garbage.
     M.collect_bucket_garbage_fiber =
-        util.reloadable_fiber_create('vshard.gc', M, 'collect_garbage_f')
+        util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
     M.recovery_fiber =
         util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
     -- TODO: check current status
@@ -866,194 +866,140 @@ end
 -- Garbage collector
 --------------------------------------------------------------------------------
 --
--- Find a bucket which has data in a space, but is not stored
--- in _bucket space or is garbage bucket.
--- @param bucket_index Index of the space with bucket_id part.
--- @retval Not nil Garbage bucket id.
--- @retval     nil No garbage.
+-- Check that a bucket with the specified id has the needed
+-- status.
+-- @param bucket_generation Generation since the last check.
+-- @param bucket_id Id of the bucket to check.
+-- @param status Expected bucket status.
+-- @retval New bucket generation.
 --
-local function find_garbage_bucket(bucket_index)
-    local curr_bucket = 0
-    local iterations = 0
-    local bucket_generation = M.bucket_generation
-    while true do
-        while M.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
-            lfiber.sleep(0.01)
+local function gc_bucket_guard_xc(bucket_generation, bucket_id, status)
+    if bucket_generation ~= M.bucket_generation then
+        local _bucket = box.space._bucket
+        local ok, b = pcall(_bucket.get, _bucket, {bucket_id})
+        if not ok or (not b and status) or (b and b.status ~= status) then
+            error(lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
+                                "bucket status is changed during gc", nil))
         end
-        -- Get next bucket id from a space.
-        local t = bucket_index:select({curr_bucket}, {iterator='GE', limit=1})
-        if #t == 0 then
-            return
-        end
-        assert(#t == 1)
-        local bucket_id = util.tuple_extract_key(t[1], bucket_index.parts)[1]
-        t = box.space._bucket:get({bucket_id})
-        -- If a bucket is stored in _bucket and is garbage - the
-        -- result is found.
-        if t == nil or bucket_is_garbage(t) then
-            return bucket_id
-        end
-        -- The found bucket is not garbage - continue search
-        -- starting from the next one.
-        curr_bucket = bucket_id + 1
-        iterations = iterations + 1
-        if iterations % 1000 == 0 then
-            -- Do not occupy 100% CPU.
-            lfiber.yield()
-            -- If during yield _bucket space has changed, then
-            -- interrupt garbage collection step. It is restarted
-            -- in the main function (collect_garbage_f).
-            if bucket_generation ~= M.bucket_generation then
-                return
-            end
-        end
+        return M.bucket_generation
     end
+    return bucket_generation
 end
 
 --
--- Delete from a space some garbage tuples with a specified bucket
--- id.
+-- Delete from a space tuples with a specified bucket id.
 -- @param space Space to cleanup.
--- @param bucket_index Index containing bucket_id in a first part.
--- @param bucket_id Garbage bucket identifier.
+-- @param bucket_id Id of the bucket to cleanup.
+-- @param status Bucket status for guard checks.
 --
-local function collect_garbage_bucket_in_space_impl(space, bucket_index,
-                                                    bucket_id)
+local function gc_bucket_in_space_xc(space, bucket_id, status)
+    local bucket_index = space.index[M.shard_index]
+    if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
+        return
+    end
+    local bucket_generation = M.bucket_generation
     local pk_parts = space.index[0].parts
+::restart::
+    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
     box.begin()
     for _, tuple in bucket_index:pairs({bucket_id}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
+        limit = limit - 1
+        if limit == 0 then
+            bucket_generation =
+                gc_bucket_guard_xc(bucket_generation, bucket_id, status)
+            box.commit()
+            goto restart
+        end
     end
+    gc_bucket_guard_xc(bucket_generation, bucket_id, status)
     box.commit()
 end
 
-local function collect_garbage_bucket_in_space(space, bucket_index, bucket_id)
-    local ok, err = pcall(collect_garbage_bucket_in_space_impl, space,
-                          bucket_index, bucket_id)
+--
+-- Exception safe version of gc_bucket_in_space_xc.
+--
+local function gc_bucket_in_space(space, bucket_id, status)
+    local ok, err = pcall(gc_bucket_in_space_xc, space, bucket_id, status)
     if not ok then
         box.rollback()
-        error(err)
     end
+    return ok, err
 end
 
 --
--- Make one garbage collection step. Go over sharded spaces,
--- search garbage in each one and delete part by part. If _bucket
--- has changed during a step, then the step is interrupted and
--- restarted.
--- @retval True The step finished with no errors or bucket
---         generation changes. Else False.
+-- Remove tuples from buckets of a specified type.
+-- @param type Type of buckets to gc.
+-- @retval List of ids of empty buckets of the type.
 --
-local function collect_garbage_step()
-    log.info('Start next garbage collection step')
-    local bucket_generation = M.bucket_generation
-    -- If spaces are added later, they are not participate in
-    -- garbage collection on this step and they must not do,
-    -- because garbage buckets can be in only old spaces. If
-    -- during garbage collection some buckets are removed and
-    -- their tuples are in new spaces, then bucket_generation is
-    -- incremented and such spaces are cleaned up on a next step.
+local function gc_bucket_step_by_type(type)
     local sharded_spaces = find_sharded_spaces()
-    -- For each space:
-    -- 1) Find garbage bucket. If not found, go to a next space;
-    -- 2) Delete all its tuples;
-    -- 3) Go to 1.
-    for _, space in pairs(sharded_spaces) do
-        local bucket_index = space.index[M.shard_index]
-        while true do
-            local garbage_bucket = find_garbage_bucket(bucket_index)
-            -- Stop the step, if a generation has changed.
-            if bucket_generation ~= M.bucket_generation then
-                log.info('Interrupt garbage collection step')
-                return false
-            end
-            if garbage_bucket == nil then
-                break
-            end
-            collect_garbage_bucket_in_space(space, bucket_index, garbage_bucket)
-            if bucket_generation ~= M.bucket_generation then
-                log.info('Interrupt garbage collection step')
-                return false
+    local empty_buckets = {}
+    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+    for _, bucket in box.space._bucket.index.status:pairs(type) do
+        for _, space in pairs(sharded_spaces) do
+            gc_bucket_in_space_xc(space, bucket.id, type)
+            limit = limit - 1
+            if limit == 0 then
+                lfiber.sleep(0)
+                limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
             end
         end
+        table.insert(empty_buckets, bucket.id)
     end
-    assert(bucket_generation == M.bucket_generation)
-    log.info('Finish garbage collection step')
-    return true
+    return empty_buckets
 end
 
 --
--- Drop empty sent buckets with finished timeout of redirection.
--- @param redirect_buckets Array of empty sent buckets to delete.
+-- Drop buckets with ids in the list.
+-- @param bucket_ids Bucket ids to drop.
+-- @param status Expected bucket status.
 --
-local function collect_garbage_drop_redirects(redirect_buckets)
-    if #redirect_buckets == 0 then
+local function gc_bucket_drop_xc(bucket_ids, status)
+    if #bucket_ids == 0 then
         return
     end
-    local _bucket = box.space._bucket
+    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+    local bucket_generation = M.bucket_generation
     box.begin()
-    for _, id in pairs(redirect_buckets) do
-        local old = _bucket:get{id}
-        -- Bucket can change status, if an admin manualy had
-        -- changed it.
-        if old ~= nil and old.status == consts.BUCKET.SENT then
-            _bucket:delete{id}
+    local _bucket = box.space._bucket
+    for _, id in pairs(bucket_ids) do
+        gc_bucket_guard_xc(bucket_generation, id, status)
+        _bucket:delete{id}
+        limit = limit - 1
+        if limit == 0 then
+            box.commit()
+            box.begin()
+            limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
         end
     end
     box.commit()
 end
 
 --
--- Delete garbage buckets from _bucket and get identifiers of
--- empty sent buckets.
--- @retval Array of empty sent bucket identifiers.
+-- Exception safe version of gc_bucket_drop_xc.
 --
-local function collect_garbage_update_bucket()
-    local _bucket = box.space._bucket
-    local status_index = _bucket.index.status
-    -- Sent buckets are not deleted immediately after cleaning.
-    -- They are used to redirect requests for a while. The table
-    -- below collects such empty sent buckets to delete them after
-    -- a specified timeout.
-    local empty_buckets_for_redirect = {}
-    local sent_buckets = status_index:select{consts.BUCKET.SENT}
-    for _, bucket in pairs(sent_buckets) do
-        table.insert(empty_buckets_for_redirect, bucket.id)
+local function gc_bucket_drop(bucket_ids, status)
+    local status, err = pcall(gc_bucket_drop_xc, bucket_ids, status)
+    if not status then
+        box.rollback()
     end
-    -- A receiving bucket can be garbage if it was found in
-    -- _bucket right after bootstrap. It means, that it was
-    -- unsuccessfully and partialy sent by another replicaset.
-    -- In such a case it changes its status to GARBAGE, and GC
-    -- deletes it here.
-    local empty_buckets_to_delete = {}
-    local garbage_buckets = status_index:select{consts.BUCKET.GARBAGE}
-    for _, bucket in pairs(garbage_buckets) do
-        table.insert(empty_buckets_to_delete, bucket.id)
-    end
-    if #empty_buckets_to_delete ~= 0 then
-        box.begin()
-        for _, id in pairs(empty_buckets_to_delete) do
-            _bucket:delete{id}
-        end
-        box.commit()
-    end
-    return empty_buckets_for_redirect
+    return status, err
 end
 
 --
 -- Garbage collector. Works on masters. The garbage collector
 -- wakes up once per specified time.
--- After wakeup it checks follows the plan:
+-- After wakeup it follows the plan:
 -- 1) Check if _bucket has changed. If not, then sleep again;
--- 2) Scan user spaces for not existing, sent and garbage buckets,
---    delete garbage data in a single transaction;
--- 3) Restart GC, if _bucket has changed during data deletion;
--- 4) Delete GARBAGE buckets from _bucket immediately, and
+-- 2) Scan user spaces for sent and garbage buckets, delete
+--    garbage data in batches of limited size;
+-- 3) Delete GARBAGE buckets from _bucket immediately, and
 --    schedule SENT buckets for deletion after a timeout;
--- 5) Sleep, go to (1).
--- For each step detains see comments in code.
+-- 4) Sleep, go to (1).
+-- For each step details see comments in the code.
 --
-function collect_garbage_f()
+function gc_bucket_f()
     local module_version = M.module_version
     -- Changes of _bucket increments bucket generation. Garbage
     -- collector has its own bucket generation which is <= actual.
@@ -1069,44 +1015,49 @@ function collect_garbage_f()
     -- Empty sent buckets, updated after each step, and when
     -- buckets_for_redirect is deleted, it gets empty_sent_buckets
     -- for next deletion.
-    local empty_sent_buckets = {}
+    local empty_garbage_buckets, empty_sent_buckets, status, err
     while M.module_version == module_version do
         -- Check if no changes in buckets configuration.
         if bucket_generation_collected ~= M.bucket_generation then
             local bucket_generation = M.bucket_generation
-            local status, err = pcall(collect_garbage_step)
-            if M.module_version ~= module_version then
-                return
-            end
+            status, empty_garbage_buckets =
+                pcall(gc_bucket_step_by_type, consts.BUCKET.GARBAGE)
             if not status then
+                err = empty_garbage_buckets
+                goto check_error
+            end
+            status, empty_sent_buckets =
+                pcall(gc_bucket_step_by_type, consts.BUCKET.SENT)
+            if not status then
+                err = empty_sent_buckets
+                goto check_error
+            end
+            status, err = gc_bucket_drop(empty_garbage_buckets,
+                                         consts.BUCKET.GARBAGE)
+::check_error::
+            if not status then
+                box.rollback()
                 log.error('Error during garbage collection step: %s', err)
                 goto continue
             end
-            status, empty_sent_buckets = pcall(collect_garbage_update_bucket)
-            if not status then
-                box.rollback()
-                log.error('Error during empty buckets processing: %s',
-                          empty_sent_buckets)
-                goto continue
-            end
-            if M.module_version ~= module_version then
-                return
-            end
             bucket_generation_collected = bucket_generation
         end
+
         if lfiber.time() - buckets_for_redirect_ts >=
            consts.BUCKET_SENT_GARBAGE_DELAY then
-            local status, err = pcall(collect_garbage_drop_redirects,
-                                      buckets_for_redirect)
+            status, err = gc_bucket_drop(buckets_for_redirect,
+                                         consts.BUCKET.SENT)
             if not status then
-                box.rollback()
+                buckets_for_redirect = {}
+                empty_sent_buckets = {}
+                bucket_generation_collected = -1
                 log.error('Error during deletion of empty sent buckets: %s',
                           err)
             elseif M.module_version ~= module_version then
                 return
             else
-                buckets_for_redirect = empty_sent_buckets
-                empty_sent_buckets = {}
+                buckets_for_redirect = empty_sent_buckets or {}
+                empty_sent_buckets = nil
                 buckets_for_redirect_ts = lfiber.time()
             end
         end
@@ -1143,9 +1094,12 @@ local function bucket_delete_garbage(bucket_id, opts)
               'ignore this attention')
     end
     local sharded_spaces = find_sharded_spaces()
-    local idx = M.shard_index
+    local bucket_status = bucket and bucket.status
     for _, space in pairs(sharded_spaces) do
-        collect_garbage_bucket_in_space(space, space.index[idx], bucket_id)
+        local status, err = gc_bucket_in_space(space, bucket_id, bucket_status)
+        if not status then
+            error(err)
+        end
     end
 end
 
@@ -1877,15 +1831,14 @@ else
 end
 
 M.recovery_f = recovery_f
-M.collect_garbage_f = collect_garbage_f
 M.rebalancer_f = rebalancer_f
+M.gc_bucket_f = gc_bucket_f
 
 --
 -- These functions are saved in M not for atomic reload, but for
 -- unit testing.
 --
-M.find_garbage_bucket = find_garbage_bucket
-M.collect_garbage_step = collect_garbage_step
+M.gc_bucket_step_by_type = gc_bucket_step_by_type
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
 M.cached_find_sharded_spaces = find_sharded_spaces

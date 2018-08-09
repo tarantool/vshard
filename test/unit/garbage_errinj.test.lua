@@ -2,6 +2,7 @@ test_run = require('test_run').new()
 vshard = require('vshard')
 fiber = require('fiber')
 
+engine = test_run:get_cfg('engine')
 vshard.storage.internal.shard_index = 'bucket_id'
 
 format = {}
@@ -16,7 +17,7 @@ _bucket:replace{3, vshard.consts.BUCKET.ACTIVE}
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
 _bucket:replace{5, vshard.consts.BUCKET.GARBAGE}
 
-s = box.schema.create_space('test')
+s = box.schema.create_space('test', {engine = engine})
 pk = s:create_index('pk')
 sk = s:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s:replace{1, 1}
@@ -28,7 +29,7 @@ s:replace{6, 100}
 s:replace{7, 4}
 s:replace{8, 5}
 
-s2 = box.schema.create_space('test2')
+s2 = box.schema.create_space('test2', {engine = engine})
 pk2 = s2:create_index('pk')
 sk2 = s2:create_index('bucket_id', {parts = {{2, 'unsigned'}}, unique = false})
 s2:replace{1, 1}
@@ -40,10 +41,9 @@ s2:replace{5, 300}
 s2:replace{6, 4}
 s2:replace{7, 5}
 
-garbage_step = vshard.storage.internal.collect_garbage_step
-
--- Restart garbage collection.
-garbage_step()
+gc_bucket_step_by_type = vshard.storage.internal.gc_bucket_step_by_type
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 
 --
 -- Test _bucket generation change during garbage buckets search.
@@ -51,7 +51,7 @@ garbage_step()
 s:truncate()
 _ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vshard.storage.internal.bucket_generation + 1 end)
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = true
-f = fiber.create(function() garbage_step() end)
+f = fiber.create(function() gc_bucket_step_by_type(vshard.consts.BUCKET.SENT) gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE) end)
 _bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
 s:replace{5, 4}
 s:replace{6, 4}
@@ -63,7 +63,8 @@ while f:status() ~= 'dead' do fiber.sleep(0.1) end
 #s:select{}
 _bucket:select{4}
 -- Next step deletes garbage ok.
-garbage_step()
+gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
+gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 #s:select{}
 _bucket:delete{4}
 
