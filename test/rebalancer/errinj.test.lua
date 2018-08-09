@@ -119,7 +119,7 @@ f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, names.r
 _ = test_run:switch('box_2_a')
 while not _bucket:get{36} do fiber.sleep(0.0001) end
 _ = test_run:switch('box_1_a')
-for i = 1, 5 do vshard.storage.recovery_wakeup() end
+while _bucket:get{36} do vshard.storage.recovery_wakeup() vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 _bucket:get{36}
 _ = test_run:switch('box_2_a')
 _bucket:get{36}

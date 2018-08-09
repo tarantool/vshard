@@ -71,6 +71,12 @@ if not M then
         -- References to a parent replicaset and self in it.
         this_replicaset = nil,
         this_replica = nil,
+        --
+        -- Incremental generation of the _bucket space. It is
+        -- incremented on each _bucket change and is used to
+        -- detect that _bucket was not changed between yields.
+        --
+        bucket_generation = 0,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -116,6 +122,13 @@ if not M then
         -- reload to determine which upgrade scripts to run.
         reload_version = reload_evolution.version,
     }
+end
+
+--
+-- Trigger for on replace into _bucket to update its generation.
+--
+local function bucket_generation_increment()
+    M.bucket_generation = M.bucket_generation + 1
 end
 
 --
@@ -856,15 +869,13 @@ end
 -- Find a bucket which has data in a space, but is not stored
 -- in _bucket space or is garbage bucket.
 -- @param bucket_index Index of the space with bucket_id part.
--- @param control GC controller. If buckets generation is
---        increased then interrupt the search.
 -- @retval Not nil Garbage bucket id.
 -- @retval     nil No garbage.
 --
-local function find_garbage_bucket(bucket_index, control)
+local function find_garbage_bucket(bucket_index)
     local curr_bucket = 0
     local iterations = 0
-    local bucket_generation = control.bucket_generation
+    local bucket_generation = M.bucket_generation
     while true do
         while M.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY do
             lfiber.sleep(0.01)
@@ -892,7 +903,7 @@ local function find_garbage_bucket(bucket_index, control)
             -- If during yield _bucket space has changed, then
             -- interrupt garbage collection step. It is restarted
             -- in the main function (collect_garbage_f).
-            if bucket_generation ~= control.bucket_generation then
+            if bucket_generation ~= M.bucket_generation then
                 return
             end
         end
@@ -930,12 +941,12 @@ end
 -- search garbage in each one and delete part by part. If _bucket
 -- has changed during a step, then the step is interrupted and
 -- restarted.
--- @param control GC controller. If buckets generation is
---        increased then interrupt the step.
+-- @retval True The step finished with no errors or bucket
+--         generation changes. Else False.
 --
-local function collect_garbage_step(control)
+local function collect_garbage_step()
     log.info('Start next garbage collection step')
-    local bucket_generation = control.bucket_generation
+    local bucket_generation = M.bucket_generation
     -- If spaces are added later, they are not participate in
     -- garbage collection on this step and they must not do,
     -- because garbage buckets can be in only old spaces. If
@@ -950,25 +961,25 @@ local function collect_garbage_step(control)
     for _, space in pairs(sharded_spaces) do
         local bucket_index = space.index[M.shard_index]
         while true do
-            local garbage_bucket = find_garbage_bucket(bucket_index, control)
+            local garbage_bucket = find_garbage_bucket(bucket_index)
             -- Stop the step, if a generation has changed.
-            if bucket_generation ~= control.bucket_generation then
+            if bucket_generation ~= M.bucket_generation then
                 log.info('Interrupt garbage collection step')
-                return
+                return false
             end
             if garbage_bucket == nil then
                 break
             end
             collect_garbage_bucket_in_space(space, bucket_index, garbage_bucket)
-            if bucket_generation ~= control.bucket_generation then
+            if bucket_generation ~= M.bucket_generation then
                 log.info('Interrupt garbage collection step')
-                return
+                return false
             end
         end
     end
-    assert(bucket_generation == control.bucket_generation)
-    control.bucket_generation_collected = bucket_generation
+    assert(bucket_generation == M.bucket_generation)
     log.info('Finish garbage collection step')
+    return true
 end
 
 --
@@ -1042,30 +1053,14 @@ end
 -- 5) Sleep, go to (1).
 -- For each step detains see comments in code.
 --
--- @param module_version Module version, on which the current
---        function had been started. If the actual module version
---        appears to be changed, then stop GC. It is restarted
---        in reloadable_fiber.
---
 function collect_garbage_f()
     local module_version = M.module_version
-    -- Collector controller. Changes of _bucket increments
-    -- bucket generation. Garbage collector has its own bucket
-    -- generation which is <= actual. Garbage collection is
-    -- finished, when collector's generation == bucket generation.
-    -- In such a case the fiber does nothing until next _bucket
-    -- change.
-    local control = {
-        bucket_generation = 1,
-        bucket_generation_collected = 0
-    }
-    -- Function to trigger buckets garbage collection.
-    local on_bucket_replace = function(old_tuple)
-        if old_tuple ~= nil then
-            control.bucket_generation = control.bucket_generation + 1
-        end
-    end
-    box.space._bucket:on_replace(on_bucket_replace)
+    -- Changes of _bucket increments bucket generation. Garbage
+    -- collector has its own bucket generation which is <= actual.
+    -- Garbage collection is finished, when collector's
+    -- generation == bucket generation. In such a case the fiber
+    -- does nothing until next _bucket change.
+    local bucket_generation_collected = -1
     -- Empty sent buckets are collected into an array. After a
     -- specified time interval the buckets are deleted both from
     -- this array and from _bucket space.
@@ -1077,8 +1072,9 @@ function collect_garbage_f()
     local empty_sent_buckets = {}
     while M.module_version == module_version do
         -- Check if no changes in buckets configuration.
-        if control.bucket_generation_collected ~= control.bucket_generation then
-            local status, err = pcall(collect_garbage_step, control)
+        if bucket_generation_collected ~= M.bucket_generation then
+            local bucket_generation = M.bucket_generation
+            local status, err = pcall(collect_garbage_step)
             if M.module_version ~= module_version then
                 return
             end
@@ -1091,12 +1087,12 @@ function collect_garbage_f()
                 box.rollback()
                 log.error('Error during empty buckets processing: %s',
                           empty_sent_buckets)
-                control.bucket_generation = control.bucket_generation + 1
                 goto continue
             end
             if M.module_version ~= module_version then
                 return
             end
+            bucket_generation_collected = bucket_generation
         end
         if lfiber.time() - buckets_for_redirect_ts >=
            consts.BUCKET_SENT_GARBAGE_DELAY then
@@ -1618,6 +1614,10 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         log.info("Box has been configured")
         local uri = luri.parse(this_replica.uri)
         box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+        box.space._bucket:on_replace(bucket_generation_increment)
+    else
+        local old = box.space._bucket:on_replace()[1]
+        box.space._bucket:on_replace(bucket_generation_increment, old)
     end
 
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
@@ -1886,7 +1886,6 @@ M.rebalancer_f = rebalancer_f
 --
 M.find_garbage_bucket = find_garbage_bucket
 M.collect_garbage_step = collect_garbage_step
-M.collect_garbage_f = collect_garbage_f
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
 M.cached_find_sharded_spaces = find_sharded_spaces

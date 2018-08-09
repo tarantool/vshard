@@ -141,9 +141,6 @@ s:drop()
 find_garbage = vshard.storage.internal.find_garbage_bucket
 ---
 ...
-control = {bucket_generation = 0, bucket_generation_collected = -1}
----
-...
 format = {}
 ---
 ...
@@ -207,7 +204,7 @@ s:replace{4, 2}
 ---
 - [4, 2]
 ...
-find_garbage(sk, control)
+find_garbage(sk)
 ---
 ...
 s:replace{5, 100}
@@ -218,7 +215,7 @@ s:replace{6, 200}
 ---
 - [6, 200]
 ...
-find_garbage(sk, control)
+find_garbage(sk)
 ---
 - 100
 ...
@@ -226,7 +223,7 @@ s:delete{5}
 ---
 - [5, 100]
 ...
-find_garbage(sk, control)
+find_garbage(sk)
 ---
 - 200
 ...
@@ -238,7 +235,7 @@ s:replace{5, 4}
 ---
 - [5, 4]
 ...
-find_garbage(sk, control)
+find_garbage(sk)
 ---
 - 4
 ...
@@ -246,7 +243,7 @@ s:replace{5, 5}
 ---
 - [5, 5]
 ...
-find_garbage(sk, control)
+find_garbage(sk)
 ---
 - 5
 ...
@@ -310,8 +307,9 @@ fill_spaces_with_garbage()
 ---
 - 1107
 ...
-garbage_step(control)
+garbage_step()
 ---
+- true
 ...
 s2:select{}
 ---
@@ -325,28 +323,24 @@ s:select{}
   - [3, 2]
   - [4, 2]
 ...
-control.bucket_generation_collected
----
-- 0
-...
 -- Nothing deleted - update collected generation.
-garbage_step(control)
+garbage_step()
 ---
-...
-control.bucket_generation_collected
----
-- 0
+- true
 ...
 --
 -- Test continuous garbage collection via background fiber.
 --
+fill_spaces_with_garbage()
+---
+...
+_ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vshard.storage.internal.bucket_generation + 1 end)
+---
+...
 collect_f = vshard.storage.internal.collect_garbage_f
 ---
 ...
 f = fiber.create(collect_f)
----
-...
-fill_spaces_with_garbage()
 ---
 ...
 -- Wait until garbage collection is finished.

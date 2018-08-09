@@ -71,7 +71,6 @@ s:drop()
 -- Test garbage buckets detection.
 --
 find_garbage = vshard.storage.internal.find_garbage_bucket
-control = {bucket_generation = 0, bucket_generation_collected = -1}
 format = {}
 format[1] = {name = 'id', type = 'unsigned'}
 format[2] = {name = 'status', type = 'string'}
@@ -92,20 +91,20 @@ s:replace{1, 1}
 s:replace{2, 1}
 s:replace{3, 2}
 s:replace{4, 2}
-find_garbage(sk, control)
+find_garbage(sk)
 
 s:replace{5, 100}
 s:replace{6, 200}
-find_garbage(sk, control)
+find_garbage(sk)
 
 s:delete{5}
-find_garbage(sk, control)
+find_garbage(sk)
 s:delete{6}
 
 s:replace{5, 4}
-find_garbage(sk, control)
+find_garbage(sk)
 s:replace{5, 5}
-find_garbage(sk, control)
+find_garbage(sk)
 s:delete{5}
 
 --
@@ -137,20 +136,19 @@ fill_spaces_with_garbage()
 
 #s2:select{}
 #s:select{}
-garbage_step(control)
+garbage_step()
 s2:select{}
 s:select{}
-control.bucket_generation_collected
 -- Nothing deleted - update collected generation.
-garbage_step(control)
-control.bucket_generation_collected
+garbage_step()
 
 --
 -- Test continuous garbage collection via background fiber.
 --
+fill_spaces_with_garbage()
+_ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vshard.storage.internal.bucket_generation + 1 end)
 collect_f = vshard.storage.internal.collect_garbage_f
 f = fiber.create(collect_f)
-fill_spaces_with_garbage()
 -- Wait until garbage collection is finished.
 while #s2:select{} ~= 2 do fiber.sleep(0.1) end
 s:select{}

@@ -132,16 +132,10 @@ s2:replace{7, 5}
 garbage_step = vshard.storage.internal.collect_garbage_step
 ---
 ...
-control = {bucket_generation = 0, bucket_generation_collected = -1}
----
-...
 -- Restart garbage collection.
-garbage_step(control)
+garbage_step()
 ---
-...
-control.bucket_generation_collected
----
-- 0
+- true
 ...
 --
 -- Test _bucket generation change during garbage buckets search.
@@ -149,19 +143,13 @@ control.bucket_generation_collected
 s:truncate()
 ---
 ...
-control.bucket_generation_collected = -1
----
-...
-control.bucket_generation = 1
----
-...
-_ = _bucket:on_replace(function(old_tuple) if old_tuple ~= nil then control.bucket_generation = control.bucket_generation + 1 end end)
+_ = _bucket:on_replace(function() vshard.storage.internal.bucket_generation = vshard.storage.internal.bucket_generation + 1 end)
 ---
 ...
 vshard.storage.internal.errinj.ERRINJ_BUCKET_FIND_GARBAGE_DELAY = true
 ---
 ...
-f = fiber.create(function() garbage_step(control) end)
+f = fiber.create(function() garbage_step() end)
 ---
 ...
 _bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
@@ -197,8 +185,9 @@ _bucket:select{4}
 - - [4, 'garbage']
 ...
 -- Next step deletes garbage ok.
-garbage_step(control)
+garbage_step()
 ---
+- true
 ...
 #s:select{}
 ---
