@@ -38,13 +38,13 @@ pk = s:create_index('pk')
 vshard.storage.internal.errinj.ERRINJ_CFG_DELAY = true
 ---
 ...
-cfg.sharding[replicasets[1]].replicas[names.storage_1_b].master = true
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
 ---
 ...
-cfg.sharding[replicasets[1]].replicas[names.storage_1_a].master = false
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 ---
 ...
-f = fiber.create(function() vshard.storage.cfg(cfg, names.storage_1_a) end)
+f = fiber.create(function() vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a) end)
 ---
 ...
 f:status()
@@ -60,13 +60,13 @@ test_run:switch('storage_1_b')
 ---
 - true
 ...
-cfg.sharding[replicasets[1]].replicas[names.storage_1_b].master = true
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
 ---
 ...
-cfg.sharding[replicasets[1]].replicas[names.storage_1_a].master = false
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 ---
 ...
-vshard.storage.cfg(cfg, names.storage_1_b)
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
 ---
 ...
 box.space.test:select{}

@@ -7,14 +7,15 @@ test_run:create_cluster(REPLICASET_2, 'router')
 util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
-test_run:cmd("create server router_1 with script='router/router_1.lua'")
-test_run:cmd("start server router_1")
+_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
+_ = test_run:cmd("start server router_1")
 
 --
 -- gh-97: unknown bucket_count in router.info() can be < 0 during
 --        rebalancing.
 --
-test_run:switch('router_1')
+_ = test_run:switch('router_1')
+util = require('util')
 fiber = require('fiber')
 
 vshard.router.bootstrap()
@@ -22,18 +23,17 @@ info = vshard.router.info()
 while info.bucket.unknown ~= 0 do vshard.router.discovery_wakeup() fiber.sleep(0.01) info = vshard.router.info() end
 _ = fiber.create(function() while true do vshard.router.discovery_wakeup() fiber.sleep(0.1) end end)
 
-test_run:switch('storage_1_a')
-cfg.sharding[replicasets[1]].weight = 2
-vshard.storage.cfg(cfg, names.storage_1_a)
+_ = test_run:switch('storage_1_a')
+cfg.sharding[util.replicasets[1]].weight = 2
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 
-test_run:switch('storage_2_a')
-cfg.sharding[replicasets[1]].weight = 2
-vshard.storage.cfg(cfg, names.storage_2_a)
-fiber = require('fiber')
+_ = test_run:switch('storage_2_a')
+cfg.sharding[util.replicasets[1]].weight = 2
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
 _ = fiber.create(function() while true do vshard.storage.rebalancer_wakeup() fiber.sleep(0.1) end end)
 
-test_run:switch('router_1')
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:switch('router_1')
+_ = test_run:cmd("setopt delimiter ';'")
 for i = 1, 10 do
 	local b = vshard.router.info().bucket
 	assert(b.unknown >= 0, "unknown >= 0")
@@ -41,10 +41,10 @@ for i = 1, 10 do
 	assert(b.unknown + b.available_rw == vshard.router.bucket_count())
 	fiber.sleep(0.1)
 end;
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 
-test_run:switch('default')
-test_run:cmd("stop server router_1")
-test_run:cmd("cleanup server router_1")
+_ = test_run:switch('default')
+_ = test_run:cmd("stop server router_1")
+_ = test_run:cmd("cleanup server router_1")
 test_run:drop_cluster(REPLICASET_1)
 test_run:drop_cluster(REPLICASET_2)

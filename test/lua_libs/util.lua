@@ -2,6 +2,18 @@ local fiber = require('fiber')
 local log = require('log')
 local fio = require('fio')
 
+local name_to_uuid = {
+    storage_1_a = '8a274925-a26d-47fc-9e1b-af88ce939412',
+    storage_1_b = '3de2e3e1-9ebe-4d0d-abb1-26d301b84633',
+    storage_2_a = '1e02ae8a-afc0-4e91-ba34-843a356b8ed7',
+    storage_2_b = '001688c3-66f8-4a31-8e19-036c17d489c2',
+    storage_3_a = 'ee34807e-be5c-4ae3-8348-e97be227a305',
+}
+
+local replicasets = {'cbf06940-0790-498b-948d-042b62cf3d29',
+                     'ac522f65-aa94-4134-9f64-51ee384f1a54',
+                     '910ee49b-2540-41b6-9b8c-c976bef1bb17'}
+
 local function check_error(func, ...)
     local pstatus, status, err = pcall(func, ...)
     if pstatus then
@@ -93,6 +105,37 @@ local function has_same_fields(etalon, data)
     return true
 end
 
+--
+-- Apply @a command on each node of @a cluster consisting from
+-- a list of replicasets.
+-- @param test_run Test run instance.
+-- @param cluster List of replicasets. Each replicaset is a list
+--        of instance names.
+-- @param command Command to execute.
+-- @param ... Arguments for string.format to format @a command.
+--
+local function map_evals(test_run, cluster, command, ...)
+    for _, rs in pairs(cluster) do
+        for _, node in pairs(rs) do
+            test_run:eval(node, string.format(command, ...))
+        end
+    end
+end
+
+--
+-- Filter out from test output replication lag and idle, UUIDs.
+--
+local function push_rs_filters(test_run)
+    test_run:cmd("push filter 'lag: .+' to 'lag: <lag>'")
+    test_run:cmd("push filter 'idle: .+' to 'idle: <idle>'")
+    for name, uuid in pairs(name_to_uuid) do
+        test_run:cmd("push filter '"..uuid.."' to '<"..name..">'")
+    end
+    for i, uuid in pairs(replicasets) do
+        test_run:cmd("push filter '"..uuid.."' to '<replicaset_"..i..">'")
+    end
+end
+
 -- Git directory of the project. Used in evolution tests to
 -- fetch old versions of vshard.
 local SOURCEDIR = os.getenv('PACKPACK_GIT_SOURCEDIR')
@@ -116,6 +159,10 @@ return {
     collect_timeouts = collect_timeouts,
     wait_master = wait_master,
     has_same_fields = has_same_fields,
+    map_evals = map_evals,
+    push_rs_filters = push_rs_filters,
+    name_to_uuid = name_to_uuid,
+    replicasets = replicasets,
     SOURCEDIR = SOURCEDIR,
     BUILDDIR = BUILDDIR,
 }

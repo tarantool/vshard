@@ -19,6 +19,7 @@ function show_sharded_spaces()
     for k, space in pairs(vshard.storage.sharded_spaces()) do
         table.insert(result, space.name)
     end
+    table.sort(result)
     return result
 end;
 ---
@@ -430,6 +431,9 @@ s:replace{6, 4}
 - [6, 4]
 ...
 while not test_run:grep_log("default", "Error during deletion of empty sent buckets") do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
+---
+...
+while #sk:select{4} ~= 0 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 ---
 ...
 s:select{}

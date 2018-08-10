@@ -6,10 +6,11 @@ test_run:create_cluster(REPLICASET_2, 'storage')
 util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
-test_run:cmd("create server router_1 with script='router/router_1.lua'")
-test_run:cmd("start server router_1")
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
+_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
+_ = test_run:cmd("start server router_1")
 
-test_run:switch('router_1')
+_ = test_run:switch('router_1')
 fiber = require('fiber')
 vshard.router.bootstrap()
 
@@ -23,7 +24,7 @@ while test_run:grep_log('router_1', 'buckets: was 0, became 1500') == nil do fib
 
 assert(rawget(_G, '__module_vshard_router') ~= nil)
 vshard.router.module_version()
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 function check_reloaded()
 	for k, v in pairs(old_internal) do
 		if v == vshard.router.internal[k] then
@@ -47,7 +48,7 @@ function copy_functions(t)
 	end
 	return ret
 end;
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 --
 -- Simple reload. All functions are reloaded and they have
 -- another pointers in vshard.router.internal.
@@ -122,9 +123,8 @@ replica_old.conn == nil
 replica_old.is_outdated == true
 rs_new:callro('echo', {'some_data'})
 
-test_run:switch('default')
-test_run:cmd('stop server router_1')
-test_run:cmd('cleanup server router_1')
+_ = test_run:switch('default')
+_ = test_run:cmd('stop server router_1')
+_ = test_run:cmd('cleanup server router_1')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
-test_run:cmd('clear filter')

@@ -12,17 +12,17 @@ fiber = require('fiber')
 s = box.schema.create_space('test')
 pk = s:create_index('pk')
 vshard.storage.internal.errinj.ERRINJ_CFG_DELAY = true
-cfg.sharding[replicasets[1]].replicas[names.storage_1_b].master = true
-cfg.sharding[replicasets[1]].replicas[names.storage_1_a].master = false
-f = fiber.create(function() vshard.storage.cfg(cfg, names.storage_1_a) end)
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
+f = fiber.create(function() vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a) end)
 f:status()
 -- Can not write - read only mode is already on.
 s:replace{1}
 
 test_run:switch('storage_1_b')
-cfg.sharding[replicasets[1]].replicas[names.storage_1_b].master = true
-cfg.sharding[replicasets[1]].replicas[names.storage_1_a].master = false
-vshard.storage.cfg(cfg, names.storage_1_b)
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
+cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
 box.space.test:select{}
 
 test_run:switch('storage_1_a')

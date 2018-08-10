@@ -22,17 +22,17 @@ util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 ---
 ...
-test_run:cmd("create server router_1 with script='router/router_1.lua'")
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 ---
-- true
 ...
-test_run:cmd("start server router_1")
+_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
 ---
-- true
 ...
-test_run:switch('router_1')
+_ = test_run:cmd("start server router_1")
 ---
-- true
+...
+_ = test_run:switch('router_1')
+---
 ...
 fiber = require('fiber')
 ---
@@ -59,9 +59,8 @@ vshard.router.module_version()
 ---
 - 0
 ...
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 function check_reloaded()
 	for k, v in pairs(old_internal) do
@@ -92,9 +91,8 @@ function copy_functions(t)
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 --
 -- Simple reload. All functions are reloaded and they have
@@ -300,25 +298,18 @@ rs_new:callro('echo', {'some_data'})
 - null
 - null
 ...
-test_run:switch('default')
+_ = test_run:switch('default')
 ---
-- true
 ...
-test_run:cmd('stop server router_1')
+_ = test_run:cmd('stop server router_1')
 ---
-- true
 ...
-test_run:cmd('cleanup server router_1')
+_ = test_run:cmd('cleanup server router_1')
 ---
-- true
 ...
 test_run:drop_cluster(REPLICASET_2)
 ---
 ...
 test_run:drop_cluster(REPLICASET_1)
 ---
-...
-test_run:cmd('clear filter')
----
-- true
 ...

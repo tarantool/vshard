@@ -1,16 +1,6 @@
 test_run = require('test_run').new()
 ---
 ...
-test_run:cmd("push filter '.*/init.lua.*[0-9]+: ' to ''")
----
-- true
-...
-netbox = require('net.box')
----
-...
-fiber = require('fiber')
----
-...
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 ---
 ...
@@ -32,29 +22,19 @@ util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 ---
 ...
-test_run:cmd("create server router_1 with script='router/router_1.lua'")
----
-- true
-...
-test_run:cmd("start server router_1")
----
-- true
-...
-replicaset1_uuid = test_run:eval('storage_1_a', 'box.info.cluster.uuid')[1]
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 ---
 ...
-replicaset2_uuid = test_run:eval('storage_2_a', 'box.info.cluster.uuid')[1]
+util.push_rs_filters(test_run)
 ---
 ...
-test_run:cmd("push filter '"..replicaset1_uuid.."' to '<replicaset_1>'")
+_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
 ---
-- true
 ...
-test_run:cmd("push filter '"..replicaset2_uuid.."' to '<replicaset_2>'")
+_ = test_run:cmd("start server router_1")
 ---
-- true
 ...
-_ = test_run:cmd("switch router_1")
+_ = test_run:switch("router_1")
 ---
 ...
 -- gh-46: Ensure a cfg is not destroyed after router.cfg().
@@ -70,10 +50,10 @@ test_run:grep_log('router_1', 'connected to ')
 ---
 - 'connected to '
 ...
-rs1 = vshard.router.static.replicasets[replicasets[1]]
+rs1 = vshard.router.static.replicasets[util.replicasets[1]]
 ---
 ...
-rs2 = vshard.router.static.replicasets[replicasets[2]]
+rs2 = vshard.router.static.replicasets[util.replicasets[2]]
 ---
 ...
 fiber = require('fiber')
@@ -104,9 +84,8 @@ old_connections = {}
 connection_count = 0
 ---
 ...
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for _, old_rs in pairs(old_replicasets) do
     for uuid, old_replica in pairs(old_rs.replicas) do
@@ -116,9 +95,8 @@ for _, old_rs in pairs(old_replicasets) do
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 connection_count == 4
 ---
@@ -134,10 +112,10 @@ old_replicasets ~= new_replicasets
 ---
 - true
 ...
-rs1 = vshard.router.static.replicasets[replicasets[1]]
+rs1 = vshard.router.static.replicasets[util.replicasets[1]]
 ---
 ...
-rs2 = vshard.router.static.replicasets[replicasets[2]]
+rs2 = vshard.router.static.replicasets[util.replicasets[2]]
 ---
 ...
 while not rs1.replica or not rs2.replica do fiber.sleep(0.1) end
@@ -147,9 +125,8 @@ vshard.router.discovery_wakeup()
 ---
 ...
 -- Check that netbox connections are the same.
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for _, new_rs in pairs(new_replicasets) do
     for uuid, new_replica in pairs(new_rs.replicas) do
@@ -158,9 +135,8 @@ for _, new_rs in pairs(new_replicasets) do
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 --
 -- bucket_id and bucket_count
@@ -248,7 +224,7 @@ vshard.router.info()
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3303
-        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+        uuid: <storage_2_a>
       bucket:
         available_rw: 1
       uuid: <replicaset_2>
@@ -258,7 +234,7 @@ vshard.router.info()
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3301
-        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+        uuid: <storage_1_a>
       bucket:
         available_rw: 0
       uuid: <replicaset_1>
@@ -331,25 +307,22 @@ replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
 ---
 - true
 ...
-test_run:cmd('switch storage_2_a')
+_ = test_run:switch('storage_2_a')
 ---
-- true
 ...
-box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, '<replicaset_1>'})
+box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, util.replicasets[1]})
 ---
 - [1, 'sending', '<replicaset_1>']
 ...
-test_run:cmd('switch storage_1_a')
+_ = test_run:switch('storage_1_a')
 ---
-- true
 ...
-box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, '<replicaset_2>'})
+box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]})
 ---
 - [1, 'receiving', '<replicaset_2>']
 ...
-test_run:cmd('switch router_1')
+_ = test_run:switch('router_1')
 ---
-- true
 ...
 -- Ok to read sending bucket.
 vshard.router.call(1, 'read', 'echo', {123})
@@ -364,25 +337,22 @@ util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
   'name': 'TRANSFER_IS_IN_PROGRESS', 'message': 'Bucket 1 is transferring to replicaset
     <replicaset_1>'}
 ...
-test_run:cmd('switch storage_2_a')
+_ = test_run:switch('storage_2_a')
 ---
-- true
 ...
 box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
 ---
 - [1, 'active']
 ...
-test_run:cmd('switch storage_1_a')
+_ = test_run:switch('storage_1_a')
 ---
-- true
 ...
 box.space._bucket:delete({1})
 ---
 - [1, 'receiving', '<replicaset_2>']
 ...
-test_run:cmd('switch router_1')
+_ = test_run:switch('router_1')
 ---
-- true
 ...
 -- Check unavailability of master of a replicaset.
 _ = vshard.router.bucket_discovery(2)
@@ -399,9 +369,8 @@ vshard.router.buckets_info(0, 3)
   - uuid: <replicaset_2>
     status: available_rw
 ...
-test_run:cmd('stop server storage_2_a')
+_ = test_run:cmd('stop server storage_2_a')
 ---
-- true
 ...
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 ---
@@ -421,9 +390,8 @@ vshard.router.buckets_info(0, 3)
   - uuid: <replicaset_2>
     status: unreachable
 ...
-test_run:cmd('start server storage_2_a')
+_ = test_run:cmd('start server storage_2_a')
 ---
-- true
 ...
 --
 -- gh-26: API to get netbox by bucket identifier.
@@ -453,10 +421,7 @@ conn.state
 - active
 ...
 -- Test missing master.
-rs_uuid = '<replicaset_2>'
----
-...
-rs = vshard.router.static.replicasets[rs_uuid]
+rs = vshard.router.static.replicasets[util.replicasets[2]]
 ---
 ...
 master = rs.master
@@ -505,48 +470,20 @@ uuids
   - <replicaset_1>
 ...
 --
--- Function call
+-- gh-69: aliases for router.call - callro and callrw.
 --
 bucket_id = 1
 ---
 ...
-test_run:cmd("setopt delimiter ';'")
+vshard.router.callrw(bucket_id, 'space_insert', {'test', {1, bucket_id}})
 ---
-- true
+- [1, 1]
 ...
-customer = {
-    customer_id = 1,
-    name = "Customer 1",
-    bucket_id = bucket_id,
-    accounts = {
-        {
-            account_id = 10,
-            name = "Credit Card",
-            balance = 100,
-        },
-        {
-            account_id = 11,
-            name = "Debit Card",
-            balance = 50,
-        },
-    }
-}
-test_run:cmd("setopt delimiter ''");
+vshard.router.callro(bucket_id, 'space_get', {'test', {1}})
 ---
+- [1, 1]
 ...
---
--- gh-69: aliases for router.call - callro and callrw.
---
-vshard.router.callrw(bucket_id, 'customer_add', {customer})
----
-- true
-...
-vshard.router.callro(bucket_id, 'customer_lookup', {1})
----
-- {'accounts': [{'account_id': 10, 'balance': 0, 'name': 'Credit Card'}, {'account_id': 11,
-      'balance': 0, 'name': 'Debit Card'}], 'customer_id': 1, 'name': 'Customer 1'}
-...
-vshard.router.callro(bucket_id + 1500, 'customer_lookup', {1}) -- nothing
+vshard.router.callro(bucket_id + 1500, 'space_get', {'test', {1}}) -- nothing
 ---
 - null
 ...
@@ -579,7 +516,7 @@ vshard.router.info()
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3303
-        uuid: 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+        uuid: <storage_2_a>
       bucket:
         available_rw: 3
       uuid: <replicaset_2>
@@ -589,7 +526,7 @@ vshard.router.info()
         network_timeout: 0.5
         status: available
         uri: storage@127.0.0.1:3301
-        uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+        uuid: <storage_1_a>
       bucket:
         available_rw: 1
       uuid: <replicaset_1>
@@ -605,7 +542,7 @@ vshard.router.info()
 ...
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.
-rs = vshard.router.static.replicasets[replicasets[1]]
+rs = vshard.router.static.replicasets[util.replicasets[1]]
 ---
 ...
 master_conn = rs.master.conn
@@ -629,7 +566,7 @@ info.replicasets[rs.uuid]
     network_timeout: 0.5
     status: unreachable
     uri: storage@127.0.0.1:3301
-    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+    uuid: <storage_1_a>
   bucket:
     unreachable: 1
   uuid: <replicaset_1>
@@ -668,7 +605,7 @@ info.replicasets[rs.uuid]
     network_timeout: 0.5
     status: available
     uri: storage@127.0.0.1:3301
-    uuid: 8a274925-a26d-47fc-9e1b-af88ce939412
+    uuid: <storage_1_a>
   bucket:
     available_ro: 1
   uuid: <replicaset_1>
@@ -743,9 +680,8 @@ util.check_error(vshard.router.buckets_info, 123, '456')
 --
 -- gh-51: discovery fiber.
 --
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 function calculate_known_buckets()
     local known_buckets = 0
@@ -766,15 +702,13 @@ function wait_discovery()
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 -- Pin some buckets to ensure, that pinned buckets are discovered
 -- too.
-test_run:switch('storage_1_a')
+_ = test_run:switch('storage_1_a')
 ---
-- true
 ...
 first_active = box.space._bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 1})[1].id
 ---
@@ -783,9 +717,8 @@ vshard.storage.bucket_pin(first_active)
 ---
 - true
 ...
-test_run:switch('storage_2_a')
+_ = test_run:switch('storage_2_a')
 ---
-- true
 ...
 first_active = box.space._bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 1})[1].id
 ---
@@ -794,9 +727,8 @@ vshard.storage.bucket_pin(first_active)
 ---
 - true
 ...
-test_run:switch('router_1')
+_ = test_run:switch('router_1')
 ---
-- true
 ...
 wait_discovery()
 ---
@@ -823,32 +755,28 @@ info.alerts
 ---
 - []
 ...
-test_run:switch('storage_1_a')
+_ = test_run:switch('storage_1_a')
 ---
-- true
 ...
 vshard.storage.bucket_unpin(first_active)
 ---
 - true
 ...
-test_run:switch('storage_2_a')
+_ = test_run:switch('storage_2_a')
 ---
-- true
 ...
 vshard.storage.bucket_unpin(first_active)
 ---
 - true
 ...
-test_run:switch('router_1')
+_ = test_run:switch('router_1')
 ---
-- true
 ...
 --
 -- Ensure the discovery procedure works continuously.
 --
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for i = 1, 100 do
     local rs = vshard.router.static.route_map[i]
@@ -858,9 +786,8 @@ for i = 1, 100 do
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 calculate_known_buckets()
 ---
@@ -921,56 +848,51 @@ util.shuffle_masters(cfg)
 ---
 ...
 -- Reconfigure storages
-test_run:cmd("switch storage_1_a")
+_ = test_run:switch("storage_1_a")
 ---
-- true
 ...
 cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
 ---
 ...
-vshard.storage.cfg(cfg, names['storage_1_a'])
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 ---
 ...
-test_run:cmd("switch storage_1_b")
+_ = test_run:switch("storage_1_b")
 ---
-- true
 ...
 cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
 ---
 ...
-vshard.storage.cfg(cfg, names['storage_1_b'])
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
 ---
 ...
-test_run:cmd("switch storage_2_a")
+_ = test_run:switch("storage_2_a")
 ---
-- true
 ...
 cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
 ---
 ...
-vshard.storage.cfg(cfg, names['storage_2_a'])
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
 ---
 ...
-test_run:cmd("switch storage_2_b")
+_ = test_run:switch("storage_2_b")
 ---
-- true
 ...
 cfg.sharding = test_run:eval('router_1', 'return cfg.sharding')[1]
 ---
 ...
-vshard.storage.cfg(cfg, names['storage_2_b'])
+vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_b)
 ---
 ...
 -- Test that the WRITE request doesn't work
-test_run:cmd("switch router_1")
+_ = test_run:switch("router_1")
 ---
-- true
 ...
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
 - null
-- {'replica_uuid': '1e02ae8a-afc0-4e91-ba34-843a356b8ed7', 'replicaset_uuid': '<replicaset_2>',
-  'type': 'ShardingError', 'message': 'Replica 1e02ae8a-afc0-4e91-ba34-843a356b8ed7
+- {'replica_uuid': '<storage_2_a>', 'replicaset_uuid': '<replicaset_2>',
+  'type': 'ShardingError', 'message': 'Replica <storage_2_a>
     is not a master for replicaset <replicaset_2> anymore',
   'name': 'NON_MASTER', 'code': 2}
 ...
@@ -1005,9 +927,8 @@ _, replicaset = next(vshard.router.static.replicasets)
 error_messages = {}
 ---
 ...
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for _, func in pairs(getmetatable(replicaset).__index) do
     local ok, msg = pcall(func, "arg_of_wrong_type")
@@ -1015,9 +936,8 @@ for _, func in pairs(getmetatable(replicaset).__index) do
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 error_messages
 ---
@@ -1037,9 +957,8 @@ _, replica = next(replicaset.replicas)
 error_messages = {}
 ---
 ...
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for _, func in pairs(getmetatable(replica).__index) do
     local ok, msg = pcall(func, "arg_of_wrong_type")
@@ -1047,9 +966,8 @@ for _, func in pairs(getmetatable(replica).__index) do
 end;
 ---
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 error_messages
 ---
@@ -1065,9 +983,8 @@ bucket_to_old_rs = {}
 bucket_cnt = 0
 ---
 ...
-test_run:cmd("setopt delimiter ';'")
+_ = test_run:cmd("setopt delimiter ';'")
 ---
-- true
 ...
 for bucket, rs in pairs(vshard.router.static.route_map) do
     bucket_to_old_rs[bucket] = rs
@@ -1140,9 +1057,8 @@ new_replicasets[rs] == true;
 ---
 - true
 ...
-test_run:cmd("setopt delimiter ''");
+_ = test_run:cmd("setopt delimiter ''");
 ---
-- true
 ...
 -- gh-114: Check non-dynamic option change during reconfigure.
 non_dynamic_cfg = table.copy(cfg)
@@ -1193,7 +1109,7 @@ vshard.router.static:route(1):callro('echo', {'some_data'})
 - null
 - null
 ...
-_ = test_run:cmd("switch default")
+_ = test_run:switch("default")
 ---
 ...
 test_run:drop_cluster(REPLICASET_2)
@@ -1203,18 +1119,15 @@ test_run:drop_cluster(REPLICASET_2)
 while test_run:grep_log('router_1', 'disconnected from ') == nil do fiber.sleep(0.1) end
 ---
 ...
-test_run:cmd("stop server router_1")
+_ = test_run:cmd("stop server router_1")
 ---
-- true
 ...
-test_run:cmd("cleanup server router_1")
+_ = test_run:cmd("cleanup server router_1")
 ---
-- true
 ...
 test_run:drop_cluster(REPLICASET_1)
 ---
 ...
-test_run:cmd('clear filter')
+_ = test_run:cmd('clear filter')
 ---
-- true
 ...

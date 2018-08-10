@@ -9,6 +9,7 @@ function show_sharded_spaces()
     for k, space in pairs(vshard.storage.sharded_spaces()) do
         table.insert(result, space.name)
     end
+    table.sort(result)
     return result
 end;
 test_run:cmd("setopt delimiter ''");
@@ -172,6 +173,7 @@ _bucket:replace{4, vshard.consts.BUCKET.SENT}
 s:replace{5, 4}
 s:replace{6, 4}
 while not test_run:grep_log("default", "Error during deletion of empty sent buckets") do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
+while #sk:select{4} ~= 0 do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
 s:select{}
 _bucket:select{}
 _ = _bucket:on_replace(nil, rollback_on_delete)

@@ -1,1 +1,1 @@
-../../example/storage.lua
+../lua_libs/storage_template.lua
