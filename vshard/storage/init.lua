@@ -1732,24 +1732,26 @@ local function storage_info()
         end
     elseif this_master then
         state.replication.status = 'master'
-        local redundancy = 0
+        local replica_count = 0
+        local not_available_replicas = 0
         for id, replica in pairs(box.info.replication) do
             if replica.uuid ~= M.this_replica.uuid then
+                replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
                     table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
                                                      replica.uuid))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
-                else
-                    redundancy = redundancy + 1
+                    not_available_replicas = not_available_replicas + 1
                 end
             end
         end
-        if redundancy == 0 then
+        local available_replicas = replica_count - not_available_replicas
+        if replica_count > 0 and available_replicas == 0 then
             table.insert(state.alerts, alert(code.UNREACHABLE_REPLICASET,
                                              this_uuid))
             state.status = math.max(state.status, consts.STATUS.RED)
-        elseif redundancy == 1 then
+        elseif replica_count > 1 and available_replicas == 1 then
             table.insert(state.alerts, alert(code.LOW_REDUNDANCY))
             state.status = math.max(state.status, consts.STATUS.ORANGE)
         end

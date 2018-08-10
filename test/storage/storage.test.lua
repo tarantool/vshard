@@ -92,7 +92,11 @@ test_run:cmd("start server storage_2_a")
 test_run:cmd("switch storage_2_a")
 fiber = require('fiber')
 info = vshard.storage.info()
-while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.storage.info() end
+--
+-- gh-144: do not warn about low redundancy if it is a desired
+-- case.
+--
+while #info.alerts ~= 0 do fiber.sleep(0.1) info = vshard.storage.info() end
 info
 test_run:cmd("stop server storage_2_b")
 vshard.storage.info()

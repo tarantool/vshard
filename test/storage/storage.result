@@ -344,7 +344,11 @@ fiber = require('fiber')
 info = vshard.storage.info()
 ---
 ...
-while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.storage.info() end
+--
+-- gh-144: do not warn about low redundancy if it is a desired
+-- case.
+--
+while #info.alerts ~= 0 do fiber.sleep(0.1) info = vshard.storage.info() end
 ---
 ...
 info
@@ -369,11 +373,10 @@ info
     garbage: 0
     pinned: 0
     sending: 0
-  status: 2
+  status: 0
   replication:
     status: master
-  alerts:
-  - ['LOW_REDUNDANCY', 'Only one replica is active']
+  alerts: []
 ...
 test_run:cmd("stop server storage_2_b")
 ---
@@ -466,11 +469,10 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
-  status: 2
+  status: 0
   replication:
     status: master
-  alerts:
-  - ['LOW_REDUNDANCY', 'Only one replica is active']
+  alerts: []
 ...
 _ = test_run:cmd("switch storage_1_a")
 ---
