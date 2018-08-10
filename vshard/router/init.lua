@@ -454,6 +454,9 @@ local function failover_step(router)
             lfiber.yield()
             return true
         end
+        if not next(rs.replicas) then
+            goto continue
+        end
         local old_replica = rs.replica
         if failover_need_up_priority(rs, curr_ts) then
             rs:up_replica_priority()
@@ -465,6 +468,7 @@ local function failover_step(router)
             log.info('New replica %s for %s', rs.replica, rs)
             replica_is_changed = true
         end
+::continue::
     end
     return replica_is_changed
 end
