@@ -93,7 +93,7 @@ box.space.test3:count()
 ---
 - 10000
 ...
-vshard.storage.bucket_send(1, util.replicasets[2])
+vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 10})
 ---
 - true
 ...
@@ -138,7 +138,7 @@ vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
 _ = test_run:switch('box_2_a')
 ---
 ...
-vshard.storage.bucket_send(1, util.replicasets[1])
+vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
 ---
 - null
 - type: ClientError

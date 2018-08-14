@@ -792,7 +792,7 @@ end
 --
 -- Send a bucket to other replicaset.
 --
-local function bucket_send_xc(bucket_id, destination)
+local function bucket_send_xc(bucket_id, destination, opts)
     local status, err = bucket_check_state(bucket_id, 'write')
     if err then
         return nil, err
@@ -809,7 +809,8 @@ local function bucket_send_xc(bucket_id, destination)
     local data = bucket_collect_internal(bucket_id)
     box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
     status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, box.info.cluster.uuid, data})
+                                    {bucket_id, box.info.cluster.uuid, data},
+                                    opts)
     if not status then
         err = lerror.make(err)
         if err.type == 'ShardingError' then
@@ -825,13 +826,14 @@ end
 --
 -- Exception and recovery safe version of bucket_send_xc.
 --
-local function bucket_send(bucket_id, destination)
+local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
     M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination)
+    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination,
+                                   opts)
     M.rebalancer_transfering_buckets[bucket_id] = nil
     if status then
         if ret then

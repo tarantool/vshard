@@ -39,7 +39,7 @@ box.space.test:count()
 box.space.test2:count()
 box.space.test3:count()
 
-vshard.storage.bucket_send(1, util.replicasets[2])
+vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 10})
 box.space._bucket:get{1}
 
 _ = test_run:switch('box_2_a')
@@ -56,7 +56,7 @@ _ = test_run:switch('box_1_a')
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
 _ = test_run:switch('box_2_a')
-vshard.storage.bucket_send(1, util.replicasets[1])
+vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
 box.space._bucket:get{1}
 _ = test_run:switch('box_1_a')
 box.space._bucket:get{1}

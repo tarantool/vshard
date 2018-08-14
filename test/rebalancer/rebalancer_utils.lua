@@ -32,7 +32,10 @@ local function do_read_load()
 				vshard.router.call(bucket, 'read', 'do_select',
 						   {{read_iterations}},
 						   {timeout = 100})
-			assert(tuples)
+			if not tuples then
+				log.info('Error during read loading: %s', err)
+				tuples = {}
+			end
 		end
 		assert(tuples[1][1] == read_iterations)
 		assert(tuples[1][2] == bucket)

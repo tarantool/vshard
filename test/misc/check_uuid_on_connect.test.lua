@@ -42,6 +42,7 @@ test_run:drop_cluster(REPLICASET_2)
 REPLICASET_2 = { 'bad_uuid_2_a_repaired', 'bad_uuid_2_b' }
 test_run:cmd('create server bad_uuid_2_a_repaired with script="misc/bad_uuid_2_a_repaired.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_a_repaired')
+test_run:cmd('create server bad_uuid_2_b with script="misc/bad_uuid_2_b.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_b')
 util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a_repaired')
 
@@ -55,7 +56,9 @@ require('log').info(string.rep('a', 1000))
 test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
+test_run:cmd('create server bad_uuid_2_a with script="misc/bad_uuid_2_a.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_a with wait=False, wait_load=False')
+test_run:cmd('create server bad_uuid_2_b with script="misc/bad_uuid_2_b.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_b with wait=False, wait_load=False')
 util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 

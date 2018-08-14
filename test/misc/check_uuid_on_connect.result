@@ -109,6 +109,10 @@ test_run:cmd('start server bad_uuid_2_a_repaired')
 ---
 - true
 ...
+test_run:cmd('create server bad_uuid_2_b with script="misc/bad_uuid_2_b.lua", wait=False, wait_load=False')
+---
+- true
+...
 test_run:cmd('start server bad_uuid_2_b')
 ---
 - true
@@ -140,7 +144,15 @@ test_run:drop_cluster(REPLICASET_2)
 REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
 ---
 ...
+test_run:cmd('create server bad_uuid_2_a with script="misc/bad_uuid_2_a.lua", wait=False, wait_load=False')
+---
+- true
+...
 test_run:cmd('start server bad_uuid_2_a with wait=False, wait_load=False')
+---
+- true
+...
+test_run:cmd('create server bad_uuid_2_b with script="misc/bad_uuid_2_b.lua", wait=False, wait_load=False')
 ---
 - true
 ...
