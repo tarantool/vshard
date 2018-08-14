@@ -8,11 +8,37 @@ local name_to_uuid = {
     storage_2_a = '1e02ae8a-afc0-4e91-ba34-843a356b8ed7',
     storage_2_b = '001688c3-66f8-4a31-8e19-036c17d489c2',
     storage_3_a = 'ee34807e-be5c-4ae3-8348-e97be227a305',
+
+    storage_1_1_a = '32a2d4b8-f146-44ed-9d51-2436507efdf8',
+    storage_1_1_b = 'c1c849b1-641d-40b8-9283-bcfe73d46270',
+    storage_1_2_a = '04e677ed-c7ba-47e0-a67f-b5100cfa86af',
+    storage_1_2_b = 'c7a979ee-9263-4a38-84a5-2fb6a0a32684',
+    storage_2_1_a = '88dc03f0-23fb-4f05-b462-e29186542864',
+    storage_2_1_b = '4230b711-f5c4-4131-bf98-88cd43a16901',
+    storage_2_2_a = '6b1eefbc-1e2e-410e-84ff-44c572ea9916',
+    storage_2_2_b = 'be74419a-1e56-4ba4-97e9-6b18710f63c5',
 }
+
+local box_uuid = {
+    box_1_a = '3e01062d-5c1b-4382-b14e-f80a517cb462',
+    box_1_b = 'db778aec-267f-47bb-9347-49828232c8db',
+    box_2_a = '7223fc89-1a0d-480b-a33e-a8d2b117b13d',
+    box_2_b = '56bb8450-9526-442b-ba96-b96cc38ee2f9',
+    box_3_a = 'ad40a200-730e-401a-9400-30dbd96dedbd',
+    box_3_b = '434ec511-4a3d-4a68-b613-fc5475ef5f6b',
+    box_4_a = '535df17b-c325-466c-9320-77f1190c749c',
+    box_4_b = 'f24d5101-adec-48b5-baa9-ace33abfd10f'
+}
+
+for k, v in pairs(box_uuid) do
+    name_to_uuid[k] = v
+    name_to_uuid['full'..k] = v
+end
 
 local replicasets = {'cbf06940-0790-498b-948d-042b62cf3d29',
                      'ac522f65-aa94-4134-9f64-51ee384f1a54',
-                     '910ee49b-2540-41b6-9b8c-c976bef1bb17'}
+                     '910ee49b-2540-41b6-9b8c-c976bef1bb17',
+                     'dd208fb8-8b90-49bc-8393-6b3a99da7c52'}
 
 local function check_error(func, ...)
     local pstatus, status, err = pcall(func, ...)

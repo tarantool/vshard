@@ -9,11 +9,12 @@ test_run:create_cluster(REPLICASET_1_1, 'multiple_routers')
 test_run:create_cluster(REPLICASET_1_2, 'multiple_routers')
 test_run:create_cluster(REPLICASET_2_1, 'multiple_routers')
 test_run:create_cluster(REPLICASET_2_2, 'multiple_routers')
-util = require('lua_libs.util')
+util = require('util')
 util.wait_master(test_run, REPLICASET_1_1, 'storage_1_1_a')
 util.wait_master(test_run, REPLICASET_1_2, 'storage_1_2_a')
 util.wait_master(test_run, REPLICASET_2_1, 'storage_2_1_a')
 util.wait_master(test_run, REPLICASET_2_2, 'storage_2_2_a')
+util.map_evals(test_run, {REPLICASET_1_1, REPLICASET_1_2, REPLICASET_2_1, REPLICASET_2_2}, 'bootstrap_storage(\'memtx\')')
 
 test_run:cmd("create server router_1 with script='multiple_routers/router_1.lua'")
 test_run:cmd("start server router_1")
@@ -65,7 +66,7 @@ routers[4]:call(1, 'read', 'do_select', {2})
 routers[3]:cfg(configs.cfg_2)
 
 -- Try to create router with the same name.
-util = require('lua_libs.util')
+util = require('util')
 util.check_error(vshard.router.new, 'router_2', configs.cfg_2)
 
 -- Reload router module.

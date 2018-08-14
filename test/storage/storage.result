@@ -509,9 +509,21 @@ vshard.storage.call(100500, 'read', 'space_get', {'test', {1}})
   name: WRONG_BUCKET
 ...
 --
--- Test not existing space in bucket data.
+-- Test not existing uuid.
 --
 vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
+---
+- null
+- code: 4
+  type: ShardingError
+  name: NO_SUCH_REPLICASET
+  replicaset_uuid: from_uuid
+  message: Replicaset from_uuid not found
+...
+--
+-- Test not existing space in bucket data.
+--
+vshard.storage.bucket_recv(4, util.replicasets[2], {{1000, {{1}}}})
 ---
 - null
 - type: ClientError
@@ -520,6 +532,9 @@ vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
   trace:
   - file: '[C]'
     line: 4294967295
+...
+while box.space._bucket:get{4} do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
+---
 ...
 --
 -- Bucket transfer

@@ -515,8 +515,8 @@ space_data = {{1000, {{1}, {2}}}}
 vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
 ---
 - null
-- {'type': 'ClientError', 'message': 'Space ''1000'' does not exist', 'code': 36,
-  'trace': [{'file': '[C]', 'line': 4294967295}]}
+- {'code': 4, 'type': 'ShardingError', 'message': 'Replicaset from_uuid not found',
+  'name': 'NO_SUCH_REPLICASET', 'replicaset_uuid': 'from_uuid'}
 ...
 --
 -- Monitoring

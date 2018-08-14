@@ -59,6 +59,7 @@ if not M then
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
             ERRINJ_LONG_RECEIVE = false,
+            ERRINJ_RECEIVE_PARTIALLY = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -109,13 +110,11 @@ if not M then
         -- Maximal bucket count that can be received by a single
         -- replicaset simultaneously.
         rebalancer_max_receiving = 0,
-        -- Identifier of a bucket that rebalancer is sending now,
-        -- or else 0. If a bucket has state SENDING, but its id is
-        -- not stored here, it means, that its sending was
-        -- interrupted, for example by restart of an instance, and
-        -- a destination replicaset must drop already received
-        -- data.
-        rebalancer_sending_bucket = 0,
+        -- Identifier of a bucket that rebalancer is sending or
+        -- receiving now. If a bucket has state SENDING/RECEIVING,
+        -- but its id is not stored here, it means, that its
+        -- transfer has failed.
+        rebalancer_transfering_buckets = {},
 
         ------------------------- Reload -------------------------
         -- Version of the loaded module. This number is used on
@@ -171,6 +170,29 @@ end
 local function bucket_is_garbage(bucket)
     return bucket.status == consts.BUCKET.SENT or
            bucket.status == consts.BUCKET.GARBAGE
+end
+
+--
+-- Check that a bucket with the specified id has the needed
+-- status.
+-- @param bucket_generation Generation since the last check.
+-- @param bucket_id Id of the bucket to check.
+-- @param status Expected bucket status.
+-- @retval New bucket generation.
+--
+local function bucket_guard_xc(bucket_generation, bucket_id, status)
+    if bucket_generation ~= M.bucket_generation then
+        local _bucket = box.space._bucket
+        local ok, b = pcall(_bucket.get, _bucket, {bucket_id})
+        if not ok or (not b and status) or (b and b.status ~= status) then
+            local msg =
+                string.format("bucket status is changed, was %s, became %s",
+                              status, b.status)
+            error(lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg, nil))
+        end
+        return M.bucket_generation
+    end
+    return bucket_generation
 end
 
 --------------------------------------------------------------------------------
@@ -270,7 +292,9 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
         return true
     end
     if remote_bucket.status == consts.BUCKET.RECEIVING and
+       not remote_bucket.is_transfering and
        local_bucket.status == consts.BUCKET.SENDING then
+        assert(not M.rebalancer_transfering_buckets[local_bucket.id])
         return true
     end
     return false
@@ -293,21 +317,14 @@ local function recovery_step()
     local recovered = {}
     local _bucket = box.space._bucket
     local is_empty = true
-    --
-    -- If a rebalancer route applier fiber had exited with error
-    -- during bucket sending, then it might did not manage to
-    -- reset currently sending bucket.
-    --
-    if not rebalancing_is_in_progress() and
-       M.rebalancer_sending_bucket ~= 0 then
-        M.rebalancer_sending_bucket = 0
-    end
     for bucket_id, _ in pairs(M.buckets_to_recovery) do
+        if M.rebalancer_transfering_buckets[bucket_id] then
+            goto continue
+        end
         if is_empty then
             log.info('Starting buckets recovery step')
         end
         is_empty = false
-        assert(M.rebalancer_sending_bucket ~= bucket_id)
         local bucket = _bucket:get{bucket_id}
         if not bucket or not bucket_is_transfer_in_progress(bucket) then
             -- Possibly, a bucket was deleted or recovered by
@@ -372,9 +389,7 @@ local function recovery_f()
     local _bucket = box.space._bucket
     M.buckets_to_recovery = {}
     for _, bucket in _bucket.index.status:pairs({consts.BUCKET.SENDING}) do
-        if M.rebalancer_sending_bucket ~= bucket.id then
-            M.buckets_to_recovery[bucket.id] = true
-        end
+        M.buckets_to_recovery[bucket.id] = true
     end
     for _, bucket in _bucket.index.status:pairs({consts.BUCKET.RECEIVING}) do
         M.buckets_to_recovery[bucket.id] = true
@@ -495,7 +510,13 @@ local function bucket_stat(bucket_id)
         error('Usage: bucket_stat(bucket_id)')
     end
     local stat, err = bucket_check_state(bucket_id, 'read')
-    return stat and stat:tomap(), err
+    if stat then
+        stat = stat:tomap()
+        if M.rebalancer_transfering_buckets[bucket_id] then
+            stat.is_transfering = true
+        end
+    end
+    return stat, err
 end
 
 --
@@ -543,60 +564,78 @@ end
 
 
 --
--- Receive bucket with its data
+-- Receive bucket with its data.
 --
-local function bucket_recv_impl(bucket_id, from, data)
+local function bucket_recv_xc(bucket_id, from, data)
     local _bucket = box.space._bucket
-    local bucket = _bucket:get({bucket_id})
-    if bucket ~= nil then
+    if _bucket:get({bucket_id}) ~= nil then
         return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS, bucket_id)
     end
-
-    box.begin()
-    M.buckets_to_recovery[bucket_id] = true
-    bucket = _bucket:insert({bucket_id, consts.BUCKET.RECEIVING, from})
-    -- Fill spaces with data
+    if not from or not M.replicasets[from] then
+        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, from)
+    end
+    local bucket_generation = M.bucket_generation
+    local recvg = consts.BUCKET.RECEIVING
+    _bucket:insert({bucket_id, recvg, from})
+    local limit = consts.BUCKET_CHUNK_SIZE
     for _, row in ipairs(data) do
         local space_id, space_data = row[1], row[2]
         local space = box.space[space_id]
         if space == nil then
-            -- Tarantool doesn't provide API to create box.error objects
-            -- https://github.com/tarantool/tarantool/issues/3031
+            -- Tarantool doesn't provide API to create box.error
+            -- objects before 1.10.
             local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
                                       space_id)
-            M.buckets_to_recovery[bucket_id] = nil
             return nil, lerror.box(boxerror)
         end
+        box.begin()
         for _, tuple in ipairs(space_data) do
             space:insert(tuple)
+            limit = limit - 1
+            if limit == 0 then
+                box.commit()
+                if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
+                    box.error(box.error.INJECTION,
+                              "the bucket is received partially")
+                end
+                bucket_generation =
+                    bucket_guard_xc(bucket_generation, bucket_id, recvg)
+                box.begin()
+                limit = consts.BUCKET_CHUNK_SIZE
+            end
         end
+        box.commit()
+        bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
-
-    -- Activate bucket
-    bucket = _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-
-    box.commit()
-    M.buckets_to_recovery[bucket_id] = nil
-    return true
-end
-
-local function bucket_recv(bucket_id, from, data)
-    if type(bucket_id) ~= 'number' or type(data) ~= 'table' then
-        error('Usage: bucket_recv(bucket_id, data)')
-    end
-    local ok, status, err = pcall(bucket_recv_impl, bucket_id, from, data)
-    if not ok then
-        box.rollback()
-        return nil, status
-    end
-    if not status then
-        box.rollback()
-        return nil, err
-    end
+    _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
     if M.errinj.ERRINJ_LONG_RECEIVE then
         box.error(box.error.TIMEOUT)
     end
     return true
+end
+
+--
+-- Exception safe version of bucket_recv_xc.
+--
+local function bucket_recv(bucket_id, from, data)
+    if type(bucket_id) ~= 'number' or type(data) ~= 'table' then
+        error('Usage: bucket_recv(bucket_id, data)')
+    end
+    M.buckets_to_recovery[bucket_id] = true
+    M.rebalancer_transfering_buckets[bucket_id] = true
+    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data)
+    M.rebalancer_transfering_buckets[bucket_id] = nil
+    if status then
+        if ret then
+            M.buckets_to_recovery[bucket_id] = nil
+            return ret
+        end
+    else
+        err = ret
+        ret = status
+    end
+    box.rollback()
+    return nil, err
 end
 
 --
@@ -772,6 +811,7 @@ local function bucket_send_xc(bucket_id, destination)
     status, err = replicaset:callrw('vshard.storage.bucket_recv',
                                     {bucket_id, box.info.cluster.uuid, data})
     if not status then
+        err = lerror.make(err)
         if err.type == 'ShardingError' then
             -- Rollback bucket state.
             box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
@@ -789,28 +829,19 @@ local function bucket_send(bucket_id, destination)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
-    if M.rebalancer_sending_bucket ~= 0 then
-        local _b = box.space._bucket
-        local status, bucket = pcall(_b.get, _b, {M.rebalancer_sending_bucket})
-        if not status then
-            return nil, bucket
-        end
-        return nil, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
-                                  M.rebalancer_sending_bucket,
-                                  bucket.destination)
-    end
-    M.rebalancer_sending_bucket = bucket_id
+    M.buckets_to_recovery[bucket_id] = true
+    M.rebalancer_transfering_buckets[bucket_id] = true
     local status, ret, err = pcall(bucket_send_xc, bucket_id, destination)
-    M.rebalancer_sending_bucket = 0
+    M.rebalancer_transfering_buckets[bucket_id] = nil
     if status then
         if ret then
+            M.buckets_to_recovery[bucket_id] = nil
             return ret
         end
     else
-        ret = status
         err = ret
+        ret = status
     end
-    M.buckets_to_recovery[bucket_id] = true
     return ret, err
 end
 
@@ -866,27 +897,6 @@ end
 -- Garbage collector
 --------------------------------------------------------------------------------
 --
--- Check that a bucket with the specified id has the needed
--- status.
--- @param bucket_generation Generation since the last check.
--- @param bucket_id Id of the bucket to check.
--- @param status Expected bucket status.
--- @retval New bucket generation.
---
-local function gc_bucket_guard_xc(bucket_generation, bucket_id, status)
-    if bucket_generation ~= M.bucket_generation then
-        local _bucket = box.space._bucket
-        local ok, b = pcall(_bucket.get, _bucket, {bucket_id})
-        if not ok or (not b and status) or (b and b.status ~= status) then
-            error(lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
-                                "bucket status is changed during gc", nil))
-        end
-        return M.bucket_generation
-    end
-    return bucket_generation
-end
-
---
 -- Delete from a space tuples with a specified bucket id.
 -- @param space Space to cleanup.
 -- @param bucket_id Id of the bucket to cleanup.
@@ -900,19 +910,18 @@ local function gc_bucket_in_space_xc(space, bucket_id, status)
     local bucket_generation = M.bucket_generation
     local pk_parts = space.index[0].parts
 ::restart::
-    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+    local limit = consts.BUCKET_CHUNK_SIZE
     box.begin()
     for _, tuple in bucket_index:pairs({bucket_id}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
         limit = limit - 1
         if limit == 0 then
-            bucket_generation =
-                gc_bucket_guard_xc(bucket_generation, bucket_id, status)
             box.commit()
+            bucket_generation =
+                bucket_guard_xc(bucket_generation, bucket_id, status)
             goto restart
         end
     end
-    gc_bucket_guard_xc(bucket_generation, bucket_id, status)
     box.commit()
 end
 
@@ -935,14 +944,14 @@ end
 local function gc_bucket_step_by_type(type)
     local sharded_spaces = find_sharded_spaces()
     local empty_buckets = {}
-    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+    local limit = consts.BUCKET_CHUNK_SIZE
     for _, bucket in box.space._bucket.index.status:pairs(type) do
         for _, space in pairs(sharded_spaces) do
             gc_bucket_in_space_xc(space, bucket.id, type)
             limit = limit - 1
             if limit == 0 then
                 lfiber.sleep(0)
-                limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+                limit = consts.BUCKET_CHUNK_SIZE
             end
         end
         table.insert(empty_buckets, bucket.id)
@@ -959,18 +968,18 @@ local function gc_bucket_drop_xc(bucket_ids, status)
     if #bucket_ids == 0 then
         return
     end
-    local limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+    local limit = consts.BUCKET_CHUNK_SIZE
     local bucket_generation = M.bucket_generation
     box.begin()
     local _bucket = box.space._bucket
     for _, id in pairs(bucket_ids) do
-        gc_bucket_guard_xc(bucket_generation, id, status)
+        bucket_guard_xc(bucket_generation, id, status)
         _bucket:delete{id}
         limit = limit - 1
         if limit == 0 then
             box.commit()
             box.begin()
-            limit = consts.BUCKET_GARBAGE_CHUNK_SIZE
+            limit = consts.BUCKET_CHUNK_SIZE
         end
     end
     box.commit()
@@ -1228,7 +1237,6 @@ local function rebalancer_apply_routes_f(routes)
     -- guarantee that an event loop does not contain events
     -- between this fiber and its creator.
     M.rebalancer_applier_fiber = lfiber.self()
-    M.rebalancer_sending_bucket = 0
     local active_buckets = _status:select{consts.BUCKET.ACTIVE}
     local i = 1
     for dst_uuid, bucket_count in pairs(routes) do

@@ -2,12 +2,14 @@ test_run = require('test_run').new()
 
 REPLICASET_1 = { 'box_1_a', 'box_1_b' }
 REPLICASET_2 = { 'box_2_a', 'box_2_b' }
+engine = test_run:get_cfg('engine')
 
 test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
-util = require('lua_libs.util')
+util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'box_1_a')
 util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'%s\')', engine)
 
 --
 -- Test configuration: two replicasets. Rebalancer, according to
@@ -30,9 +32,8 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 --
 
 test_run:switch('box_1_a')
-fiber = require('fiber')
 _bucket = box.space._bucket
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 
 --
 -- Test the rebalancer on not bootstraped cluster.
@@ -46,7 +47,7 @@ wait_rebalancer_state('Total active bucket count is not equal to total', test_ru
 --
 vshard.storage.rebalancer_disable()
 cfg.rebalancer_max_receiving = 10
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:switch('box_2_a')
@@ -87,7 +88,7 @@ test_run:switch('box_1_a')
 -- Set threshold to 300%
 cfg.rebalancer_disbalance_threshold = 300
 vshard.storage.rebalancer_disable()
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 test_run:switch('box_2_a')
 _bucket:truncate()
@@ -99,7 +100,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 -- Return 1%.
 cfg.rebalancer_disbalance_threshold = 0.01
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('Rebalance routes are sent', test_run)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
@@ -180,21 +181,20 @@ space:select{}
 --
 cfg.rebalancer_max_receiving = 10
 switch_rs1_master()
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 
 test_run:switch('box_1_a')
 switch_rs1_master()
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 
 test_run:switch('box_1_b')
 switch_rs1_master()
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_b)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_b)
 
 test_run:switch('box_2_b')
 switch_rs1_master()
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_b)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_b)
 
-fiber = require('fiber')
 while not test_run:grep_log('box_2_a', "rebalancer_f has been started") do fiber.sleep(0.1) end
 while not test_run:grep_log('box_1_a', "Rebalancer location has changed") do fiber.sleep(0.1) end
 
@@ -204,23 +204,22 @@ while not test_run:grep_log('box_1_a', "Rebalancer location has changed") do fib
 --
 test_run:switch('box_1_a')
 nullify_rs_weight()
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 
 test_run:switch('box_1_b')
 nullify_rs_weight()
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_b)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_b)
 
 test_run:switch('box_2_b')
 nullify_rs_weight()
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_b)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_b)
 
 test_run:switch('box_2_a')
 nullify_rs_weight()
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 
 vshard.storage.rebalancer_wakeup()
 _bucket = box.space._bucket
-fiber = require('fiber')
 test_run:cmd("setopt delimiter ';'")
 while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 200 do
 	fiber.sleep(0.1)

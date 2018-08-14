@@ -25,7 +25,6 @@ _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
 _bucket:replace{2, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
-vshard.storage.internal.rebalancer_sending_bucket = 3
 
 _ = test_run:cmd('stop server storage_1_a')
 _ = test_run:cmd('start server storage_1_a')

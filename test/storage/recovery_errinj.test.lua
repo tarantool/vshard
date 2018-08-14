@@ -20,12 +20,13 @@ _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[2]}
 ret, err = vshard.storage.bucket_send(1, util.replicasets[2])
 ret, err.code
 _bucket = box.space._bucket
-_bucket:select{}
+_bucket:get{1}
 
 _ = test_run:switch('storage_2_a')
 box.error.injection.set("ERRINJ_WAL_DELAY", false)
 _bucket = box.space._bucket
-_bucket:select{}
+while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do fiber.sleep(0.01) end
+_bucket:get{1}
 
 _ = test_run:switch('storage_1_a')
 fiber = require('fiber')

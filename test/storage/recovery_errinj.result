@@ -57,9 +57,9 @@ ret, err.code
 _bucket = box.space._bucket
 ---
 ...
-_bucket:select{}
+_bucket:get{1}
 ---
-- - [1, 'sending', '<replicaset_2>']
+- [1, 'sending', '<replicaset_2>']
 ...
 _ = test_run:switch('storage_2_a')
 ---
@@ -71,9 +71,12 @@ box.error.injection.set("ERRINJ_WAL_DELAY", false)
 _bucket = box.space._bucket
 ---
 ...
-_bucket:select{}
+while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do fiber.sleep(0.01) end
 ---
-- - [1, 'active']
+...
+_bucket:get{1}
+---
+- [1, 'active']
 ...
 _ = test_run:switch('storage_1_a')
 ---

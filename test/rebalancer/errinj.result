@@ -13,13 +13,19 @@ test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
 ---
 ...
-util = require('lua_libs.util')
+util = require('util')
 ---
 ...
 util.wait_master(test_run, REPLICASET_1, 'box_1_a')
 ---
 ...
 util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
+---
+...
+util.push_rs_filters(test_run)
 ---
 ...
 --
@@ -44,7 +50,7 @@ test_run:switch('box_1_a')
 _bucket = box.space._bucket
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
@@ -86,17 +92,20 @@ errinj.set('ERRINJ_WAL_DELAY', true)
 ---
 - ok
 ...
-cfg.sharding[rs[1]].weight = 0.5
+log.info(string.rep('a', 1000))
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+cfg.sharding[util.replicasets[1]].weight = 0.5
+---
+...
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 --
 -- The rebalancer tries to send a bucket. It made the bucket be
 -- SENDING and started to persist that in WAL.
 --
-wait_rebalancer_state('Apply rebalancer routes', test_run)
+if not test_run:grep_log('box_1_a', 'Apply rebalancer routes', 1000) then wait_rebalancer_state('Apply rebalancer routes', test_run) end
 ---
 ...
 --
@@ -147,7 +156,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 ---
-- 66
+- 67
 ...
 test_run:switch('box_2_a')
 ---
@@ -155,11 +164,11 @@ test_run:switch('box_2_a')
 ...
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 ---
-- 134
+- 133
 ...
 --
--- Test that it is not possible to send multiple bucket at the
--- same time, even using the public bucket_send function.
+-- Test that it is possible to send multiple bucket at the same
+-- time, even using the public bucket_send function.
 --
 box.error.injection.set('ERRINJ_WAL_DELAY', true)
 ---
@@ -168,10 +177,13 @@ box.error.injection.set('ERRINJ_WAL_DELAY', true)
 _ = test_run:switch('box_1_a')
 ---
 ...
-_bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 2})
+_bucket:get{35}
 ---
-- - [35, 'active']
-  - [36, 'active']
+- [35, 'active']
+...
+_bucket:get{36}
+---
+- [36, 'active']
 ...
 ret1 = nil
 ---
@@ -185,10 +197,10 @@ err1 = nil
 err2 = nil
 ---
 ...
-f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(35, names.rs_uuid[2]) end)
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(35, util.replicasets[2]) end)
 ---
 ...
-f2 = fiber.create(function() ret2, err2 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+f2 = fiber.create(function() ret2, err2 = vshard.storage.bucket_send(36, util.replicasets[2]) end)
 ---
 ...
 _ = test_run:switch('box_2_a')
@@ -211,26 +223,21 @@ ret1, err1
 ...
 ret2, err2
 ---
+- true
 - null
-- bucket_id: 35
-  code: 7
-  type: ShardingError
-  name: TRANSFER_IS_IN_PROGRESS
-  message: Bucket 35 is transferring to replicaset 832bbba0-9699-4aa1-907d-c7c7af61f5c9
-  destination: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
 ...
 _bucket:get{35}
 ---
-- [35, 'sent', '832bbba0-9699-4aa1-907d-c7c7af61f5c9']
+- [35, 'sent', '<replicaset_2>']
 ...
 _bucket:get{36}
 ---
-- [36, 'active']
+- [36, 'sent', '<replicaset_2>']
 ...
--- Bucket 35 became 'active' on box_2_a, but still is sending on
+-- Buckets became 'active' on box_2_a, but still are sending on
 -- box_1_a. Wait until it is marked as garbage on box_1_a by the
 -- recovery fiber.
-while _bucket:get{35} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
+while _bucket:get{35} ~= nil or _bucket:get{36} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
 ---
 ...
 _ = test_run:switch('box_2_a')
@@ -239,6 +246,10 @@ _ = test_run:switch('box_2_a')
 _bucket:get{35}
 ---
 - [35, 'active']
+...
+_bucket:get{36}
+---
+- [36, 'active']
 ...
 --
 -- Test that bucket_send is correctly handled by recovery. When
@@ -255,7 +266,7 @@ box.error.injection.set('ERRINJ_WAL_DELAY', true)
 _ = test_run:switch('box_1_a')
 ---
 ...
-f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, util.replicasets[2]) end)
 ---
 ...
 _ = test_run:switch('box_2_a')

@@ -1,7 +1,6 @@
 test_run = require('test_run').new()
-
-git_util = require('lua_libs.git_util')
-util = require('lua_libs.util')
+git_util = require('git_util')
+util = require('util')
 vshard_copy_path = util.BUILDDIR .. '/test/var/vshard_git_tree_copy'
 evolution_log = git_util.log_hashes({args='vshard/storage/reload_evolution.lua', dir=util.SOURCEDIR})
 -- Cleanup the directory after a previous build.
@@ -19,16 +18,16 @@ REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 test_run:create_cluster(REPLICASET_1, 'reload_evolution')
 test_run:create_cluster(REPLICASET_2, 'reload_evolution')
-util = require('lua_libs.util')
+util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 
 test_run:switch('storage_1_a')
 vshard.storage.bucket_force_create(1, vshard.consts.DEFAULT_BUCKET_COUNT / 2)
 bucket_id_to_move = vshard.consts.DEFAULT_BUCKET_COUNT
 
 test_run:switch('storage_2_a')
-fiber = require('fiber')
 vshard.storage.bucket_force_create(vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1, vshard.consts.DEFAULT_BUCKET_COUNT / 2)
 bucket_id_to_move = vshard.consts.DEFAULT_BUCKET_COUNT
 vshard.storage.internal.reload_version
@@ -48,12 +47,11 @@ vshard.storage.bucket_force_drop(2000)
 vshard.storage.bucket_force_create(2000)
 vshard.storage.buckets_info()[2000]
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
-vshard.storage.bucket_send(bucket_id_to_move, replicaset1_uuid)
+vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[1])
 vshard.storage.garbage_collector_wakeup()
-fiber = require('fiber')
 while box.space._bucket:get({bucket_id_to_move}) do fiber.sleep(0.01) end
 test_run:switch('storage_1_a')
-vshard.storage.bucket_send(bucket_id_to_move, replicaset2_uuid)
+vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2])
 test_run:switch('storage_2_a')
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 -- Check info() does not fail.

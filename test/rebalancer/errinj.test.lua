@@ -5,9 +5,11 @@ REPLICASET_2 = { 'box_2_a', 'box_2_b' }
 
 test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
-util = require('lua_libs.util')
+util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'box_1_a')
 util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
+util.push_rs_filters(test_run)
 
 --
 -- gh-113: during rebalancing the recoverer can make a bucket be
@@ -27,7 +29,7 @@ util.wait_master(test_run, REPLICASET_2, 'box_2_a')
 
 test_run:switch('box_1_a')
 _bucket = box.space._bucket
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
 vshard.storage.rebalancer_disable()
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
@@ -42,13 +44,14 @@ vshard.storage.rebalancer_enable()
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 errinj = box.error.injection
 errinj.set('ERRINJ_WAL_DELAY', true)
-cfg.sharding[rs[1]].weight = 0.5
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+log.info(string.rep('a', 1000))
+cfg.sharding[util.replicasets[1]].weight = 0.5
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 --
 -- The rebalancer tries to send a bucket. It made the bucket be
 -- SENDING and started to persist that in WAL.
 --
-wait_rebalancer_state('Apply rebalancer routes', test_run)
+if not test_run:grep_log('box_1_a', 'Apply rebalancer routes', 1000) then wait_rebalancer_state('Apply rebalancer routes', test_run) end
 
 --
 -- During that the recovery fiber wakes up, sees SENDING bucket,
@@ -80,18 +83,19 @@ test_run:switch('box_2_a')
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 
 --
--- Test that it is not possible to send multiple bucket at the
--- same time, even using the public bucket_send function.
+-- Test that it is possible to send multiple bucket at the same
+-- time, even using the public bucket_send function.
 --
 box.error.injection.set('ERRINJ_WAL_DELAY', true)
 _ = test_run:switch('box_1_a')
-_bucket.index.status:select({vshard.consts.BUCKET.ACTIVE}, {limit = 2})
+_bucket:get{35}
+_bucket:get{36}
 ret1 = nil
 ret2 = nil
 err1 = nil
 err2 = nil
-f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(35, names.rs_uuid[2]) end)
-f2 = fiber.create(function() ret2, err2 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(35, util.replicasets[2]) end)
+f2 = fiber.create(function() ret2, err2 = vshard.storage.bucket_send(36, util.replicasets[2]) end)
 _ = test_run:switch('box_2_a')
 box.error.injection.set('ERRINJ_WAL_DELAY', false)
 _ = test_run:switch('box_1_a')
@@ -100,12 +104,13 @@ ret1, err1
 ret2, err2
 _bucket:get{35}
 _bucket:get{36}
--- Bucket 35 became 'active' on box_2_a, but still is sending on
+-- Buckets became 'active' on box_2_a, but still are sending on
 -- box_1_a. Wait until it is marked as garbage on box_1_a by the
 -- recovery fiber.
-while _bucket:get{35} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
+while _bucket:get{35} ~= nil or _bucket:get{36} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
 _ = test_run:switch('box_2_a')
 _bucket:get{35}
+_bucket:get{36}
 
 --
 -- Test that bucket_send is correctly handled by recovery. When
@@ -115,7 +120,7 @@ _bucket:get{35}
 _ = test_run:switch('box_2_a')
 box.error.injection.set('ERRINJ_WAL_DELAY', true)
 _ = test_run:switch('box_1_a')
-f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, names.rs_uuid[2]) end)
+f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, util.replicasets[2]) end)
 _ = test_run:switch('box_2_a')
 while not _bucket:get{36} do fiber.sleep(0.0001) end
 _ = test_run:switch('box_1_a')

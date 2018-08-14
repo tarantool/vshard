@@ -62,9 +62,6 @@ _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
 ---
 - [3, 'sending', '<replicaset_1>']
 ...
-vshard.storage.internal.rebalancer_sending_bucket = 3
----
-...
 _ = test_run:cmd('stop server storage_1_a')
 ---
 ...

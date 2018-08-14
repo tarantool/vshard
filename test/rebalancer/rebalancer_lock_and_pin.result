@@ -16,13 +16,16 @@ test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
 ---
 ...
-util = require('lua_libs.util')
+util = require('util')
 ---
 ...
 util.wait_master(test_run, REPLICASET_1, 'box_1_a')
 ---
 ...
 util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 ---
 ...
 --
@@ -57,7 +60,7 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-rs1_cfg = cfg.sharding[names.rs_uuid[1]]
+rs1_cfg = cfg.sharding[util.replicasets[1]]
 ---
 ...
 rs1_cfg.lock = true
@@ -66,14 +69,14 @@ rs1_cfg.lock = true
 rs1_cfg.weight = 0
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 ---
 ...
 test_run:switch('box_1_a')
 ---
 - true
 ...
-rs1_cfg = cfg.sharding[names.rs_uuid[1]]
+rs1_cfg = cfg.sharding[util.replicasets[1]]
 ---
 ...
 rs1_cfg.lock = true
@@ -82,7 +85,7 @@ rs1_cfg.lock = true
 rs1_cfg.weight = 0
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -114,7 +117,7 @@ test_run:switch('box_2_a')
 rs1_cfg.weight = 2
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 ---
 ...
 test_run:switch('box_1_a')
@@ -124,7 +127,7 @@ test_run:switch('box_1_a')
 rs1_cfg.weight = 2
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -154,13 +157,13 @@ test_run:switch('box_2_a')
 rs1_cfg.lock = false
 ---
 ...
-rs2_cfg = cfg.sharding[names.rs_uuid[2]]
+rs2_cfg = cfg.sharding[util.replicasets[2]]
 ---
 ...
 rs2_cfg.lock = true
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 ---
 ...
 test_run:switch('box_1_a')
@@ -170,19 +173,19 @@ test_run:switch('box_1_a')
 rs1_cfg.lock = false
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('Replicaset is locked', test_run)
 ---
 ...
-rs2_cfg = cfg.sharding[names.rs_uuid[2]]
+rs2_cfg = cfg.sharding[util.replicasets[2]]
 ---
 ...
 rs2_cfg.lock = true
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -201,6 +204,9 @@ test_run:create_cluster(REPLICASET_3, 'rebalancer')
 ---
 ...
 util.wait_master(test_run, REPLICASET_3, 'box_3_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_3}, 'bootstrap_storage(\'memtx\')')
 ---
 ...
 test_run:switch('box_2_a')
@@ -223,14 +229,14 @@ rs2_cfg.weight = 0.5
 add_replicaset()
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 ---
 ...
 test_run:switch('box_3_a')
 ---
 - true
 ...
-rs1_cfg = cfg.sharding[names.rs_uuid[1]]
+rs1_cfg = cfg.sharding[util.replicasets[1]]
 ---
 ...
 rs1_cfg.lock = true
@@ -239,13 +245,13 @@ rs1_cfg.lock = true
 rs1_cfg.weight = 1
 ---
 ...
-rs2_cfg = cfg.sharding[names.rs_uuid[2]]
+rs2_cfg = cfg.sharding[util.replicasets[2]]
 ---
 ...
 rs2_cfg.weight = 0.5
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_3_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_3_a)
 ---
 ...
 test_run:switch('box_1_a')
@@ -267,7 +273,7 @@ rs2_cfg.weight = 0.5
 add_replicaset()
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -290,7 +296,7 @@ test_run:switch('box_2_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 34
+- 33
 ...
 test_run:switch('box_3_a')
 ---
@@ -298,7 +304,7 @@ test_run:switch('box_3_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 66
+- 67
 ...
 --
 -- Test bucket pinning. At first, return to the default
@@ -320,7 +326,7 @@ rs2_cfg.lock = false
 rs2_cfg.weight = 1
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_2_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 ---
 ...
 test_run:switch('box_3_a')
@@ -339,7 +345,7 @@ rs2_cfg.lock = false
 rs2_cfg.weight = 1
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_3_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_3_a)
 ---
 ...
 test_run:switch('box_1_a')
@@ -358,7 +364,7 @@ rs2_cfg.lock = false
 rs2_cfg.weight = 1
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -366,7 +372,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 vshard.storage.info().bucket.active
 ---
-- 67
+- 66
 ...
 status = box.space._bucket.index.status
 ---
@@ -453,7 +459,7 @@ status:count({vshard.consts.BUCKET.PINNED})
 rs1_cfg.weight = 0.5
 ---
 ...
-vshard.storage.cfg(cfg, names.replica_uuid.box_1_a)
+vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
 wait_rebalancer_state('The cluster is balanced ok', test_run)
