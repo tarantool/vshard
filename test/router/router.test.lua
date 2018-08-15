@@ -94,6 +94,15 @@ rs1.bucket_count
 rs2.bucket_count
 
 --
+-- Negative bucket count appeared again once router cfg got route
+-- map keeping on recfg.
+--
+vshard.router.cfg(cfg)
+vshard.router.static.replicasets[util.replicasets[1]].bucket_count
+vshard.router.static.replicasets[util.replicasets[2]].bucket_count
+
+
+--
 -- Test lua errors.
 --
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
@@ -185,7 +194,9 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 
 -- All is ok, when all servers are up.
 -- gh-103: show bucket info for each replicaset.
-vshard.router.info()
+info = vshard.router.info()
+while #info.alerts ~= 0 do vshard.router.discovery_wakeup() fiber.sleep(0.01) info = vshard.router.info() end
+info
 
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.

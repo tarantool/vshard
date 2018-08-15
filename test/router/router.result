@@ -262,6 +262,21 @@ rs2.bucket_count
 - 1
 ...
 --
+-- Negative bucket count appeared again once router cfg got route
+-- map keeping on recfg.
+--
+vshard.router.cfg(cfg)
+---
+...
+vshard.router.static.replicasets[util.replicasets[1]].bucket_count
+---
+- 0
+...
+vshard.router.static.replicasets[util.replicasets[2]].bucket_count
+---
+- 1
+...
+--
 -- Test lua errors.
 --
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
@@ -386,9 +401,9 @@ vshard.router.buckets_info(0, 3)
 ---
 - - status: unknown
   - uuid: <replicaset_2>
-    status: unreachable
+    status: available_ro
   - uuid: <replicaset_2>
-    status: unreachable
+    status: available_ro
 ...
 _ = test_run:cmd('start server storage_2_a')
 ---
@@ -508,7 +523,13 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 --
 -- All is ok, when all servers are up.
 -- gh-103: show bucket info for each replicaset.
-vshard.router.info()
+info = vshard.router.info()
+---
+...
+while #info.alerts ~= 0 do vshard.router.discovery_wakeup() fiber.sleep(0.01) info = vshard.router.info() end
+---
+...
+info
 ---
 - replicasets:
     <replicaset_2>:
@@ -518,7 +539,7 @@ vshard.router.info()
         uri: storage@127.0.0.1:3303
         uuid: <storage_2_a>
       bucket:
-        available_rw: 3
+        available_rw: 1500
       uuid: <replicaset_2>
       master: *0
     <replicaset_1>:
@@ -528,17 +549,16 @@ vshard.router.info()
         uri: storage@127.0.0.1:3301
         uuid: <storage_1_a>
       bucket:
-        available_rw: 1
+        available_rw: 1500
       uuid: <replicaset_1>
       master: *1
   bucket:
     unreachable: 0
     available_ro: 0
-    unknown: 2996
-    available_rw: 4
-  status: 1
-  alerts:
-  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
+    unknown: 0
+    available_rw: 3000
+  status: 0
+  alerts: []
 ...
 -- Remove replica and master connections to trigger alert
 -- UNREACHABLE_REPLICASET.
@@ -568,7 +588,7 @@ info.replicasets[rs.uuid]
     uri: storage@127.0.0.1:3301
     uuid: <storage_1_a>
   bucket:
-    unreachable: 1
+    unreachable: 1500
   uuid: <replicaset_1>
   master: *0
 ...
@@ -581,7 +601,6 @@ info.alerts
 - - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_1>
       is unreachable: disconnected']
   - ['UNREACHABLE_REPLICASET', 'There is no active replicas in replicaset <replicaset_1>']
-  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
 ...
 rs.master.conn = master_conn
 ---
@@ -607,7 +626,7 @@ info.replicasets[rs.uuid]
     uri: storage@127.0.0.1:3301
     uuid: <storage_1_a>
   bucket:
-    available_ro: 1
+    available_ro: 1500
   uuid: <replicaset_1>
   master:
     status: missing
@@ -619,7 +638,6 @@ info.status
 info.alerts
 ---
 - - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
-  - ['UNKNOWN_BUCKETS', '2996 buckets are not discovered']
 ...
 rs.master = master
 ---
@@ -653,9 +671,11 @@ vshard.router.buckets_info(0, 3)
 vshard.router.buckets_info(1500, 3)
 ---
 - 1502:
-    status: unknown
+    uuid: <replicaset_1>
+    status: available_rw
   1503:
-    status: unknown
+    uuid: <replicaset_1>
+    status: available_rw
   1501:
     uuid: <replicaset_1>
     status: available_rw
@@ -663,11 +683,14 @@ vshard.router.buckets_info(1500, 3)
 vshard.router.buckets_info(vshard.consts.DEFAULT_BUCKET_COUNT - 3)
 ---
 - 3000:
-    status: unknown
+    uuid: <replicaset_1>
+    status: available_rw
   2998:
-    status: unknown
+    uuid: <replicaset_1>
+    status: available_rw
   2999:
-    status: unknown
+    uuid: <replicaset_1>
+    status: available_rw
 ...
 util.check_error(vshard.router.buckets_info, '123')
 ---
