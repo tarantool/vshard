@@ -23,21 +23,24 @@ for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 _ = test_run:switch('box_2_a')
 _bucket = box.space._bucket
 for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
-s = box.schema.create_space('test3', {engine = 'vinyl'})
-_ = s:create_index('pk')
-_ = s:create_index('vbucket', {parts = {{2, 'unsigned'}}, unique = false})
+create_simple_space('test3', {engine = 'vinyl'})
+create_simple_space('test4')
+create_simple_space('test5', {engine = 'vinyl'})
 
 _ = test_run:switch('box_1_a')
 wait_rebalancer_state("The cluster is balanced ok", test_run)
-s = box.schema.create_space('test3', {engine = 'vinyl'})
-_ = s:create_index('pk')
-_ = s:create_index('vbucket', {parts = {{2, 'unsigned'}}, unique = false})
+create_simple_space('test3', {engine = 'vinyl'})
+create_simple_space('test4')
+create_simple_space('test5', {engine = 'vinyl'})
 
 for i = 1, 10000 do box.space.test:replace{i, 1, 1} box.space.test2:replace{i, 1, 2} box.space.test3:replace{i, 1, 3} end
+for i = 1, 500 do box.space.test4:replace{i, 1, 4} box.space.test5:replace{i, 1, 5} end
 box.snapshot()
 box.space.test:count()
 box.space.test2:count()
 box.space.test3:count()
+box.space.test4:count()
+box.space.test5:count()
 
 vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 10})
 box.space._bucket:get{1}
@@ -46,7 +49,10 @@ _ = test_run:switch('box_2_a')
 box.space.test:count()
 box.space.test2:count()
 box.space.test3:count()
+box.space.test4:count()
+box.space.test5:count()
 for i = 1, 10000 do assert(box.space.test:get{i}[3] == 1) assert(box.space.test2:get{i}[3] == 2) assert(box.space.test3:get{i}[3] == 3) end
+for i = 1, 500 do assert(box.space.test4:get{i}[3] == 4) assert(box.space.test5:get{i}[3] == 5) end
 box.space._bucket:get{1}
 
 --

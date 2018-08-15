@@ -21,4 +21,11 @@ function nullify_rs_weight()
 	cfg.sharding[util.replicasets[1]].weight = 0
 end
 
+function create_simple_space(...)
+	local s = box.schema.create_space(...)
+	s:create_index('pk')
+	s:create_index(cfg.shard_index or 'bucket_id',
+		       {parts = {{2, 'unsigned'}}, unique = false})
+end
+
 require('storage_template')

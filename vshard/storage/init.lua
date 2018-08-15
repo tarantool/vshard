@@ -564,19 +564,35 @@ end
 
 
 --
--- Receive bucket with its data.
+-- Receive bucket data. If the bucket is not presented here, it is
+-- created as RECEIVING.
+-- @param bucket_id Bucket to receive.
+-- @param from Source UUID.
+-- @param data Bucket data in the format:
+--        [{space_id, [space_tuples]}, ...].
+-- @param opts Options. Now the only possible option is 'is_last'.
+--        It is set to true when the data portion is last and the
+--        bucket can be activated here.
 --
-local function bucket_recv_xc(bucket_id, from, data)
-    local _bucket = box.space._bucket
-    if _bucket:get({bucket_id}) ~= nil then
-        return nil, lerror.vshard(lerror.code.BUCKET_ALREADY_EXISTS, bucket_id)
-    end
+-- @retval nil, error Error occured.
+-- @retval true The data is received ok.
+--
+local function bucket_recv_xc(bucket_id, from, data, opts)
     if not from or not M.replicasets[from] then
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, from)
     end
-    local bucket_generation = M.bucket_generation
+    local _bucket = box.space._bucket
+    local b = _bucket:get{bucket_id}
     local recvg = consts.BUCKET.RECEIVING
-    _bucket:insert({bucket_id, recvg, from})
+    if not b then
+        _bucket:insert({bucket_id, recvg, from})
+    elseif b.status ~= recvg then
+        local msg = string.format("bucket state is changed: was receiving, "..
+                                  "became %s", b.status)
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
+                                  from)
+    end
+    local bucket_generation = M.bucket_generation
     local limit = consts.BUCKET_CHUNK_SIZE
     for _, row in ipairs(data) do
         local space_id, space_data = row[1], row[2]
@@ -607,9 +623,11 @@ local function bucket_recv_xc(bucket_id, from, data)
         box.commit()
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
-    _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-    if M.errinj.ERRINJ_LONG_RECEIVE then
-        box.error(box.error.TIMEOUT)
+    if opts and opts.is_last then
+        _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        if M.errinj.ERRINJ_LONG_RECEIVE then
+            box.error(box.error.TIMEOUT)
+        end
     end
     return true
 end
@@ -617,17 +635,16 @@ end
 --
 -- Exception safe version of bucket_recv_xc.
 --
-local function bucket_recv(bucket_id, from, data)
-    if type(bucket_id) ~= 'number' or type(data) ~= 'table' then
-        error('Usage: bucket_recv(bucket_id, data)')
-    end
+local function bucket_recv(bucket_id, from, data, opts)
     M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data)
+    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
     M.rebalancer_transfering_buckets[bucket_id] = nil
     if status then
         if ret then
-            M.buckets_to_recovery[bucket_id] = nil
+            if opts and opts.is_last then
+                M.buckets_to_recovery[bucket_id] = nil
+            end
             return ret
         end
     else
@@ -665,12 +682,21 @@ local function find_sharded_spaces()
     return spaces
 end
 
+if M.errinj.ERRINJ_RELOAD then
+    error('Error injection: reload')
+end
+
 --
--- Collect bucket data from all spaces.
--- @retval In a case of success, bucket data in
---         array of pairs: {space_id, <array of tuples>}.
+-- Collect content of the readable bucket.
 --
-local function bucket_collect_internal(bucket_id)
+local function bucket_collect(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_collect(bucket_id)')
+    end
+    local status, err = bucket_check_state(bucket_id, 'read')
+    if err then
+        return nil, err
+    end
     local data = {}
     local spaces = find_sharded_spaces()
     local idx = M.shard_index
@@ -680,25 +706,6 @@ local function bucket_collect_internal(bucket_id)
         table.insert(data, {space.id, space_data})
     end
     return data
-end
-
-if M.errinj.ERRINJ_RELOAD then
-    error('Error injection: reload')
-end
-
---
--- Collect content of ACTIVE bucket.
---
-local function bucket_collect(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_collect(bucket_id)')
-    end
-
-    local status, err = bucket_check_state(bucket_id, 'read')
-    if err then
-        return nil, err
-    end
-    return bucket_collect_internal(bucket_id)
 end
 
 --
@@ -793,6 +800,7 @@ end
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts)
+    local uuid = box.info.cluster.uuid
     local status, err = bucket_check_state(bucket_id, 'write')
     if err then
         return nil, err
@@ -801,25 +809,51 @@ local function bucket_send_xc(bucket_id, destination, opts)
     if replicaset == nil then
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
     end
-    if destination == box.info.cluster.uuid then
+    if destination == uuid then
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
                                   replicaset_uuid)
     end
-
-    local data = bucket_collect_internal(bucket_id)
-    box.space._bucket:replace({bucket_id, consts.BUCKET.SENDING, destination})
-    status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, box.info.cluster.uuid, data},
-                                    opts)
-    if not status then
-        err = lerror.make(err)
-        if err.type == 'ShardingError' then
-            -- Rollback bucket state.
-            box.space._bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+    local data = {}
+    local spaces = find_sharded_spaces()
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local idx = M.shard_index
+    local bucket_generation = M.bucket_generation
+    local sendg = consts.BUCKET.SENDING
+    local _bucket = box.space._bucket
+    _bucket:replace({bucket_id, sendg, destination})
+    for _, space in pairs(spaces) do
+        local index = space.index[idx]
+        local space_data = {}
+        for _, t in index:pairs({bucket_id}) do
+            table.insert(space_data, t)
+            limit = limit - 1
+            if limit == 0 then
+                table.insert(data, {space.id, space_data})
+                status, err = replicaset:callrw('vshard.storage.bucket_recv',
+                                                {bucket_id, uuid, data}, opts)
+                bucket_generation =
+                    bucket_guard_xc(bucket_generation, bucket_id, sendg)
+                if not status then
+                    _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+                    return status, lerror.make(err)
+                end
+                limit = consts.BUCKET_CHUNK_SIZE
+                data = {}
+                space_data = {}
+            end
         end
-        return status, err
+        table.insert(data, {space.id, space_data})
     end
-    box.space._bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
+    status, err =
+        replicaset:callrw('vshard.storage.bucket_recv',
+                          {bucket_id, uuid, data, {is_last = true}}, opts)
+    if not status then
+        if err.type == 'ShardingError' then
+            _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        end
+        return status, lerror.make(err)
+    end
+    _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
     return true
 end
 
@@ -1241,12 +1275,13 @@ local function rebalancer_apply_routes_f(routes)
     M.rebalancer_applier_fiber = lfiber.self()
     local active_buckets = _status:select{consts.BUCKET.ACTIVE}
     local i = 1
+    local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     for dst_uuid, bucket_count in pairs(routes) do
         assert(i + bucket_count - 1 <= #active_buckets)
         log.info('Send %d buckets to %s', bucket_count, M.replicasets[dst_uuid])
         for j = i, i + bucket_count - 1 do
             local bucket_id = active_buckets[j].id
-            local ret, err = bucket_send(bucket_id, dst_uuid)
+            local ret, err = bucket_send(bucket_id, dst_uuid, opts)
             if not ret then
                 log.error('Error during rebalancer routes applying: %s', err)
                 log.info('Can not apply routes')
