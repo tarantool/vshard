@@ -3,6 +3,8 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
+local ffi = require('ffi')
+local table_new = require('table.new')
 
 local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
@@ -24,6 +26,22 @@ local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
 local reload_evolution = require('vshard.storage.reload_evolution')
+
+ffi.cdef[[
+    typedef struct box_key_def_t box_key_def_t;
+
+    struct key_def *
+    space_index_cmp_def(struct space *space, uint32_t id);
+
+    struct space *
+    space_by_id(uint32_t id);
+
+    int
+    box_tuple_compare(const box_tuple_t *tuple_a, const box_tuple_t *tuple_b,
+                      const box_key_def_t *key_def);
+]]
+
+local builtin = ffi.C
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
@@ -144,14 +162,18 @@ end
 --
 local function bucket_is_writable(bucket)
     return bucket.status == consts.BUCKET.ACTIVE or
-           bucket.status == consts.BUCKET.PINNED
+           bucket.status == consts.BUCKET.PINNED or
+           (bucket.status == consts.BUCKET.SENDING and
+            M.rebalancer_transfering_buckets[bucket.id])
 end
 
 --
 -- Check if @a bucket can accept 'read' requests.
 --
 local function bucket_is_readable(bucket)
-    return bucket_is_writable(bucket) or bucket.status == consts.BUCKET.SENDING
+    return bucket.status == consts.BUCKET.ACTIVE or
+           bucket.status == consts.BUCKET.PINNED or
+           bucket.status == consts.BUCKET.SENDING
 end
 
 --
@@ -577,7 +599,7 @@ end
 -- @retval nil, error Error occured.
 -- @retval true The data is received ok.
 --
-local function bucket_recv_xc(bucket_id, from, data, opts)
+local function bucket_recv_xc(bucket_id, from, data, updates, opts)
     if not from or not M.replicasets[from] then
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, from)
     end
@@ -623,6 +645,20 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         box.commit()
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
+    for _, txn in pairs(updates) do
+        box.begin()
+        for space_id, space_data in pairs(txn) do
+            local space = box.space[space_id]
+            for _, stmt in pairs(space_data) do
+                if not stmt[2] then
+                    space:replace(stmt[1])
+                else
+                    space:delete(stmt[1])
+                end
+            end
+        end
+        box.commit()
+    end
     if opts and opts.is_last then
         _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
         if M.errinj.ERRINJ_LONG_RECEIVE then
@@ -635,10 +671,11 @@ end
 --
 -- Exception safe version of bucket_recv_xc.
 --
-local function bucket_recv(bucket_id, from, data, opts)
+local function bucket_recv(bucket_id, from, data, updates, opts)
     M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
+    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data,
+                                   updates, opts)
     M.rebalancer_transfering_buckets[bucket_id] = nil
     if status then
         if ret then
@@ -796,6 +833,320 @@ local function local_on_master_enable()
     log.info("Took on replicaset master role")
 end
 
+------------------------------------------------------------------
+-- Bucket sending
+------------------------------------------------------------------
+--[[
+Bucket sending is a complex procedure consisting of several
+stages. First stage - mark the bucket as SENDING and schedule its
+recovery if the transfer will fail.
+
+Second stage - send the bucket data of each space iterating over
+its shard index in chunks. For transfer duration on the space a
+trigger is hanged which tracks each update of the space bucket
+data. Then these updates are sent together with a next chunk. Once
+the space is completely scanned, all its updates are being
+collected and sent while other spaces are being scanned.
+
+Third stage - lock the bucket updating until its already collected
+updates are sent and the bucket is activated on a destination.
+
+Each space has its own transfer state, created for each
+transferring bucket:
+{
+    collect_all = <boolean, is set when the space is scanned
+                   completely and all updates are needed>,
+    cmp_def = <cdata key_def, compare key definition used to check
+               whether a tuple crossed the transfer front or not>,
+    schema_version = <number, schema version to refetch cmp_def on
+                      schema updates>,
+    space = <box.space object, transferring space>,
+    current_tuple = <cdata tuple, transfer front. Each update of a
+                     tuple < this one should be resent>,
+    is_started = <boolean, true if a transfer of this space is
+                  started>,
+    bucket_field = <number, number of the field, containing
+                    bucket_id>,
+    on_replace = <function, on replace trigger which schedules
+                  on_commit trigger to save txn data of the
+                  bucket>,
+    transfer = <global bucket transfer state object, reference to
+                the global bucket transfer state.>,
+}
+
+And the entire bucket transfer process has a global state:
+{
+    bucket_id = <number, identifier of the transferring bucket>,
+    destination = <string, UUID of the destination>,
+    is_locked = <boolean, is set when the final update packets are
+                 in fly>,
+    spaces = <map of the format: space_id => space_transfer
+              object>,
+    queue = <queue of updates> {
+        txns = <array of maps of the format space_id => array of
+                statements of the format: [tuple, is_deleted],
+                list of transactions, updating the bucket>,
+        first = <number, index of the first txn in the queue>,
+        last = <number, index of the last txn in the queue>,
+        stmt_count = <number, number of statements in the whole
+                      queue>,
+    },
+    error = <error object set from on_commit trigger. If it is not
+             nil, then an on_commit trigger failed to save
+             updates>
+}
+--]]
+
+--
+-- Check if the tuple has a key that was transferred already. For
+-- this the tuple is compared with the last transferred tuple by
+-- shard_index key.
+-- @param space_transfer Space transfer object.
+-- @param tuple Tuple to check.
+--
+-- @retval True, if the tuple is behind. False otherwise.
+--
+local function space_transfer_is_tuple_behind(space_transfer, tuple)
+    -- Collect all when the space is sent completely and only
+    -- updates arrive.
+    if space_transfer.collect_all then
+        return true
+    end
+    if space_transfer.schema_version ~= box.internal.schema_version() then
+        local iid = space_transfer.space.index[M.shard_index]
+        space_transfer.cmp_def =
+            builtin.space_index_cmp_def(builtin.space_by_id(space.id), iid)
+    end
+    return builtin.box_tuple_compare(space_transfer.current_tuple, tuple,
+                                     space_transfer.cmp_def) >= 0
+end
+
+--
+-- Collect updates of the transferring bucket and store into the
+-- transfer queue.
+-- @param txn Transaction iterator.
+-- @param transfer Bucket transfer state.
+--
+local function transfer_on_commit_xc(txn, transfer)
+    local bucket_data = {}
+    local total = 0
+    for _, old, new, space_id in txn() do
+        local space_transfer = transfer.spaces[space_id]
+        if not space_transfer.is_started then
+            goto continue
+        end
+        local to_insert
+        -- Collect all updates of the bucket. It is not possible
+        -- now to check if the tuple is behind a transfer front
+        -- since a vinyl iterator can be yielding right now on
+        -- exactly this tuple and did not manage to set
+        -- current_tuple yet. So this update could be erroneously
+        -- skipped.
+        if new then
+            if new[space_transfer.bucket_field] ~= transfer.bucket_id then
+                goto continue
+            end
+            to_insert = {new}
+        else
+            if old[space_transfer.bucket_field] ~= transfer.bucket_id then
+                goto continue
+            end
+            to_insert = {old, true}
+        end
+        local space_data = bucket_data[space_id]
+        if space_data then
+            table.insert(space_data, to_insert)
+        else
+            bucket_data[space_id] = {to_insert}
+        end
+        total = total + 1
+::continue::
+    end
+    if total > 0 then
+        local q = transfer.queue
+        table.insert(q.txns, bucket_data)
+        q.last = #q.txns
+        q.stmt_count = q.stmt_count + total
+    end
+end
+
+--
+-- Exception safe version of transfer_on_commit_xc. Sets
+-- transfer.error instead.
+--
+local function transfer_on_commit(txn, transfer)
+    local ok, err = pcall(transfer_on_commit_xc, txn, transfer)
+    if not ok then
+        transfer.error = err
+    end
+end
+
+--
+-- On replace trigger working during a bucket transfer to forbid
+-- some replaces, and to schedule on_commit triggers.
+-- @param old Old tuple or nil.
+-- @param new New tuple or nil.
+-- @param space_transfer Space transfer state.
+--
+local function space_transfer_on_replace(old, new, space_transfer)
+    local transfer = space_transfer.transfer
+    local bucket_id = transfer.bucket_id
+    if not M.buckets_to_recovery[bucket_id] then
+        -- Remove self from triggers list. It can be still here if
+        -- bucket_send failed before cleaning on_replaces. So this
+        -- trigger is irrelevant.
+        space_transfer.space:on_replace(nil, space_transfer.on_replace)
+        return
+    end
+    local field = space_transfer.bucket_field
+    if ((new and new[field]) or (old and old[field])) ~= bucket_id then
+        -- Not linked with this bucket.
+        return
+    end
+    if transfer.is_locked or
+       transfer.queue.stmt_count > REBALANCER_MAX_BUCKET_QUEUE then
+        error(lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS, bucket_id,
+                            transfer.destination))
+    end
+    local storage = lfiber.self().storage
+    if not storage.__vshard_is_commit_set then
+        box.on_commit(function(txn) transfer_on_commit(txn, transfer) end)
+        storage.__vshard_is_commit_set = true
+    end
+end
+
+--
+-- Pop at least BUCKET_CHUNK_SIZE update statements from the
+-- queue.
+-- @param transfer Transfer object from which to pop.
+-- @retval Updates as an array of maps of the format space_id =>
+--         array of pairs [tuple/key, is_deleted].
+--
+local function transfer_pop_updates(transfer)
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local res = {}
+    local queue = transfer.queue
+    local txns = queue.txns
+    local total = 0
+    local i = queue.first
+    local last = queue.last
+    -- Hack to collect tuple_extract_key results later.
+    box.begin()
+    while i < last and limit > total do
+        local filtered_txn = {}
+        for space_id, space_data in pairs(txns[i]) do
+            local space_transfer = transfer.spaces[space_id]
+            if not space_transfer.is_started then
+                goto continue
+            end
+            local filtered_space_data = table_new(#space_data, 0)
+            for _, stmt in pairs(space_data) do
+                if space_transfer_is_tuple_behind(space_transfer, stmt[1]) then
+                    if stmt[2] then
+                        stmt[1] = util.tuple_extract_key(stmt[1], space_id, 0)
+                    end
+                    table.insert(filtered_space_data, stmt)
+                    total = total + 1
+                end
+            end
+            filtered_txn[space_id] = filtered_space_data
+::continue::
+        end
+        table.insert(res, filtered_txn)
+        txns[i] = nil
+        i = i + 1
+    end
+    box.rollback()
+    queue.stmt_count = queue.stmt_count - total
+    queue.first = i
+    return res
+end
+
+local function bucket_transfer_open(bucket_id)
+    local transfer = table_new(0, 10)
+    transfer.queue = { first = 0, last = 0, txns = {}, stmt_count = 0 }
+    transfer.bucket_id = bucket_id
+    transfer.destination = destination
+    transfer.spaces = table.copy(find_sharded_spaces())
+    transfer.current_space_id = nil
+end
+
+local function bucket_transfer_close(transfer)
+    for _, space_transfer in pairs(transfer.spaces) do
+        if space_transfer.space then
+            space_transfer.space:on_replace(nil, space_transfer.on_replace)
+        end
+    end
+end
+
+local function bucket_transfer_lock(transfer)
+    transfer.is_locked = true
+end
+
+local function bucket_transfer_is_empty(transfer)
+    return transfer.queue.stmt_count == 0
+end
+
+local function bucket_transfer_next(transfer)
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local data = {}
+    while true do
+        local space
+        local space_id = transfer.current_space_id
+        if not space_id then
+            goto next_space
+        end
+        local space_transfer = transfer.spaces[space_id]
+        local itr = space_transfer.itr
+        local itr_key = space_transfer.itr_key
+        local itr_state = space_transfer.itr_state
+        local space_data = {}
+        while true do
+            _, tuple = itr(itr_key, itr_state)
+            if tuple == nil then
+                goto next_space
+            end
+            table.insert(space_data, t)
+            space_transfer.current_tuple = t
+            limit = limit - 1
+            if limit == 0 then
+                goto exit
+            end
+        end
+        space_transfer.collect_all = true
+        if #space_data > 0 then
+            table.insert(data, {space_id, space_data})
+        end
+
+::next_space::
+        transfer.current_space_id, space = next(transfer.spaces, space_id)
+        if not transfer.current_space_id then
+            goto exit
+        end
+        local shard_index = space.index[M.shard_index]
+        space_transfer = table_new(0, 9)
+        -- Number of tuple field storing bucket_id.
+        space_transfer.bucket_field = shard_index.parts[1].fieldno
+        -- On replace trigger to track updates.
+        space_transfer.on_replace = function(old, new)
+            space_transfer_on_replace(old, new, space_transfer)
+        end
+        space_transfer.transfer = transfer
+        space_transfer.is_started = true
+        space_transfer.space = space
+        space_transfer.itr, space_transfer.itr_key, space_transfer.itr_state =
+            shard_index:pairs({bucket_id})
+        transfer.spaces[space_id] = space_transfer
+        space:on_replace(space_transfer.on_replace)
+    end
+::exit::
+    if transfer.error then
+        return nil, lerror.make(transfer.error)
+    end
+    table.insert(data, {space_id, space_data})
+    return data, transfer_pop_updates(transfer)
+end
+
 --
 -- Send a bucket to other replicaset.
 --
@@ -813,48 +1164,55 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
                                   replicaset_uuid)
     end
-    local data = {}
-    local spaces = find_sharded_spaces()
-    local limit = consts.BUCKET_CHUNK_SIZE
-    local idx = M.shard_index
-    local bucket_generation = M.bucket_generation
     local sendg = consts.BUCKET.SENDING
-    local _bucket = box.space._bucket
+    local status, err, recv_opts
+    local bucket_generation = M.bucket_generation
+    local transfer = bucket_transfer_open(bucket_id)
     _bucket:replace({bucket_id, sendg, destination})
-    for _, space in pairs(spaces) do
-        local index = space.index[idx]
-        local space_data = {}
-        for _, t in index:pairs({bucket_id}) do
-            table.insert(space_data, t)
-            limit = limit - 1
-            if limit == 0 then
-                table.insert(data, {space.id, space_data})
-                status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                                {bucket_id, uuid, data}, opts)
-                bucket_generation =
-                    bucket_guard_xc(bucket_generation, bucket_id, sendg)
-                if not status then
-                    _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-                    return status, lerror.make(err)
-                end
-                limit = consts.BUCKET_CHUNK_SIZE
-                data = {}
-                space_data = {}
-            end
+    while true do
+        local data, updates = bucket_transfer_next(transfer)
+        if not data then
+            status = data
+            err = updates
+            goto finish
         end
-        table.insert(data, {space.id, space_data})
-    end
-    status, err =
-        replicaset:callrw('vshard.storage.bucket_recv',
-                          {bucket_id, uuid, data, {is_last = true}}, opts)
-    if not status then
-        if err.type == 'ShardingError' then
+        if #data == 0 then
+            break
+        end
+        status, err = replicaset:callrw('vshard.storage.bucket_recv',
+                                        {bucket_id, uuid, data, updates}, opts)
+        if not status then
             _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+            goto finish
         end
-        return status, lerror.make(err)
+        bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, sendg)
     end
+    bucket_transfer_lock(transfer)
+    recv_opts = {is_last = false}
+    repeat
+        local data, updates = bucket_transfer_next(transfer)
+        assert(#data == 0)
+        if not data then
+            status = data
+            err = updates
+            goto finish
+        end
+        recv_opts.is_last = bucket_transfer_is_empty(transfer)
+        status, err =
+            replicaset:callrw('vshard.storage.bucket_recv',
+                              {bucket_id, uuid, data, updates, recv_opts}, opts)
+        if not status then
+            if err.type == 'ShardingError' then
+                _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+            end
+            goto finish
+        end
+        bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, sendg)
+    until recv_opts.is_last
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
-    return true
+::finish::
+    bucket_transfer_close(transfer)
+    return status, err
 end
 
 --
