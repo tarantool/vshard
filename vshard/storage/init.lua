@@ -944,12 +944,12 @@ local function gc_bucket_in_space_xc(space, bucket_id, status)
         return
     end
     local bucket_generation = M.bucket_generation
-    local pk_parts = space.index[0].parts
+    local space_id = space.id
 ::restart::
     local limit = consts.BUCKET_CHUNK_SIZE
     box.begin()
     for _, tuple in bucket_index:pairs({bucket_id}) do
-        space:delete(util.tuple_extract_key(tuple, pk_parts))
+        space:delete(util.tuple_extract_key(tuple, space_id, 0))
         limit = limit - 1
         if limit == 0 then
             box.commit()

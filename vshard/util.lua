@@ -1,6 +1,8 @@
 -- vshard.util
 local log = require('log')
 local fiber = require('fiber')
+local ffi = require('ffi')
+local msgpack = require('msgpack')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -15,20 +17,28 @@ if not M then
     rawset(_G, MODULE_INTERNALS, M)
 end
 
+ffi.cdef[[
+    char *
+    box_tuple_extract_key(const box_tuple_t *tuple, uint32_t space_id,
+                          uint32_t index_id, uint32_t *key_size);
+    bool
+    box_txn(void);
+]]
+
+local builtin = ffi.C
+
 --
 -- Extract parts of a tuple.
 -- @param tuple Tuple to extract a key from.
--- @param parts Array of index parts. Each part must contain
---        'fieldno' attribute.
+-- @param space_id Identifier of a space for which extract.
+-- @param index_id Identifier of an index for which extract.
 --
 -- @retval Extracted key.
 --
-local function tuple_extract_key(tuple, parts)
-    local key = {}
-    for _, part in ipairs(parts) do
-        table.insert(key, tuple[part.fieldno])
-    end
-    return key
+local function tuple_extract_key(tuple, space_id, index_id)
+    assert(builtin.box_txn())
+    local raw = builtin.box_tuple_extract_key(tuple, space_id, index_id, nil)
+    return msgpack.decode_unchecked(raw)
 end
 
 --
