@@ -529,8 +529,15 @@ end
 local function bucket_force_create_impl(first_bucket_id, count)
     local _bucket = box.space._bucket
     box.begin()
+    local limit = consts.BUCKET_CHUNK_SIZE
     for i = first_bucket_id, first_bucket_id + count - 1 do
         _bucket:insert({i, consts.BUCKET.ACTIVE})
+        limit = limit - 1
+        if limit == 0 then
+            box.commit()
+            box.begin()
+            limit = consts.BUCKET_CHUNK_SIZE
+        end
     end
     box.commit()
 end

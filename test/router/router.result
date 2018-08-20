@@ -185,7 +185,7 @@ replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
   message: Bucket 1 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
-vshard.router.bootstrap()
+vshard.router.bootstrap({timeout = 5})
 ---
 - true
 ...

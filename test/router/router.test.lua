@@ -75,7 +75,7 @@ vshard.router.bucket_count()
 --
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
-vshard.router.bootstrap()
+vshard.router.bootstrap({timeout = 5})
 
 -- Second one should produce error
 vshard.router.bootstrap()

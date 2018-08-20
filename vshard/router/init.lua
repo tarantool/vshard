@@ -597,12 +597,12 @@ end
 -- Bootstrap
 --------------------------------------------------------------------------------
 
-local function cluster_bootstrap(router)
+local function cluster_bootstrap(router, opts)
     local replicasets = {}
     for uuid, replicaset in pairs(router.replicasets) do
         table.insert(replicasets, replicaset)
         local count, err = replicaset:callrw('vshard.storage.buckets_count',
-                                             {})
+                                             {}, opts)
         if count == nil then
             return nil, err
         end
@@ -617,7 +617,8 @@ local function cluster_bootstrap(router)
         if replicaset.etalon_bucket_count > 0 then
             local ok, err =
                 replicaset:callrw('vshard.storage.bucket_force_create',
-                                  {bucket_id, replicaset.etalon_bucket_count})
+                                  {bucket_id, replicaset.etalon_bucket_count},
+                                  opts)
             if not ok then
                 return nil, err
             end
