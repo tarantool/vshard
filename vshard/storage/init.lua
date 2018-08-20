@@ -3,6 +3,7 @@ local luri = require('uri')
 local lfiber = require('fiber')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
+local ffi = require('ffi')
 
 local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
@@ -24,9 +25,19 @@ local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
 local reload_evolution = require('vshard.storage.reload_evolution')
+local bucket_ref_new
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
+    ffi.cdef[[
+        struct bucket_ref {
+            uint32_t ro;
+            uint32_t rw;
+            bool rw_lock;
+            bool ro_lock;
+        };
+    ]]
+    bucket_ref_new = ffi.metatype("struct bucket_ref", {})
     --
     -- The module is loaded for the first time.
     --
@@ -116,6 +127,15 @@ if not M then
         -- but its id is not stored here, it means, that its
         -- transfer has failed.
         rebalancer_transfering_buckets = {},
+        -- Map of bucket ro/rw reference counters. These counters
+        -- works like bucket pins, but countable and are not
+        -- persisted. Persistency is not needed since the refs are
+        -- used to keep a bucket during a request execution, but
+        -- on restart evidently each request fails.
+        bucket_refs = {},
+        -- Condition variable fired each time a bucket locked for
+        -- RW refs reaches 0 of the latter.
+        bucket_rw_lock_is_ready_cond = lfiber.cond(),
 
         ------------------------- Reload -------------------------
         -- Version of the loaded module. This number is used on
@@ -519,6 +539,129 @@ local function bucket_check_state(bucket_id, mode)
 end
 
 --
+-- Take Read-Only reference on the bucket identified by
+-- @a bucket_id. Under such reference a bucket can not be deleted
+-- from the storage. Its transfer still can start, but can not
+-- finish until ref == 0.
+-- @param bucket_id Identifier of a bucket to ref.
+--
+-- @retval true The bucket is referenced ok.
+-- @retval nil, error Can not ref the bucket. An error object is
+--         returned via the second value.
+--
+local function bucket_refro(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref then
+        local _, err = bucket_check_state(bucket_id, 'read')
+        if err then
+            return nil, err
+        end
+        ref = bucket_ref_new()
+        ref.ro = 1
+        M.bucket_refs[bucket_id] = ref
+    elseif ref.ro_lock then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
+    elseif ref.ro == 0 and ref.rw == 0 then
+    -- RW is more strict ref than RO so rw != 0 is sufficient to
+    -- take an RO ref.
+        local _, err = bucket_check_state(bucket_id, 'read')
+        if err then
+            return nil, err
+        end
+        ref.ro = 1
+    else
+        ref.ro = ref.ro + 1
+    end
+    return true
+end
+
+--
+-- Remove one RO reference.
+--
+local function bucket_unrefro(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref or ref.ro == 0 then
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
+                                  "no refs", nil)
+    end
+    ref.ro = ref.ro - 1
+    return true
+end
+
+--
+-- Same as bucket_refro, but more strict - the bucket transfer
+-- can not start until a bucket has such refs. And if the bucket
+-- is already scheduled for transfer then it can not take new RW
+-- refs. The rebalancer waits until all RW refs gone and starts
+-- transfer.
+--
+local function bucket_refrw(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref then
+        local _, err = bucket_check_state(bucket_id, 'write')
+        if err then
+            return nil, err
+        end
+        ref = bucket_ref_new()
+        ref.rw = 1
+        M.bucket_refs[bucket_id] = ref
+    elseif ref.rw_lock then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
+    elseif ref.rw == 0 then
+        local _, err = bucket_check_state(bucket_id, 'write')
+        if err then
+            return nil, err
+        end
+        ref.rw = 1
+    else
+        ref.rw = ref.rw + 1
+    end
+    return true
+end
+
+--
+-- Remove one RW reference.
+--
+local function bucket_unrefrw(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref or ref.rw == 0 then
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
+                                  "no refs", nil)
+    end
+    if ref.rw == 1 and ref.rw_lock then
+        ref.rw = 0
+        M.bucket_rw_lock_is_ready_cond:broadcast()
+    else
+        ref.rw = ref.rw - 1
+    end
+    return true
+end
+
+--
+-- Ref/unref shortcuts for an obscure mode.
+--
+
+local function bucket_ref(bucket_id, mode)
+    if mode == 'read' then
+        return bucket_refro(bucket_id)
+    elseif mode == 'write' then
+        return bucket_refrw(bucket_id)
+    else
+        error('Unknown mode')
+    end
+end
+
+local function bucket_unref(bucket_id, mode)
+    if mode == 'read' then
+        return bucket_unrefro(bucket_id)
+    elseif mode == 'write' then
+        return bucket_unrefrw(bucket_id)
+    else
+        error('Unknown mode')
+    end
+end
+
+--
 -- Return information about bucket
 --
 local function bucket_stat(bucket_id)
@@ -894,6 +1037,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return status, lerror.make(err)
     end
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
+    M.bucket_refs[bucket_id].ro_lock = true
     return true
 end
 
@@ -904,11 +1048,30 @@ local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
+    local status, err, ret = bucket_refrw(bucket_id)
+    if not status then
+        return nil, err
+    end
+    -- Ref-unref is used to force ref object creation.
+    bucket_unrefrw(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
     M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination,
-                                   opts)
+    ref.rw_lock = true
+    local deadline = lfiber.clock() + (opts and opts.timeout or 10)
+    while ref.rw ~= 0 do
+        if not M.bucket_rw_lock_is_ready_cond:wait(deadline -
+                                                   lfiber.clock()) then
+            status, ret = pcall(box.error, box.error.TIMEOUT)
+            ret = lerror.make(ret)
+            status = nil
+            goto finish
+        end
+    end
+    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
+::finish::
     M.rebalancer_transfering_buckets[bucket_id] = nil
+    ref.rw_lock = false
     if status then
         if ret then
             M.buckets_to_recovery[bucket_id] = nil
@@ -1021,9 +1184,21 @@ local function gc_bucket_step_by_type(type)
     local sharded_spaces = find_sharded_spaces()
     local empty_buckets = {}
     local limit = consts.BUCKET_CHUNK_SIZE
+    local is_all_collected = true
     for _, bucket in box.space._bucket.index.status:pairs(type) do
+        local bucket_id = bucket.id
+        local ref = M.bucket_refs[bucket_id]
+        if ref then
+            assert(ref.rw == 0)
+            if ref.ro ~= 0 then
+                ref.ro_lock = true
+                is_all_collected = false
+                goto continue
+            end
+            M.bucket_refs[bucket_id] = nil
+        end
         for _, space in pairs(sharded_spaces) do
-            gc_bucket_in_space_xc(space, bucket.id, type)
+            gc_bucket_in_space_xc(space, bucket_id, type)
             limit = limit - 1
             if limit == 0 then
                 lfiber.sleep(0)
@@ -1031,8 +1206,9 @@ local function gc_bucket_step_by_type(type)
             end
         end
         table.insert(empty_buckets, bucket.id)
+::continue::
     end
-    return empty_buckets
+    return empty_buckets, is_all_collected
 end
 
 --
@@ -1105,13 +1281,14 @@ function gc_bucket_f()
         -- Check if no changes in buckets configuration.
         if bucket_generation_collected ~= M.bucket_generation then
             local bucket_generation = M.bucket_generation
-            status, empty_garbage_buckets =
+            local is_sent_collected, is_garbage_collected
+            status, empty_garbage_buckets, is_garbage_collected =
                 pcall(gc_bucket_step_by_type, consts.BUCKET.GARBAGE)
             if not status then
                 err = empty_garbage_buckets
                 goto check_error
             end
-            status, empty_sent_buckets =
+            status, empty_sent_buckets, is_sent_collected =
                 pcall(gc_bucket_step_by_type, consts.BUCKET.SENT)
             if not status then
                 err = empty_sent_buckets
@@ -1125,7 +1302,9 @@ function gc_bucket_f()
                 log.error('Error during garbage collection step: %s', err)
                 goto continue
             end
-            bucket_generation_collected = bucket_generation
+            if is_sent_collected and is_garbage_collected then
+                bucket_generation_collected = bucket_generation
+            end
         end
 
         if lfiber.time() - buckets_for_redirect_ts >=
@@ -1518,16 +1697,17 @@ end
 -- @retval nil, err Error.
 -- @retval values Success.
 local function storage_call(bucket_id, mode, name, args)
-    if mode ~= 'write' and mode ~= 'read' then
-        error('Unknown mode: '..tostring(mode))
+    local ok, err, ret1, ret2, ret3, _ = bucket_ref(bucket_id, mode)
+    if not ok then
+        return ok, err
     end
-
-    local status, err = bucket_check_state(bucket_id, mode)
-    if err then
-        return nil, err
+    ok, ret1, ret2, ret3 = pcall(netbox.self.call, netbox.self, name, args)
+    _, err = bucket_unref(bucket_id, mode)
+    assert(not err)
+    if not ok then
+        ret1 = lerror.make(ret1)
     end
-    -- TODO: implement box.call()
-    return true, netbox.self:call(name, args)
+    return ok, ret1, ret2, ret3
 end
 
 --------------------------------------------------------------------------------
@@ -1710,15 +1890,23 @@ local function storage_buckets_count()
     return  box.space._bucket.index.pk:count()
 end
 
-local function storage_buckets_info()
+local function storage_buckets_info(bucket_id)
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
 
-    for _, bucket in box.space._bucket:pairs() do
-        ibuckets[bucket.id] = {
-            id = bucket.id;
-            status = bucket.status;
-            destination = bucket.destination;
+    for _, bucket in box.space._bucket:pairs({bucket_id}) do
+        local ref = M.bucket_refs[bucket.id]
+        local desc = {
+            id = bucket.id,
+            status = bucket.status,
+            destination = bucket.destination,
         }
+        if ref then
+            if ref.ro ~= 0 then desc.ref_ro = ref.ro end
+            if ref.rw ~= 0 then desc.ref_rw = ref.rw end
+            if ref.ro_lock then desc.ro_lock = ref.ro_lock end
+            if ref.rw_lock then desc.rw_lock = ref.rw_lock end
+        end
+        ibuckets[bucket.id] = desc
     end
 
     return ibuckets
@@ -1938,6 +2126,12 @@ return {
     bucket_stat = bucket_stat,
     bucket_pin = bucket_pin,
     bucket_unpin = bucket_unpin,
+    bucket_ref = bucket_ref,
+    bucket_unref = bucket_unref,
+    bucket_refro = bucket_refro,
+    bucket_refrw = bucket_refrw,
+    bucket_unrefro = bucket_unrefro,
+    bucket_unrefrw = bucket_unrefrw,
     bucket_delete_garbage = bucket_delete_garbage,
     garbage_collector_wakeup = garbage_collector_wakeup,
     rebalancer_wakeup = rebalancer_wakeup,

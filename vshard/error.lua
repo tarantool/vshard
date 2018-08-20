@@ -111,6 +111,11 @@ local error_message_template = {
         msg = 'Router with name %s already exists',
         args = {'name'},
     },
+    [22] = {
+        name = 'BUCKET_IS_LOCKED',
+        msg = 'Bucket %d is locked',
+        args = {'bucket_id'},
+    }
 }
 
 --

@@ -28,4 +28,7 @@ function create_simple_space(...)
 		       {parts = {{2, 'unsigned'}}, unique = false})
 end
 
+finish_refs = false
+function make_ref() while not finish_refs do fiber.sleep(0.01) end end
+
 require('storage_template')

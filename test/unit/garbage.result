@@ -272,6 +272,7 @@ gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 - - 5
   - 6
   - 200
+- true
 ...
 #s2:select{}
 ---
@@ -284,6 +285,7 @@ gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
 - - 4
+- true
 ...
 s2:select{}
 ---
@@ -306,10 +308,12 @@ gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 - - 5
   - 6
   - 200
+- true
 ...
 gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
 - - 4
+- true
 ...
 #s2:select{}
 ---

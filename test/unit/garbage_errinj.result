@@ -138,10 +138,12 @@ gc_bucket_step_by_type = vshard.storage.internal.gc_bucket_step_by_type
 gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
 - - 4
+- true
 ...
 gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 ---
 - - 5
+- true
 ...
 --
 -- Test _bucket generation change during garbage buckets search.
@@ -194,11 +196,13 @@ _bucket:select{4}
 gc_bucket_step_by_type(vshard.consts.BUCKET.SENT)
 ---
 - []
+- true
 ...
 gc_bucket_step_by_type(vshard.consts.BUCKET.GARBAGE)
 ---
 - - 4
   - 5
+- true
 ...
 #s:select{}
 ---

@@ -1,0 +1,296 @@
+test_run = require('test_run').new()
+---
+...
+REPLICASET_1 = { 'box_1_a', 'box_1_b' }
+---
+...
+REPLICASET_2 = { 'box_2_a', 'box_2_b' }
+---
+...
+test_run:create_cluster(REPLICASET_1, 'rebalancer')
+---
+...
+test_run:create_cluster(REPLICASET_2, 'rebalancer')
+---
+...
+util = require('util')
+---
+...
+util.wait_master(test_run, REPLICASET_1, 'box_1_a')
+---
+...
+util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
+---
+...
+util.push_rs_filters(test_run)
+---
+...
+--
+-- gh-122: bucket_ref/refro/refrw/unref... is an API to do not
+-- allow bucket transfer or GC during a request execution.
+--
+_ = test_run:switch('box_1_a')
+---
+...
+box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
+---
+- [1, 'active']
+...
+vshard.storage.bucket_refro(1)
+---
+- true
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_ro: 1
+    id: 1
+...
+vshard.storage.bucket_refrw(1)
+---
+- true
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_rw: 1
+    ref_ro: 1
+    id: 1
+...
+vshard.storage.bucket_unrefro(1)
+---
+- true
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_rw: 1
+    id: 1
+...
+-- When an RW ref exists, RO is taken with no _bucket lookup.
+vshard.storage.bucket_refro(1)
+---
+- true
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_rw: 1
+    ref_ro: 1
+    id: 1
+...
+vshard.storage.bucket_unrefro(1)
+---
+- true
+...
+vshard.storage.bucket_unrefrw(1)
+---
+- true
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    id: 1
+...
+-- Test locks. For this open some RO requests and then send the
+-- bucket. During and after sending new RW refs are not allowed.
+-- RO requests are not allowed only after successfull transfer.
+-- What is more, a bucket under RO ref can not be deleted.
+f1 = fiber.create(function() vshard.storage.call(1, 'read', 'make_ref') end)
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_ro: 1
+    id: 1
+...
+_ = test_run:switch('box_2_a')
+---
+...
+vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = true
+---
+...
+_ = test_run:switch('box_1_a')
+---
+...
+vshard.storage.bucket_send(1, util.replicasets[2])
+---
+- null
+- type: ClientError
+  code: 32
+  message: Timeout exceeded
+  trace:
+  - file: '[C]'
+    line: 4294967295
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: sending
+    ref_ro: 1
+    destination: <replicaset_2>
+    id: 1
+...
+vshard.storage.bucket_ref(1, 'write')
+---
+- null
+- bucket_id: 1
+  code: 7
+  type: ShardingError
+  name: TRANSFER_IS_IN_PROGRESS
+  message: Bucket 1 is transferring to replicaset <replicaset_2>
+  destination: <replicaset_2>
+...
+vshard.storage.bucket_unref(1, 'write') -- Error, no refs.
+---
+- null
+- bucket_id: 1
+  reason: no refs
+  code: 1
+  type: ShardingError
+  message: 'Cannot perform action with bucket 1, reason: no refs'
+  name: WRONG_BUCKET
+...
+vshard.storage.bucket_ref(1, 'read')
+---
+- true
+...
+vshard.storage.bucket_unref(1, 'read')
+---
+- true
+...
+-- Force GC to take an RO lock on the bucket now.
+vshard.storage.garbage_collector_wakeup()
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: sending
+    ref_ro: 1
+    destination: <replicaset_2>
+    id: 1
+...
+while box.space._bucket:get{1}.status ~= vshard.consts.BUCKET.GARBAGE do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+---
+...
+vshard.storage.garbage_collector_wakeup()
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    ro_lock: true
+    id: 1
+    status: garbage
+    destination: <replicaset_2>
+    ref_ro: 1
+...
+vshard.storage.bucket_refro(1)
+---
+- null
+- bucket_id: 1
+  code: 22
+  type: ShardingError
+  message: Bucket 1 is locked
+  name: BUCKET_IS_LOCKED
+...
+finish_refs = true
+---
+...
+while f1:status() ~= 'dead' do fiber.sleep(0.01) end
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: garbage
+    ro_lock: true
+    destination: <replicaset_2>
+    id: 1
+...
+while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+---
+...
+_ = test_run:switch('box_2_a')
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    id: 1
+...
+--
+-- Test that when bucket_send waits for rw == 0, it is waked up
+-- immediately once it happened.
+--
+f1 = fiber.create(function() vshard.storage.call(1, 'write', 'make_ref') end)
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    ref_rw: 1
+    id: 1
+...
+f2 = fiber.create(function() vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3}) end)
+---
+...
+while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
+---
+...
+fiber.sleep(0.2)
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    rw_lock: true
+    id: 1
+    ref_rw: 1
+...
+finish_refs = true
+---
+...
+while vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: sent
+    ro_lock: true
+    destination: <replicaset_1>
+    id: 1
+...
+_ = test_run:switch('box_1_a')
+---
+...
+vshard.storage.buckets_info(1)
+---
+- 1:
+    status: active
+    id: 1
+...
+_ = test_run:cmd("switch default")
+---
+...
+test_run:drop_cluster(REPLICASET_2)
+---
+...
+test_run:drop_cluster(REPLICASET_1)
+---
+...

@@ -340,6 +340,9 @@ while _bucket:get{91}.status ~= vshard.consts.BUCKET.SENT do fiber.sleep(0.01) e
 while _bucket:get{91} ~= nil do fiber.sleep(0.1) end
 ---
 ...
+wait_rebalancer_state("The cluster is balanced ok", test_run)
+---
+...
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 ---
 - 100

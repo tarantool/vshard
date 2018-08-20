@@ -276,7 +276,8 @@ local function router_call(router, bucket_id, mode, func, args, opts)
                 end
             end
             err = call_status
-            if err.code == lerror.code.WRONG_BUCKET then
+            if err.code == lerror.code.WRONG_BUCKET or
+               err.code == lerror.code.BUCKET_IS_LOCKED then
                 bucket_reset(router, bucket_id)
                 if err.destination then
                     replicaset = router.replicasets[err.destination]

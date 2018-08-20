@@ -164,6 +164,7 @@ vshard.storage.rebalancer_wakeup()
 --
 while _bucket:get{91}.status ~= vshard.consts.BUCKET.SENT do fiber.sleep(0.01) end
 while _bucket:get{91} ~= nil do fiber.sleep(0.1) end
+wait_rebalancer_state("The cluster is balanced ok", test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 _bucket.index.status:min({vshard.consts.BUCKET.ACTIVE})
 _bucket.index.status:max({vshard.consts.BUCKET.ACTIVE})

@@ -96,6 +96,50 @@ vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
 fiber.sleep(0.1)
 box.space._bucket:get{101}
 
+--
+-- gh-122 and gh-73: a bucket can be transferred not completely,
+-- if it has a vinyl space, which has an active transaction before
+-- the transfer is started.
+--
+_ = test_run:switch('box_2_a')
+finish_long_thing = false
+test_run:cmd("setopt delimiter ';'")
+function do_long_thing()
+    box.begin()
+    box.space.test3:replace{100, 1, 'new'}
+    while not finish_long_thing do
+        fiber.sleep(0.01)
+    end
+    box.commit()
+end;
+test_run:cmd("setopt delimiter ''");
+ret = nil
+err = nil
+f = fiber.create(function() vshard.storage.call(1, 'write', 'do_long_thing') end)
+while f:status() ~= 'suspended' do fiber.sleep(0.01) end
+vshard.storage.buckets_info(1)
+f1 = fiber.create(function() ret, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3}) end)
+while f1:status() ~= 'suspended' do fiber.sleep(0.01) end
+vshard.storage.buckets_info(1)
+vshard.storage.bucket_refrw(1)
+while f1:status() ~= 'dead' do fiber.sleep(0.01) end
+ret, err
+finish_long_thing = true
+while f:status() ~= 'dead' do fiber.sleep(0.01) end
+vshard.storage.buckets_info(1)
+box.space.test3:select{100}
+_ = test_run:switch('box_1_a')
+box.space.test3:select{100}
+-- Now the bucket is unreferenced and can be transferred.
+_ = test_run:switch('box_2_a')
+vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3})
+vshard.storage.buckets_info(1)
+while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+vshard.storage.buckets_info(1)
+_ = test_run:switch('box_1_a')
+box.space._bucket:get{1}
+box.space.test3:select{100}
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
