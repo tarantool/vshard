@@ -262,7 +262,10 @@ local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    replicaset_connect_master(replicaset)
+    local conn, err = replicaset_connect_master(replicaset)
+    if not conn then
+        return nil, err
+    end
     local timeout = opts and opts.timeout or replicaset.master.net_timeout
     local net_status, storage_status, retval, error_object =
         replica_call(replicaset.master, func, args, timeout)
@@ -305,7 +308,10 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
         if replica and replica:is_connected() then
             conn = replica.conn
         else
-            conn = replicaset_connect_master(replicaset)
+            conn, error_object = replicaset_connect_master(replicaset)
+            if not conn then
+                return nil, error_object
+            end
             replica = replicaset.master
         end
         net_status, storage_status, retval, error_object =
