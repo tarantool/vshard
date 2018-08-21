@@ -32,9 +32,8 @@ util.push_rs_filters(test_run)
 _ = test_run:switch('storage_2_a')
 ---
 ...
-box.error.injection.set("ERRINJ_WAL_DELAY", true)
+vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 ---
-- ok
 ...
 _ = test_run:switch('storage_1_a')
 ---
@@ -46,7 +45,7 @@ _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[2]}
 ---
 - [1, 'active', '<replicaset_2>']
 ...
-ret, err = vshard.storage.bucket_send(1, util.replicasets[2])
+ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
 ---
 ...
 ret, err.code
@@ -64,9 +63,8 @@ _bucket:get{1}
 _ = test_run:switch('storage_2_a')
 ---
 ...
-box.error.injection.set("ERRINJ_WAL_DELAY", false)
+vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
 ---
-- ok
 ...
 _bucket = box.space._bucket
 ---

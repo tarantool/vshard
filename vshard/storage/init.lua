@@ -59,6 +59,7 @@ if not M then
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
             ERRINJ_LONG_RECEIVE = false,
+            ERRINJ_LAST_RECEIVE_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
         },
         -- This counter is used to restart background fibers with
@@ -281,23 +282,26 @@ end
 -- Check if a local bucket can be deleted.
 --
 local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
-    return remote_bucket and bucket_is_writable(remote_bucket)
+    if not remote_bucket then
+        return false
+    end
+    if bucket_is_writable(remote_bucket) then
+        return true
+    end
+    if remote_bucket.status == consts.BUCKET.SENDING and
+       local_bucket.status == consts.BUCKET.RECEIVING then
+        assert(not remote_bucket.is_transfering)
+        assert(not M.rebalancer_transfering_buckets[local_bucket.id])
+        return true
+    end
+    return false
 end
 
 --
 -- Check if a local bucket can become active.
 --
 local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
-    if not remote_bucket or bucket_is_garbage(remote_bucket) then
-        return true
-    end
-    if remote_bucket.status == consts.BUCKET.RECEIVING and
-       not remote_bucket.is_transfering and
-       local_bucket.status == consts.BUCKET.SENDING then
-        assert(not M.rebalancer_transfering_buckets[local_bucket.id])
-        return true
-    end
-    return false
+    return not remote_bucket or bucket_is_garbage(remote_bucket)
 end
 
 --
@@ -346,6 +350,18 @@ local function recovery_step()
         -- not be used to recovery anything. Try later.
         if not remote_bucket and (not err or err.type ~= 'ShardingError' or
                                   err.code ~= lerror.code.WRONG_BUCKET) then
+            goto continue
+        end
+        -- Do nothing until the bucket on both sides stopped
+        -- transferring.
+        if remote_bucket and remote_bucket.is_transfering then
+            goto continue
+        end
+        -- It is possible that during lookup a new request arrived
+        -- which finished the transfer.
+        bucket = _bucket:get{bucket_id}
+        if not bucket or not bucket_is_transfer_in_progress(bucket) then
+            table.insert(recovered, bucket_id)
             goto continue
         end
         if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
@@ -591,7 +607,14 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     local _bucket = box.space._bucket
     local b = _bucket:get{bucket_id}
     local recvg = consts.BUCKET.RECEIVING
+    local is_last = opts and opts.is_last
     if not b then
+        if is_last then
+            local msg = 'last message is received, but the bucket does not '..
+                        'exist anymore'
+            return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
+                                      from)
+        end
         _bucket:insert({bucket_id, recvg, from})
     elseif b.status ~= recvg then
         local msg = string.format("bucket state is changed: was receiving, "..
@@ -630,7 +653,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         box.commit()
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
-    if opts and opts.is_last then
+    if is_last then
         _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
         if M.errinj.ERRINJ_LONG_RECEIVE then
             box.error(box.error.TIMEOUT)
@@ -643,6 +666,9 @@ end
 -- Exception safe version of bucket_recv_xc.
 --
 local function bucket_recv(bucket_id, from, data, opts)
+    while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
+        fiber.sleep(0.01)
+    end
     M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
     local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
@@ -851,13 +877,20 @@ local function bucket_send_xc(bucket_id, destination, opts)
         end
         table.insert(data, {space.id, space_data})
     end
-    status, err =
-        replicaset:callrw('vshard.storage.bucket_recv',
-                          {bucket_id, uuid, data, {is_last = true}}, opts)
+    status, err = replicaset:callrw('vshard.storage.bucket_recv',
+                                    {bucket_id, uuid, data}, opts)
     if not status then
-        if err.type == 'ShardingError' then
-            _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
-        end
+        _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        return status, lerror.make(err)
+    end
+    -- Always send at least two messages to prevent the case, when
+    -- a bucket is sent, hung in the network. Then it is recovered
+    -- to active on the source, and then the message arrives and
+    -- the same bucket is activated on the destination.
+    status, err = replicaset:callrw('vshard.storage.bucket_recv',
+                                    {bucket_id, uuid, {}, {is_last = true}},
+                                    opts)
+    if not status then
         return status, lerror.make(err)
     end
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})

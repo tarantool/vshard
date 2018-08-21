@@ -35,7 +35,7 @@ _bucket:select{}
 _ = test_run:switch('storage_2_a')
 _bucket:select{}
 _ = test_run:switch('storage_1_a')
-while _bucket:count() ~= 1 do fiber.sleep(0.1) end
+while _bucket:count() ~= 0 do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 
 --
 -- Test a case, when a bucket is sending on one replicaset,
@@ -44,17 +44,14 @@ while _bucket:count() ~= 1 do fiber.sleep(0.1) end
 _ = test_run:cmd('stop server storage_2_a')
 _ = test_run:cmd('start server storage_2_a')
 _ = test_run:switch('storage_2_a')
-vshard.storage.recovery_wakeup()
 _bucket = box.space._bucket
-while _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE}) ~= 2 do fiber.sleep(0.1) end
-_ = test_run:switch('storage_1_a')
-vshard.storage.recovery_wakeup()
-while _bucket:count() ~= 0 do fiber.sleep(0.1) end
+while _bucket:count() ~= 2 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) end
 
 --
 -- Test a case, when a destination is down. The recovery fiber
 -- must restore buckets, when the destination is up.
 --
+_ = test_run:switch('storage_1_a')
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _ = test_run:switch('storage_2_a')
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}

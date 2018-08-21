@@ -54,6 +54,7 @@ test_run:switch('storage_1_a')
 while box.space._bucket:get{bucket_id_to_move}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2])
 test_run:switch('storage_2_a')
+box.space._bucket:get{bucket_id_to_move}
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 -- Check info() does not fail.
 vshard.storage.info() ~= nil
@@ -76,7 +77,13 @@ box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_2_a')
 vshard.storage.rebalancer_enable()
 wait_rebalancer_state('Rebalance routes are sent', test_run)
-wait_rebalancer_state('The cluster is balanced ok', test_run)
+-- Test that the rebalancing is started. But each bucket raises
+-- an error because in the old version it was sent in single
+-- message, but in the newer ones in at least 2 messages.
+while not test_run:grep_log('storage_1_a', 'Bucket 1 already exists') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
+while not test_run:grep_log('storage_1_a', 'Bucket 2 already exists') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
+box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
+test_run:switch('storage_1_a')
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 
 test_run:switch('default')

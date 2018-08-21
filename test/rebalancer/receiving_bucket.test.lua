@@ -71,6 +71,31 @@ vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
 _ = test_run:switch('box_2_a')
 box.space._bucket:get{1}
 
+--
+-- gh-149: a bucket can be activated on two storages in the
+-- following case: bucket_send sends a last message, it hangs in
+-- the network. Bucket_send catches timeout error. Recovery takes
+-- the bucket, gets from the destination its status: receiving and
+-- not transferring now. Then the bucket is activated on the
+-- source again. But now the first message reaches the destination
+-- and activates the bucket here as well.
+--
+_ = test_run:switch('box_1_a')
+vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
+_ = test_run:switch('box_2_a')
+_, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
+err.trace = nil
+err
+box.space._bucket:get{101}
+while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
+box.space._bucket:get{101}
+_ = test_run:switch('box_1_a')
+box.space._bucket:get{101}
+while _bucket:get{101} do fiber.sleep(0.01) end
+vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
+fiber.sleep(0.1)
+box.space._bucket:get{101}
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
