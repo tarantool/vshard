@@ -275,7 +275,7 @@ uris
 ...
 box.cfg.replication
 ---
-- []
+- - storage:storage@127.0.0.1:3301
 ...
 _ = test_run:switch('storage_2_a')
 ---
@@ -300,7 +300,8 @@ uris
 ...
 box.cfg.replication
 ---
-- - storage:storage@127.0.0.1:3304
+- - storage:storage@127.0.0.1:3303
+  - storage:storage@127.0.0.1:3304
 ...
 _ = test_run:switch('storage_2_b')
 ---
@@ -325,7 +326,8 @@ uris
 ...
 box.cfg.replication
 ---
-- []
+- - storage:storage@127.0.0.1:3303
+  - storage:storage@127.0.0.1:3304
 ...
 _ = test_run:switch('storage_3_a')
 ---
@@ -350,7 +352,7 @@ uris
 ...
 box.cfg.replication
 ---
-- []
+- - storage:storage@127.0.0.1:3306
 ...
 _ = test_run:switch('router_1')
 ---

@@ -19,6 +19,7 @@ _ = test_run:cmd('start server storage_1_b')
 _ = test_run:switch('storage_1_b')
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
+cfg.replication_connect_quorum = 1
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
 box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
 box.space.test:insert{1, 1, 2}

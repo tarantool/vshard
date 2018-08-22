@@ -1791,9 +1791,11 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         -- If a master role of the replica is not changed, then
         -- 'read_only' can be set right here.
         box_cfg.listen = box_cfg.listen or this_replica.uri
-        if box_cfg.replication == nil and this_replicaset.master
-           and not is_master then
-            box_cfg.replication = {this_replicaset.master.uri}
+        if not box_cfg.replication then
+            box_cfg.replication = {}
+            for uuid, replica in pairs(this_replicaset.replicas) do
+                table.insert(box_cfg.replication, replica.uri)
+            end
         else
             box_cfg.replication = {}
         end

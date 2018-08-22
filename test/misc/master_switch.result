@@ -57,6 +57,9 @@ cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 ---
 ...
+cfg.replication_connect_quorum = 1
+---
+...
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
 ---
 ...
