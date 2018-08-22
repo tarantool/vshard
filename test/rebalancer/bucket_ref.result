@@ -268,13 +268,8 @@ finish_refs = true
 while vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 ---
 ...
-vshard.storage.buckets_info(1)
+while box.space._bucket:get{1} do fiber.sleep(0.01) end
 ---
-- 1:
-    status: sent
-    ro_lock: true
-    destination: <replicaset_1>
-    id: 1
 ...
 _ = test_run:switch('box_1_a')
 ---

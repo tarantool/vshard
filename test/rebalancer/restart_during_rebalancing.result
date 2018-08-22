@@ -295,10 +295,6 @@ vshard.storage.info().bucket
   pinned: 0
   sending: 0
 ...
-vshard.storage.internal.buckets_to_recovery
----
-- []
-...
 check_consistency()
 ---
 - true
@@ -315,10 +311,6 @@ vshard.storage.info().bucket
   garbage: 0
   pinned: 0
   sending: 0
-...
-vshard.storage.internal.buckets_to_recovery
----
-- []
 ...
 check_consistency()
 ---
@@ -337,10 +329,6 @@ vshard.storage.info().bucket
   pinned: 0
   sending: 0
 ...
-vshard.storage.internal.buckets_to_recovery
----
-- []
-...
 check_consistency()
 ---
 - true
@@ -357,10 +345,6 @@ vshard.storage.info().bucket
   garbage: 0
   pinned: 0
   sending: 0
-...
-vshard.storage.internal.buckets_to_recovery
----
-- []
 ...
 check_consistency()
 ---

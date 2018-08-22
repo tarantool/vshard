@@ -75,7 +75,7 @@ fiber.sleep(0.2)
 vshard.storage.buckets_info(1)
 finish_refs = true
 while vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
-vshard.storage.buckets_info(1)
+while box.space._bucket:get{1} do fiber.sleep(0.01) end
 _ = test_run:switch('box_1_a')
 vshard.storage.buckets_info(1)
 

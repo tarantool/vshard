@@ -100,10 +100,6 @@ if not M then
         collect_lua_garbage = nil,
 
         -------------------- Bucket recovery ---------------------
-        -- Bucket identifiers which are not active and are not being
-        -- sent - their status is unknown. Their state must be checked
-        -- periodically in recovery fiber.
-        buckets_to_recovery = {},
         recovery_fiber = nil,
 
         ----------------------- Rebalancer -----------------------
@@ -325,39 +321,22 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
 end
 
 --
--- Check status of each bucket scheduled for recovery. Resolve
--- status where possible.
+-- Check status of each transferring bucket. Resolve status where
+-- possible.
 --
-local function recovery_step()
-    -- Buckets to became garbage. It is such buckets, that they
-    -- are in 'sending' state here, but 'active' on another
-    -- replicaset.
-    local garbage = {}
-    -- Bucket becames active, if it is sending here and is not
-    -- active on destination replicaset.
-    local active = {}
-    -- If a bucket status is resolved, it is deleted from
-    -- buckets_to_recovery map.
-    local recovered = {}
+local function recovery_step_by_type(type)
     local _bucket = box.space._bucket
     local is_empty = true
-    for bucket_id, _ in pairs(M.buckets_to_recovery) do
+    for _, bucket in _bucket.index.status:pairs(type) do
+        local bucket_id = bucket.id
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
         end
         if is_empty then
-            log.info('Starting buckets recovery step')
+            log.info('Starting %s buckets recovery step', type)
         end
         is_empty = false
-        local bucket = _bucket:get{bucket_id}
-        if not bucket or not bucket_is_transfer_in_progress(bucket) then
-            -- Possibly, a bucket was deleted or recovered by
-            -- an admin. Or recovery_f started not after
-            -- bootstrap, but after master change - in such a case
-            -- there can be receiving buckets, which are ok.
-            table.insert(recovered, bucket_id)
-            goto continue
-        end
+        assert(bucket_is_transfer_in_progress(bucket))
         local destination = M.replicasets[bucket.destination]
         if not destination or not destination.master then
             -- No replicaset master for a bucket. Wait until it
@@ -381,33 +360,17 @@ local function recovery_step()
         -- which finished the transfer.
         bucket = _bucket:get{bucket_id}
         if not bucket or not bucket_is_transfer_in_progress(bucket) then
-            table.insert(recovered, bucket_id)
             goto continue
         end
         if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
-            table.insert(recovered, bucket_id)
-            table.insert(garbage, bucket_id)
+            _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.GARBAGE}})
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
-            table.insert(recovered, bucket_id)
-            table.insert(active, bucket_id)
+            _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
         end
 ::continue::
     end
     if not is_empty then
         log.info('Finish bucket recovery step')
-    end
-    if #active > 0 or #garbage > 0 then
-        box.begin()
-        for _, id in pairs(active) do
-            _bucket:update({id}, {{'=', 2, consts.BUCKET.ACTIVE}})
-        end
-        for _, id in pairs(garbage) do
-            _bucket:update({id}, {{'=', 2, consts.BUCKET.GARBAGE}})
-        end
-        box.commit()
-    end
-    for _, id in pairs(recovered) do
-        M.buckets_to_recovery[id] = nil
     end
 end
 
@@ -422,21 +385,16 @@ end
 --
 local function recovery_f()
     local module_version = M.module_version
-    local _bucket = box.space._bucket
-    M.buckets_to_recovery = {}
-    for _, bucket in _bucket.index.status:pairs({consts.BUCKET.SENDING}) do
-        M.buckets_to_recovery[bucket.id] = true
-    end
-    for _, bucket in _bucket.index.status:pairs({consts.BUCKET.RECEIVING}) do
-        M.buckets_to_recovery[bucket.id] = true
-    end
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
-        local ok, err = pcall(recovery_step)
+        local ok, err = pcall(recovery_step_by_type, consts.BUCKET.SENDING)
         if not ok then
-            box.rollback()
-            log.error('Error during buckets recovery: %s', err)
+            log.error('Error during sending buckets recovery: %s', err)
+        end
+        ok, err = pcall(recovery_step_by_type, consts.BUCKET.RECEIVING)
+        if not ok then
+            log.error('Error during receiving buckets recovery: %s', err)
         end
         lfiber.sleep(consts.RECOVERY_INTERVAL)
     end
@@ -812,15 +770,11 @@ local function bucket_recv(bucket_id, from, data, opts)
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         fiber.sleep(0.01)
     end
-    M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
     local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
     M.rebalancer_transfering_buckets[bucket_id] = nil
     if status then
         if ret then
-            if opts and opts.is_last then
-                M.buckets_to_recovery[bucket_id] = nil
-            end
             return ret
         end
     else
@@ -1055,7 +1009,6 @@ local function bucket_send(bucket_id, destination, opts)
     -- Ref-unref is used to force ref object creation.
     bucket_unrefrw(bucket_id)
     local ref = M.bucket_refs[bucket_id]
-    M.buckets_to_recovery[bucket_id] = true
     M.rebalancer_transfering_buckets[bucket_id] = true
     ref.rw_lock = true
     local deadline = lfiber.clock() + (opts and opts.timeout or 10)
@@ -1074,7 +1027,6 @@ local function bucket_send(bucket_id, destination, opts)
     ref.rw_lock = false
     if status then
         if ret then
-            M.buckets_to_recovery[bucket_id] = nil
             return ret
         end
     else

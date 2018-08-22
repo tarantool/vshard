@@ -120,19 +120,15 @@ util.check_loading_result()
 
 test_run:switch('fullbox_1_a')
 vshard.storage.info().bucket
-vshard.storage.internal.buckets_to_recovery
 check_consistency()
 test_run:switch('fullbox_2_a')
 vshard.storage.info().bucket
-vshard.storage.internal.buckets_to_recovery
 check_consistency()
 test_run:switch('fullbox_3_a')
 vshard.storage.info().bucket
-vshard.storage.internal.buckets_to_recovery
 check_consistency()
 test_run:switch('fullbox_4_a')
 vshard.storage.info().bucket
-vshard.storage.internal.buckets_to_recovery
 check_consistency()
 
 test_run:switch('default')

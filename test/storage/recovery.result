@@ -54,9 +54,9 @@ _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
 ---
 ...
-_bucket:replace{2, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}
+_bucket:replace{2, vshard.consts.BUCKET.ACTIVE}
 ---
-- [2, 'active', '<replicaset_1>']
+- [2, 'active']
 ...
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
 ---
@@ -87,7 +87,7 @@ _ = test_run:switch('storage_2_a')
 ...
 _bucket:select{}
 ---
-- - [2, 'active', '<replicaset_1>']
+- - [2, 'active']
   - [3, 'sending', '<replicaset_1>']
 ...
 _ = test_run:switch('storage_1_a')
@@ -129,9 +129,9 @@ _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _ = test_run:switch('storage_2_a')
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
 ---
-- [1, 'active', '<replicaset_1>']
+- [1, 'active']
 ...
 _ = test_run:switch('default')
 ---
@@ -180,9 +180,9 @@ _bucket = box.space._bucket
 ...
 _bucket:select{}
 ---
-- - [1, 'active', '<replicaset_1>']
-  - [2, 'active', '<replicaset_1>']
-  - [3, 'active', '<replicaset_1>']
+- - [1, 'active']
+  - [2, 'active']
+  - [3, 'active']
 ...
 --
 -- Test a case when a bucket is sending in one place and garbage

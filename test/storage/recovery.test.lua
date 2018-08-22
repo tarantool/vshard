@@ -23,7 +23,7 @@ _bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]}
 
 _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
-_bucket:replace{2, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}
+_bucket:replace{2, vshard.consts.BUCKET.ACTIVE}
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
 
 _ = test_run:cmd('stop server storage_1_a')
@@ -54,7 +54,7 @@ while _bucket:count() ~= 2 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) 
 _ = test_run:switch('storage_1_a')
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _ = test_run:switch('storage_2_a')
-_bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[1]}
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
 _ = test_run:switch('default')
 _ = test_run:cmd('stop server storage_2_a')
 _ = test_run:cmd('stop server storage_1_a')

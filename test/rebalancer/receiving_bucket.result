@@ -233,7 +233,7 @@ while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard
 ...
 box.space._bucket:get{101}
 ---
-- [101, 'active', '<replicaset_1>']
+- [101, 'active']
 ...
 _ = test_run:switch('box_1_a')
 ---
