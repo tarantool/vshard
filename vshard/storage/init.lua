@@ -1748,15 +1748,14 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
             for uuid, replica in pairs(this_replicaset.replicas) do
                 table.insert(box_cfg.replication, replica.uri)
             end
-        else
-            box_cfg.replication = {}
         end
         if was_master == is_master then
             box_cfg.read_only = not is_master
         end
         if type(box.cfg) == 'function' then
-            box_cfg.instance_uuid = this_replica.uuid
-            box_cfg.replicaset_uuid = this_replicaset.uuid
+            box_cfg.instance_uuid = box_cfg.instance_uuid or this_replica.uuid
+            box_cfg.replicaset_uuid = box_cfg.replicaset_uuid or
+                                      this_replicaset.uuid
         else
             local info = box.info
             if this_replica_uuid ~= info.uuid then
