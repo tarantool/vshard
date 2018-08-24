@@ -858,7 +858,9 @@ end
 -- a reset of read_only.
 --
 local function local_on_master_disable_abort()
-    box.cfg{read_only = false}
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg{read_only = false}
+    end
 end
 
 --
@@ -868,8 +870,10 @@ end
 --
 local function local_on_master_disable_prepare()
     log.info("Resigning from the replicaset master role...")
-    box.cfg({read_only = true})
-    sync(M.sync_timeout)
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = true})
+        sync(M.sync_timeout)
+    end
 end
 
 --
@@ -897,7 +901,9 @@ end
 -- is a set read_only back to true.
 --
 local function local_on_master_enable_abort()
-    box.cfg({read_only = true})
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = true})
+    end
 end
 
 --
@@ -915,7 +921,9 @@ end
 -- instance during configuration
 --
 local function local_on_master_enable()
-    box.cfg({read_only = false})
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = false})
+    end
     M._on_master_enable:run()
     -- Start background process to collect garbage.
     M.collect_bucket_garbage_fiber =
@@ -1749,7 +1757,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
                 table.insert(box_cfg.replication, replica.uri)
             end
         end
-        if was_master == is_master then
+        if was_master == is_master and box_cfg.read_only == nil then
             box_cfg.read_only = not is_master
         end
         if type(box.cfg) == 'function' then
