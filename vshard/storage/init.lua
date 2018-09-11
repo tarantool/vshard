@@ -693,7 +693,7 @@ end
 -- @param bucket_id Bucket to receive.
 -- @param from Source UUID.
 -- @param data Bucket data in the format:
---        [{space_id, [space_tuples]}, ...].
+--        [{space_name, [space_tuples]}, ...].
 -- @param opts Options. Now the only possible option is 'is_last'.
 --        It is set to true when the data portion is last and the
 --        bucket can be activated here.
@@ -726,13 +726,13 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     local bucket_generation = M.bucket_generation
     local limit = consts.BUCKET_CHUNK_SIZE
     for _, row in ipairs(data) do
-        local space_id, space_data = row[1], row[2]
-        local space = box.space[space_id]
+        local space_name, space_data = row[1], row[2]
+        local space = box.space[space_name]
         if space == nil then
             -- Tarantool doesn't provide API to create box.error
             -- objects before 1.10.
             local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
-                                      space_id)
+                                      space_name)
             return nil, lerror.box(boxerror)
         end
         box.begin()
@@ -833,7 +833,7 @@ local function bucket_collect(bucket_id)
     for k, space in pairs(spaces) do
         assert(space.index[idx] ~= nil)
         local space_data = space.index[idx]:select({bucket_id})
-        table.insert(data, {space.id, space_data})
+        table.insert(data, {space.name, space_data})
     end
     return data
 end
