@@ -434,6 +434,22 @@ vshard.router.route(1):callro('echo', {'some_data'})
 -- object.
 vshard.router.static:route(1):callro('echo', {'some_data'})
 
+-- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
+cfg = {sharding = require('localcfg').sharding}
+vshard.router.cfg(cfg)
+vshard.router.internal.errinj.ERRINJ_MULTIPLE_CFG = 0
+c = fiber.channel(2)
+f = function()
+    fiber.create(function()
+        local status, err = pcall(vshard.router.cfg, cfg)
+        c:put(status and true or false)
+    end)
+end
+f()
+f()
+c:get()
+c:get()
+vshard.router.internal.errinj.ERRINJ_MULTIPLE_CFG = nil
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 

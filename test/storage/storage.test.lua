@@ -182,6 +182,22 @@ util.has_same_fields(old_internal, vshard.storage.internal)
 _, rs = next(vshard.storage.internal.replicasets)
 rs:callro('echo', {'some_data'})
 
+-- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
+_ = test_run:switch("storage_1_a")
+vshard.storage.internal.errinj.ERRINJ_MULTIPLE_CFG = 0
+c = fiber.channel(2)
+f = function()
+    fiber.create(function()
+        local status, err = pcall(vshard.storage.cfg, cfg, box.info.uuid)
+        c:put(status and true or false)
+    end)
+end
+f()
+f()
+c:get()
+c:get()
+vshard.storage.internal.errinj.ERRINJ_MULTIPLE_CFG = nil
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

@@ -48,6 +48,8 @@ if not M then
         ---------------- Common module attributes ----------------
         -- The last passed configuration.
         current_cfg = nil,
+        -- Fiber channel as the locker to prevent multiple config.
+        cfg_lock = lfiber.channel(1),
         --
         -- All known replicasets used for bucket re-balancing.
         -- See format in replicaset.lua.
@@ -66,6 +68,7 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_MULTIPLE_CFG = nil,
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
@@ -1843,6 +1846,33 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     collectgarbage()
 end
 
+--
+-- Wrapper around 'storage_cfg' function to provide
+-- locking beafore / unlocking after pcall(storage_cfg, ...),
+-- so it prevents 'storage_cfg' been called from diffenrent fibers.
+-- @param ... Arguments which would be passed to the `storage_cfg`.
+-- @retval true, ... on success
+--
+local function storage_cfg_wrapper(...)
+    local status, err
+    if M.errinj.ERRINJ_MULTIPLE_CFG then
+        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG + 1
+        if M.errinj.ERRINJ_MULTIPLE_CFG > 1 then
+            error('Multiple cfgs at the same time')
+        end
+        status, err = pcall(storage_cfg, ...)
+        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG - 1
+    else
+        M.cfg_lock:put(true)
+        status, err = pcall(storage_cfg, ...)
+        M.cfg_lock:get()
+    end
+    if not status then
+        error(err)
+    end
+    return true
+end
+
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
@@ -2060,7 +2090,7 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     reload_evolution.upgrade(M)
-    storage_cfg(M.current_cfg, M.this_replica.uuid, true)
+    storage_cfg_wrapper(M.current_cfg, M.this_replica.uuid, true)
     M.module_version = M.module_version + 1
 end
 
@@ -2103,7 +2133,7 @@ return {
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
     call = storage_call,
-    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
+    cfg = function(cfg, uuid) return storage_cfg_wrapper(cfg, uuid, false) end,
     info = storage_info,
     buckets_info = storage_buckets_info,
     buckets_count = storage_buckets_count,

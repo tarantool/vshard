@@ -28,6 +28,7 @@ if not M then
         ---------------- Common module attributes ----------------
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_MULTIPLE_CFG = nil,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -53,6 +54,8 @@ local ROUTER_TEMPLATE = {
         name = nil,
         -- The last passed configuration.
         current_cfg = nil,
+        -- Fiber channel as the locker to prevent multiple config.
+        cfg_lock = nil,
         -- Time to outdate old objects on reload.
         connection_outdate_delay = nil,
         -- Bucket map cache.
@@ -594,6 +597,34 @@ local function router_cfg(router, cfg, is_reload)
     end
 end
 
+--
+-- Wrapper around 'router_cfg' function to provide
+-- locking beafore / unlocking after pcall(router_cfg, router, ...),
+-- so it prevents 'router_cfg' been called from diffenrent fibers.
+-- @param router Router instance to be configured.
+-- @param ... Arguments which would be passed to the `router_cfg`.
+-- @retval true, ... on success
+--
+local function cfg_wrapper(router, ...)
+    local status, err
+    if M.errinj.ERRINJ_MULTIPLE_CFG then
+        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG + 1
+        if M.errinj.ERRINJ_MULTIPLE_CFG > 1 then
+            error('Multiple cfgs at the same time')
+        end
+        status, err = pcall(router_cfg, router, ...)
+        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG - 1
+    else
+        router.cfg_lock:put(true)
+        status, err = pcall(router_cfg, router, ...)
+        router.cfg_lock:get()
+    end
+    if not status then
+        error(err)
+    end
+    return true
+end
+
 --------------------------------------------------------------------------------
 -- Bootstrap
 --------------------------------------------------------------------------------
@@ -862,7 +893,7 @@ end
 
 local router_mt = {
     __index = {
-        cfg = function(router, cfg) return router_cfg(router, cfg, false) end,
+        cfg = function(router, cfg) return cfg_wrapper(router, cfg) end,
         info = router_info;
         buckets_info = router_buckets_info;
         call = router_call;
@@ -920,6 +951,7 @@ local function router_new(name, cfg)
     local router = table.deepcopy(ROUTER_TEMPLATE)
     setmetatable(router, router_mt)
     router.name = name
+    router.cfg_lock = lfiber.channel(1)
     M.routers[name] = router
     local ok, err = pcall(router_cfg, router, cfg)
     if not ok then
@@ -936,7 +968,7 @@ end
 local function legacy_cfg(cfg)
     if M.static_router then
         -- Reconfigure.
-        router_cfg(M.static_router, cfg, false)
+        cfg_wrapper(M.static_router, cfg, false)
     else
         -- Create new static instance.
         local router, err = router_new(STATIC_ROUTER_NAME, cfg)
@@ -961,7 +993,7 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     for _, router in pairs(M.routers) do
-        router_cfg(router, router.current_cfg, true)
+        cfg_wrapper(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
     if M.static_router then
