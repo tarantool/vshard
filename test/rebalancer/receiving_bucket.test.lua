@@ -90,7 +90,6 @@ box.space._bucket:get{101}
 while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 box.space._bucket:get{101}
 _ = test_run:switch('box_1_a')
-box.space._bucket:get{101}
 while _bucket:get{101} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
 fiber.sleep(0.1)

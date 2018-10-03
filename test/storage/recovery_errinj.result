@@ -106,6 +106,9 @@ f = fiber.create(function() ok, err = vshard.storage.bucket_send(1, util.replica
 while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 ---
 ...
+cfg.replication_connect_quorum = 0
+---
+...
 cfg.sharding[util.replicasets[2]].replicas[util.name_to_uuid.storage_2_a].master = false
 ---
 ...
@@ -120,6 +123,9 @@ box.space._bucket:get{1}
 - [1, 'sending', '<replicaset_1>']
 ...
 _ = test_run:switch('storage_2_b')
+---
+...
+cfg.replication_connect_quorum = 0
 ---
 ...
 cfg.sharding[util.replicasets[2]].replicas[util.name_to_uuid.storage_2_a].master = false

@@ -238,10 +238,6 @@ box.space._bucket:get{101}
 _ = test_run:switch('box_1_a')
 ---
 ...
-box.space._bucket:get{101}
----
-- [101, 'garbage', '<replicaset_2>']
-...
 while _bucket:get{101} do fiber.sleep(0.01) end
 ---
 ...

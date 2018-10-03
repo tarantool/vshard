@@ -7,8 +7,8 @@ engine = test_run:get_cfg('engine')
 test_run:create_cluster(REPLICASET_1, 'rebalancer')
 test_run:create_cluster(REPLICASET_2, 'rebalancer')
 util = require('util')
-util.wait_master(test_run, REPLICASET_1, 'box_1_a')
-util.wait_master(test_run, REPLICASET_2, 'box_2_a')
+test_run:wait_fullmesh(REPLICASET_1)
+test_run:wait_fullmesh(REPLICASET_2)
 util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'%s\')', engine)
 
 --

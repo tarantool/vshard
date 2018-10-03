@@ -20,10 +20,12 @@ _ = test_run:switch('storage_1_a')
 box.error.injection.set("ERRINJ_WAL_DELAY", true)
 f = fiber.create(function() box.space.test:replace{1, 1} end)
 box.space.test:select{}
+cfg.replication_connect_quorum = 0
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 _ = test_run:switch('storage_1_b')
+cfg.replication_connect_quorum = 0
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
