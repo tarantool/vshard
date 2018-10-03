@@ -999,7 +999,11 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return status, lerror.make(err)
     end
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
-    M.bucket_refs[bucket_id].ro_lock = true
+    -- Replace yields and GC may manage to drop the ref.
+    local ref = M.bucket_refs[bucket_id]
+    if ref then
+        ref.ro_lock = true
+    end
     return true
 end
 
