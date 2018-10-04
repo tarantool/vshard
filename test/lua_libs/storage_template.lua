@@ -16,6 +16,9 @@ cfg.replication_connect_timeout = 3
 vshard.storage.cfg(cfg, util.name_to_uuid[NAME])
 function bootstrap_storage(engine)
     box.once("testapp:schema:1", function()
+        if rawget(_G, 'CHANGE_SPACE_IDS') then
+            box.schema.create_space("CHANGE_SPACE_IDS")
+        end
         local format = {{'id', 'unsigned'}, {'bucket_id', 'unsigned'}}
         local s = box.schema.create_space('test', {engine = engine, format = format})
         s:create_index('pk', {parts = {{'id'}}})

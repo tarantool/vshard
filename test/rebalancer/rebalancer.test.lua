@@ -228,6 +228,13 @@ while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 200 do
 end;
 test_run:cmd("setopt delimiter ''");
 
+-- gh-152: ensure that rebalancing is possible in case spaces
+-- have different ids on different replicasets.
+test_run:switch('box_1_a')
+box.space.test.id
+test_run:switch('box_2_a')
+box.space.test.id
+
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

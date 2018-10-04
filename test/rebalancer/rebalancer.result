@@ -491,6 +491,24 @@ test_run:cmd("setopt delimiter ''");
 ---
 - true
 ...
+-- gh-152: ensure that rebalancing is possible in case spaces
+-- have different ids on different replicasets.
+test_run:switch('box_1_a')
+---
+- true
+...
+box.space.test.id
+---
+- 513
+...
+test_run:switch('box_2_a')
+---
+- true
+...
+box.space.test.id
+---
+- 514
+...
 _ = test_run:cmd("switch default")
 ---
 ...
