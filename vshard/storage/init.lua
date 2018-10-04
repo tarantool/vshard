@@ -52,7 +52,7 @@ if not M then
         -- All known replicasets used for bucket re-balancing.
         -- See format in replicaset.lua.
         --
-        replicasets = {},
+        replicasets = nil,
         -- Triggers on master switch event. They are called right
         -- before the event occurs.
         _on_master_enable = trigger.new('_on_master_enable'),
