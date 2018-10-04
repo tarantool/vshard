@@ -966,7 +966,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
             table.insert(space_data, t)
             limit = limit - 1
             if limit == 0 then
-                table.insert(data, {space.id, space_data})
+                table.insert(data, {space.name, space_data})
                 status, err = replicaset:callrw('vshard.storage.bucket_recv',
                                                 {bucket_id, uuid, data}, opts)
                 bucket_generation =
@@ -980,7 +980,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
                 space_data = {}
             end
         end
-        table.insert(data, {space.id, space_data})
+        table.insert(data, {space.name, space_data})
     end
     status, err = replicaset:callrw('vshard.storage.bucket_recv',
                                     {bucket_id, uuid, data}, opts)
