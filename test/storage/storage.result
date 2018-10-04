@@ -471,21 +471,21 @@ box.space.test2:select()
 ...
 vshard.storage.bucket_collect(1)
 ---
-- - - 514
+- - - test2
     - - [10, 1, 1]
       - [11, 1, 1]
       - [12, 1, 1]
-  - - 513
+  - - test
     - - [1, 1]
       - [5, 1]
 ...
 vshard.storage.bucket_collect(2)
 ---
-- - - 514
+- - - test2
     - - [20, 2, 2]
       - [21, 2, 2]
       - [22, 2, 2]
-  - - 513
+  - - test
     - - [2, 2]
       - [6, 2]
 ...

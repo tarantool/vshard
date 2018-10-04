@@ -31,4 +31,7 @@ end
 finish_refs = false
 function make_ref() while not finish_refs do fiber.sleep(0.01) end end
 
+if NAME ~= 'box_1_a' and NAME ~= 'box_1_b' then
+    CHANGE_SPACE_IDS = true
+end
 require('storage_template')
