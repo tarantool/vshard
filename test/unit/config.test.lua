@@ -91,15 +91,15 @@ cfg.sharding['rsid2'] = nil
 cfg.sharding['rsid3'] = nil
 
 --
--- gh-40: replicaset weight. Weight is used by a rebalancer to
--- correctly spead buckets on a cluster.
+-- gh-40, gh-155: replicaset weight. Weight is used by a
+-- rebalancer to correctly spead buckets on a cluster.
 --
 replicaset.weight = '100'
 check(cfg)
 replicaset.weight = -100
 check(cfg)
 replicaset.weight = 0
-_ = lcfg.check(cfg)
+check(cfg)
 replicaset.weight = 0.123
 _ = lcfg.check(cfg)
 replicaset.weight = 100000

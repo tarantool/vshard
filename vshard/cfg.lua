@@ -139,6 +139,8 @@ local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
     local names = {}
+    local is_all_weights_zero = true
+    local weight_sum = 0
     for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
@@ -171,6 +173,10 @@ local function check_sharding(sharding)
                 end
             end
         end
+        is_all_weights_zero = is_all_weights_zero and replicaset.weight == 0
+    end
+    if next(sharding) and is_all_weights_zero then
+        error('At least one replicaset weight should be > 0')
     end
 end
 
