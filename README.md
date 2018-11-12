@@ -8,7 +8,7 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 ## Prerequisites
 
-- Tarantool 1.7.7+ (use 1.9 branch from GitHub).
+- Tarantool version 1.9+.
 
 ## Install
 
