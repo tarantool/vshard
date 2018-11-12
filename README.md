@@ -688,13 +688,14 @@ This section contains definitions of key terms used throughout the document.
 
 ## See Also
 
-Feel free to contact us on [Telegram] channel or send a pull request.
+Feel free to contact us on [Telegram (eng)]  channel or send a pull request.
 
 * [Tarantool]
 * [Maillist]
-* [Telegram]
+* [Telegram (rus)]
 
 [tarantool-badge]: https://img.shields.io/badge/Tarantool-1.9-blue.svg?style=flat
 [Tarantool]: https://tarantool.org/
-[Telegram]: http://telegram.me/tarantool
+[Telegram (eng)]: http://telegram.me/tarantool
+[Telegram (rus)]: http://telegram.me/tarantoolru
 [Maillist]: https://groups.google.com/forum/#!forum/tarantool
