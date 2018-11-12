@@ -677,14 +677,14 @@ Essential commands you need to known:
 
 This section contains definitions of key terms used throughout the document.
 
-Cluster - Set of nodes that form a single group<br>
-Horizontal scaling - Partitioning data into several servers and adding more servers as necessary<br>
-Node - Physical or virtual server instance<br>
-Rebalancing - Moving some part of data to new servers added to the cluster<br>
-Replicaset - Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)<br>
-Router - Server responsible for routing requests from the system to certain cluster nodes<br>
-Sharding - Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.<br>
-Virtual bucket (vbucket) - Sharding key that determines which replicaset stores certain data<br>
+**Cluster** - Set of nodes that form a single group<br>
+**Horizontal scaling** - Partitioning data into several servers and adding more servers as necessary<br>
+**Node** - Physical or virtual server instance<br>
+**Rebalancing** - Moving some part of data to new servers added to the cluster<br>
+**Replicaset** - Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)<br>
+**Router** - Server responsible for routing requests from the system to certain cluster nodes<br>
+**Sharding** - Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.<br>
+**Virtual bucket (vbucket)** - Sharding key that determines which replicaset stores certain data<br>
 
 ## See Also
 
