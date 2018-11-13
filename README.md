@@ -8,7 +8,7 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 ## Prerequisites
 
-- Tarantool 1.7.7+ (use 1.9 branch from GitHub).
+- Tarantool version 1.9+.
 
 ## Install
 
@@ -85,7 +85,7 @@ local cfg = {
                     name = 'storage_1_b'
                 }
             },
-        }, -- replicaset #2
+        }, -- replicaset #1
         ['ac522f65-aa94-4134-9f64-51ee384f1a54'] = { -- replicaset #2
             replicas = {
                 ['1e02ae8a-afc0-4e91-ba34-843a356b8ed7'] = {
@@ -98,7 +98,7 @@ local cfg = {
                     name = 'storage_2_b'
                 }
             },
-        }, -- replicaset #1
+        }, -- replicaset #2
     }, -- sharding
     weights = ... -- See details below.
 }
@@ -677,24 +677,25 @@ Essential commands you need to known:
 
 This section contains definitions of key terms used throughout the document.
 
-Cluster - Set of nodes that form a single group<br>
-Horizontal scaling - Partitioning data into several servers and adding more servers as necessary<br>
-Node - Physical or virtual server instance<br>
-Rebalancing - Moving some part of data to new servers added to the cluster<br>
-Replicaset - Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)<br>
-Router - Server responsible for routing requests from the system to certain cluster nodes<br>
-Sharding - Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.<br>
-Virtual bucket (vbucket) - Sharding key that determines which replicaset stores certain data<br>
+**Cluster** - Set of nodes that form a single group<br>
+**Horizontal scaling** - Partitioning data into several servers and adding more servers as necessary<br>
+**Node** - Physical or virtual server instance<br>
+**Rebalancing** - Moving some part of data to new servers added to the cluster<br>
+**Replicaset** - Container for storing data. Each replicaset stores a unique subset of vbuckets (one vbucket cannot belong to several replicasets at once)<br>
+**Router** - Server responsible for routing requests from the system to certain cluster nodes<br>
+**Sharding** - Database architecture that allows splitting data between two or more database instances by some key. Sharding is a special case of horizontal scaling.<br>
+**Virtual bucket (vbucket)** - Sharding key that determines which replicaset stores certain data<br>
 
 ## See Also
 
-Feel free to contact us on [Telegram] channel or send a pull request.
+Feel free to contact us on [Telegram (eng)]  channel or send a pull request.
 
 * [Tarantool]
 * [Maillist]
-* [Telegram]
+* [Telegram (rus)]
 
 [tarantool-badge]: https://img.shields.io/badge/Tarantool-1.9-blue.svg?style=flat
 [Tarantool]: https://tarantool.org/
-[Telegram]: http://telegram.me/tarantool
+[Telegram (eng)]: http://telegram.me/tarantool
+[Telegram (rus)]: http://telegram.me/tarantoolru
 [Maillist]: https://groups.google.com/forum/#!forum/tarantool

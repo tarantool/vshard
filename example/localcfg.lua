@@ -13,7 +13,7 @@ return {
                     name = 'storage_1_b'
                 }
             },
-        }, -- replicaset #2
+        }, -- replicaset #1
         ['ac522f65-aa94-4134-9f64-51ee384f1a54'] = { -- replicaset #2
             replicas = {
                 ['1e02ae8a-afc0-4e91-ba34-843a356b8ed7'] = {
@@ -26,6 +26,6 @@ return {
                     name = 'storage_2_b'
                 }
             },
-        }, -- replicaset #1
+        }, -- replicaset #2
     }, -- sharding
 }
