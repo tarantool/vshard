@@ -18,9 +18,9 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 
 --
 -- Test removing replicasets.
@@ -34,9 +34,9 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 7)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 
 --
 -- Test big weights.
@@ -50,9 +50,9 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 300)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 
 --
 -- Test no changes on already balanced cluster.
@@ -66,9 +66,9 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 300)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 
 --
 -- gh-4: limit number of buckets receiving at once by node. In the
@@ -78,16 +78,20 @@ build_routes(replicasets)
 --
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
-	uuid1 = {bucket_count = 1500, weight = 1},
-	uuid2 = {bucket_count = 1500, weight = 1},
-	uuid3 = {bucket_count = 0, weight = 1},
+	uuid1 = {bucket_count = 750, weight = 1},
+	uuid2 = {bucket_count = 750, weight = 1},
+	uuid3 = {bucket_count = 750, weight = 1},
+	uuid4 = {bucket_count = 750, weight = 1},
+	uuid5 = {bucket_count = 0, weight = 1},
 };
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 3000)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
-build_routes(replicasets)
+copy = table.deepcopy(replicasets)
+build_routes(copy, 3)
+build_routes(replicasets, 4)
 
 --
 -- Test rebalancer local state.
@@ -117,7 +121,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 
 consts.BUCKET_COUNT = 100
@@ -130,7 +134,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 
 consts.BUCKET_COUNT = 100
@@ -148,7 +152,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 
 test_run:cmd("setopt delimiter ';'")
@@ -179,7 +183,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 --
 -- Here the disbalance is ok for the replicaset with uuid1 only -
@@ -196,7 +200,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 --
 -- Non-locked replicaset with any pinned bucket count can receive
@@ -212,7 +216,7 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
 --
 -- Check that the rebalancer can calculate a complex case, when a
@@ -238,7 +242,29 @@ replicasets = {
 test_run:cmd("setopt delimiter ''");
 calc_etalon(replicasets, 100)
 replicasets
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 replicasets
+
+--
+-- gh-164: rebalancer_max_receiving limits sending buckets as
+-- well as receiving ones.
+--
+test_run:cmd("setopt delimiter ';'")
+replicasets = {
+	uuid1 = {bucket_count = 10000, weight = 1},
+	uuid2 = {bucket_count = 10000, weight = 1},
+	uuid3 = {bucket_count = 10000, weight = 1},
+	uuid4 = {bucket_count = 0, weight = 1},
+};
+test_run:cmd("setopt delimiter ''");
+calc_etalon(replicasets, 30000)
+replicasets
+calc_metrics(replicasets)
+replicasets
+--
+-- Note that in the result total sending bucket count is 7.5k,
+-- but in parallel a new node will receive only 3.
+--
+build_routes(replicasets, 3)
 
 _bucket:drop()

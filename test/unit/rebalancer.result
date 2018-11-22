@@ -55,7 +55,7 @@ replicasets
     bucket_count: 0
     etalon_bucket_count: 20
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
@@ -77,7 +77,7 @@ replicasets
     bucket_count: 0
     etalon_bucket_count: 20
 ...
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - uuid1:
     uuid2: 20
@@ -119,7 +119,7 @@ replicasets
     bucket_count: 2
     etalon_bucket_count: 4
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - inf
 ...
@@ -141,7 +141,7 @@ replicasets
     bucket_count: 2
     etalon_bucket_count: 4
 ...
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - uuid3:
     uuid2: 2
@@ -183,7 +183,7 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 172
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 132.55813953488
 ...
@@ -205,7 +205,7 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 172
 ...
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - uuid1:
     uuid2: 15
@@ -248,7 +248,7 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 100
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 0
 ...
@@ -270,7 +270,7 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 100
 ...
-build_routes(replicasets)
+build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
 ---
 - []
 ...
@@ -285,9 +285,11 @@ test_run:cmd("setopt delimiter ';'")
 - true
 ...
 replicasets = {
-	uuid1 = {bucket_count = 1500, weight = 1},
-	uuid2 = {bucket_count = 1500, weight = 1},
-	uuid3 = {bucket_count = 0, weight = 1},
+	uuid1 = {bucket_count = 750, weight = 1},
+	uuid2 = {bucket_count = 750, weight = 1},
+	uuid3 = {bucket_count = 750, weight = 1},
+	uuid4 = {bucket_count = 750, weight = 1},
+	uuid5 = {bucket_count = 0, weight = 1},
 };
 ---
 ...
@@ -300,45 +302,81 @@ calc_etalon(replicasets, 3000)
 ...
 replicasets
 ---
-- uuid1:
+- uuid3:
     weight: 1
-    bucket_count: 1500
-    etalon_bucket_count: 1000
-  uuid3:
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid4:
+    weight: 1
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid1:
+    weight: 1
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid5:
     weight: 1
     bucket_count: 0
-    etalon_bucket_count: 1000
+    etalon_bucket_count: 600
   uuid2:
     weight: 1
-    bucket_count: 1500
-    etalon_bucket_count: 1000
+    bucket_count: 750
+    etalon_bucket_count: 600
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
 replicasets
 ---
-- uuid1:
-    needed: -500
+- uuid3:
+    needed: -150
     weight: 1
-    bucket_count: 1500
-    etalon_bucket_count: 1000
-  uuid3:
-    needed: 100
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid4:
+    needed: -150
+    weight: 1
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid1:
+    needed: -150
+    weight: 1
+    bucket_count: 750
+    etalon_bucket_count: 600
+  uuid5:
+    needed: 600
     weight: 1
     bucket_count: 0
-    etalon_bucket_count: 1000
+    etalon_bucket_count: 600
   uuid2:
-    needed: -500
+    needed: -150
     weight: 1
-    bucket_count: 1500
-    etalon_bucket_count: 1000
+    bucket_count: 750
+    etalon_bucket_count: 600
 ...
-build_routes(replicasets)
+copy = table.deepcopy(replicasets)
 ---
-- uuid2:
-    uuid3: 100
+...
+build_routes(copy, 3)
+---
+- uuid4:
+    uuid5: 150
+  uuid3:
+    uuid5: 150
+  uuid1:
+    uuid5: 150
+...
+build_routes(replicasets, 4)
+---
+- uuid4:
+    uuid5: 150
+  uuid3:
+    uuid5: 150
+  uuid1:
+    uuid5: 150
+  uuid2:
+    uuid5: 150
 ...
 --
 -- Test rebalancer local state.
@@ -418,7 +456,7 @@ replicasets
     bucket_count: 50
     etalon_bucket_count: 34
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
@@ -476,7 +514,7 @@ replicasets
     bucket_count: 34
     etalon_bucket_count: 34
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 3.030303030303
 ...
@@ -559,7 +597,7 @@ replicasets
     bucket_count: 13
     etalon_bucket_count: 13
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 8.3333333333333
 ...
@@ -695,7 +733,7 @@ replicasets
     bucket_count: 33
     etalon_bucket_count: 24
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
@@ -775,7 +813,7 @@ replicasets
     pinned_count: 10
     etalon_bucket_count: 24
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
@@ -852,7 +890,7 @@ replicasets
     pinned_count: 25
     etalon_bucket_count: 38
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - inf
 ...
@@ -941,7 +979,7 @@ replicasets
     bucket_count: 33
     etalon_bucket_count: 25
 ...
-calc_metrics(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+calc_metrics(replicasets)
 ---
 - 100
 ...
@@ -973,6 +1011,88 @@ replicasets
     needed: -8
     bucket_count: 33
     etalon_bucket_count: 25
+...
+--
+-- gh-164: rebalancer_max_receiving limits sending buckets as
+-- well as receiving ones.
+--
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+replicasets = {
+	uuid1 = {bucket_count = 10000, weight = 1},
+	uuid2 = {bucket_count = 10000, weight = 1},
+	uuid3 = {bucket_count = 10000, weight = 1},
+	uuid4 = {bucket_count = 0, weight = 1},
+};
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+calc_etalon(replicasets, 30000)
+---
+...
+replicasets
+---
+- uuid4:
+    weight: 1
+    bucket_count: 0
+    etalon_bucket_count: 7500
+  uuid1:
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+  uuid3:
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+  uuid2:
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+...
+calc_metrics(replicasets)
+---
+- 100
+...
+replicasets
+---
+- uuid4:
+    needed: 7500
+    weight: 1
+    bucket_count: 0
+    etalon_bucket_count: 7500
+  uuid1:
+    needed: -2500
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+  uuid3:
+    needed: -2500
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+  uuid2:
+    needed: -2500
+    weight: 1
+    bucket_count: 10000
+    etalon_bucket_count: 7500
+...
+--
+-- Note that in the result total sending bucket count is 7.5k,
+-- but in parallel a new node will receive only 3.
+--
+build_routes(replicasets, 3)
+---
+- uuid1:
+    uuid4: 2500
+  uuid3:
+    uuid4: 2500
+  uuid2:
+    uuid4: 2500
 ...
 _bucket:drop()
 ---

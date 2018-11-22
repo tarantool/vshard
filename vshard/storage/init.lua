@@ -1342,12 +1342,10 @@ end
 --     uuid = {bucket_count = number, weight = number},
 --     ...
 -- }
--- @param max_receiving Maximal bucket count that can be received
---        in parallel by a single master.
 --
 -- @retval Maximal disbalance over all replicasets.
 --
-local function rebalancer_calculate_metrics(replicasets, max_receiving)
+local function rebalancer_calculate_metrics(replicasets)
     local max_disbalance = 0
     for _, replicaset in pairs(replicasets) do
         local needed = replicaset.etalon_bucket_count - replicaset.bucket_count
@@ -1361,7 +1359,7 @@ local function rebalancer_calculate_metrics(replicasets, max_receiving)
             max_disbalance = math.huge
         end
         assert(needed >= 0 or -needed <= replicaset.bucket_count)
-        replicaset.needed = math.min(max_receiving, needed)
+        replicaset.needed = needed
     end
     return max_disbalance
 end
@@ -1370,8 +1368,12 @@ end
 -- Move @a needed bucket count from a pool to @a dst_uuid and
 -- remember the route in @a bucket_routes table.
 --
+-- @param max_receiving Maximal bucket count that can be received
+--        in parallel by a single master.
+--
 local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
-                                                 dst_uuid, needed)
+                                                 dst_uuid, needed,
+                                                 max_receiving)
     local to_remove_from_pool = {}
     for src_uuid, bucket_count in pairs(bucket_pool) do
         local count = math.min(bucket_count, needed)
@@ -1392,7 +1394,8 @@ local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
         if new_count == 0 then
             table.insert(to_remove_from_pool, src_uuid)
         end
-        if needed == 0 then
+        max_receiving = max_receiving - 1
+        if needed == 0 or max_receiving == 0 then
             break
         end
     end
@@ -1412,6 +1415,9 @@ end
 -- }      This parameter is a result of
 --        rebalancer_calculate_metrics().
 --
+-- @param max_receiving Maximal bucket count that can be received
+--        in parallel by a single master.
+--
 -- @retval Bucket routes. It is a map of type: {
 --     src_uuid = {
 --         dst_uuid = number, -- Bucket count to move from
@@ -1421,7 +1427,7 @@ end
 --     ...
 -- }
 --
-local function rebalancer_build_routes(replicasets)
+local function rebalancer_build_routes(replicasets, max_receiving)
     -- Map of type: {
     --     uuid = number, -- free buckets of uuid.
     -- }
@@ -1436,7 +1442,7 @@ local function rebalancer_build_routes(replicasets)
     for uuid, replicaset in pairs(replicasets) do
         if replicaset.needed > 0 then
             rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes, uuid,
-                                              replicaset.needed)
+                                              replicaset.needed, max_receiving)
         end
     end
     return bucket_routes
@@ -1559,16 +1565,15 @@ local function rebalancer_f()
         end
         lreplicaset.calculate_etalon_balance(replicasets,
                                              total_bucket_active_count)
-        local max_disbalance =
-            rebalancer_calculate_metrics(replicasets,
-                                         M.rebalancer_max_receiving)
+        local max_disbalance = rebalancer_calculate_metrics(replicasets)
         if max_disbalance <= M.rebalancer_disbalance_threshold then
             log.info('The cluster is balanced ok. Schedule next rebalancing '..
                      'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
             goto continue
         end
-        local routes = rebalancer_build_routes(replicasets)
+        local routes = rebalancer_build_routes(replicasets,
+                                               M.rebalancer_max_receiving)
         -- Routes table can not be empty. If it had been empty,
         -- then max_disbalance would have been calculated
         -- incorrectly.
