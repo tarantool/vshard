@@ -177,6 +177,7 @@ uuids
 --
 bucket_id = 1
 vshard.router.callrw(bucket_id, 'space_insert', {'test', {1, bucket_id}})
+vshard.router.callrw(bucket_id, 'vshard.storage.sync', {})
 vshard.router.callro(bucket_id, 'space_get', {'test', {1}})
 vshard.router.callro(bucket_id + 1500, 'space_get', {'test', {1}}) -- nothing
 

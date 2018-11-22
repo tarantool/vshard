@@ -492,6 +492,10 @@ vshard.router.callrw(bucket_id, 'space_insert', {'test', {1, bucket_id}})
 ---
 - [1, 1]
 ...
+vshard.router.callrw(bucket_id, 'vshard.storage.sync', {})
+---
+- true
+...
 vshard.router.callro(bucket_id, 'space_get', {'test', {1}})
 ---
 - [1, 1]
