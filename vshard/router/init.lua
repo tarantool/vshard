@@ -21,6 +21,7 @@ local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
+local seq_serializer = { __serialize = 'seq' }
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
@@ -239,6 +240,55 @@ end
 -- API
 --------------------------------------------------------------------------------
 
+--
+-- Since 1.10 netbox supports flag 'is_async'. Given this flag, a
+-- request result is returned immediately in a form of a future
+-- object. Future of CALL request returns a result wrapped into an
+-- array instead of unpacked values because unpacked values can
+-- not be stored anywhere.
+--
+-- Vshard.router.call calls a user function not directly, but via
+-- vshard.storage.call which returns true/false, result, errors.
+-- So vshard.router.call should wrap a future object with its own
+-- unpacker of result.
+--
+-- Unpack a result given from a future object from
+-- vshard.storage.call. If future returns [status, result, ...]
+-- this function returns [result]. Or a classical couple
+-- nil, error.
+--
+function future_storage_call_result(self)
+    local res, err = self:base_result()
+    if not res then
+        return nil, err
+    end
+    local storage_call_status, call_status, call_error = unpack(res)
+    if storage_call_status then
+        if call_status == nil and call_error ~= nil then
+            return call_status, call_error
+        else
+            return setmetatable({call_status}, seq_serializer)
+        end
+    end
+    return nil, call_status
+end
+
+--
+-- Given a netbox future object, redefine its 'result' method.
+-- It is impossible to just create a new signle metatable per
+-- the module as a copy of original future's one because it has
+-- some upvalues related to the netbox connection.
+--
+local function wrap_storage_call_future(future)
+    -- Base 'result' below is got from __index metatable under the
+    -- hood. But __index is used only when a table has no such a
+    -- member in itself. So via adding 'result' as a member to a
+    -- future object its __index.result can be redefined.
+    future.base_result = future.result
+    future.result = future_storage_call_result
+    return future
+end
+
 -- Perform shard operation
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
@@ -273,8 +323,14 @@ local function router_call(router, bucket_id, mode, func, args, opts)
             if storage_call_status then
                 if call_status == nil and call_error ~= nil then
                     return call_status, call_error
-                else
+                elseif not opts.is_async then
                     return call_status
+                else
+                    -- Vshard.storage.call(func) returns two
+                    -- values: true/false and func result. But
+                    -- async returns future object. No true/false
+                    -- nor func result. So return the first value.
+                    return wrap_storage_call_future(storage_call_status)
                 end
             end
             err = call_status

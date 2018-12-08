@@ -200,6 +200,30 @@ vshard.router.route(bucket_id):callrw('do_push', args, opts)
 messages
 
 --
+-- gh-171: support is_async.
+--
+future = vshard.router.callro(bucket_id, 'space_get', {'test', {1}}, {is_async = true})
+future:wait_result()
+future:is_ready()
+future = vshard.router.callrw(bucket_id, 'raise_client_error', {}, {is_async = true})
+future:wait_result()
+future:is_ready()
+future = vshard.router.callrw(bucket_id, 'do_push', args, {is_async = true})
+func, iter, i = future:pairs()
+i, res = func(iter, i)
+res
+i, res = func(iter, i)
+res
+func(iter, i)
+future:wait_result()
+future:is_ready()
+
+future = vshard.router.route(bucket_id):callro('space_get', {'test', {1}}, {is_async = true})
+future:wait_result()
+future = vshard.router.route(bucket_id):callrw('space_get', {'test', {1}}, {is_async = true})
+future:wait_result()
+
+--
 -- Test errors from router call.
 --
 new_bid = vshard.consts.DEFAULT_BUCKET_COUNT + 1
