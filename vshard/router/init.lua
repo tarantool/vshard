@@ -247,8 +247,10 @@ local function router_call(router, bucket_id, mode, func, args, opts)
     if opts and (type(opts) ~= 'table' or
                  (opts.timeout and type(opts.timeout) ~= 'number')) then
         error('Usage: call(bucket_id, mode, func, args, opts)')
+    elseif not opts then
+        opts = {}
     end
-    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
+    local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
     local tend = lfiber.time() + timeout
     if bucket_id > router.total_bucket_count or bucket_id <= 0 then
@@ -264,10 +266,10 @@ local function router_call(router, bucket_id, mode, func, args, opts)
         replicaset, err = bucket_resolve(router, bucket_id)
         if replicaset then
 ::replicaset_is_found::
+            opts.timeout = tend - lfiber.time()
             local storage_call_status, call_status, call_error =
                 replicaset[call](replicaset, 'vshard.storage.call',
-                                 {bucket_id, mode, func, args},
-                                 {timeout = tend - lfiber.time()})
+                                 {bucket_id, mode, func, args}, opts)
             if storage_call_status then
                 if call_status == nil and call_error ~= nil then
                     return call_status, call_error

@@ -44,6 +44,8 @@ function bootstrap_storage(engine)
         box.schema.role.grant('public', 'execute', 'function', 'raise_luajit_error')
         box.schema.func.create('raise_client_error')
         box.schema.role.grant('public', 'execute', 'function', 'raise_client_error')
+        box.schema.func.create('do_push')
+        box.schema.role.grant('public', 'execute', 'function', 'do_push')
         box.snapshot()
     end)
 end
@@ -87,6 +89,11 @@ function check_consistency()
         assert(box.space._bucket:get{tuple.bucket_id})
     end
     return true
+end
+
+function do_push(push, retval)
+    box.session.push(push)
+    return retval
 end
 
 --

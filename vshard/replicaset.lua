@@ -225,18 +225,18 @@ end
 -- @retval false, ... Response is not received. It can be timeout
 --         or unexpectedly closed connection.
 --
-local function replica_call(replica, func, args, timeout)
-    assert(timeout)
+local function replica_call(replica, func, args, opts)
+    assert(opts and opts.timeout)
     local conn = replica.conn
     local net_status, storage_status, retval, error_object =
-        pcall(conn.call, conn, func, args, {timeout = timeout})
+        pcall(conn.call, conn, func, args, opts)
     if not net_status then
         -- Do not increase replica's network timeout, if the
         -- requested one was less, than network's one. For
         -- example, if replica's timeout was 30s, but an user
         -- specified 1s and it was expired, then there is no
         -- reason to increase network timeout.
-        if timeout >= replica.net_timeout then
+        if opts.timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
         log.error("Exception during calling '%s' on '%s': %s", func, replica,
@@ -266,9 +266,13 @@ local function replicaset_master_call(replicaset, func, args, opts)
     if not conn then
         return nil, err
     end
-    local timeout = opts and opts.timeout or replicaset.master.net_timeout
+    if not opts then
+        opts = {timeout = replicaset.master.net_timeout}
+    elseif not opts.timeout then
+        opts.timeout = replicaset.master.net_timeout
+    end
     local net_status, storage_status, retval, error_object =
-        replica_call(replicaset.master, func, args, timeout)
+        replica_call(replicaset.master, func, args, opts)
     -- Ignore net_status - master does not retry requests.
     return storage_status, retval, error_object
 end
@@ -299,7 +303,8 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MAX
+    opts = opts or {}
+    local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
     local net_status, storage_status, retval, error_object
     local end_time = fiber.time() + timeout
     while not net_status and timeout > 0 do
@@ -314,8 +319,9 @@ local function replicaset_nearest_call(replicaset, func, args, opts)
             end
             replica = replicaset.master
         end
+        opts.timeout = timeout
         net_status, storage_status, retval, error_object =
-            replica_call(replica, func, args, timeout)
+            replica_call(replica, func, args, opts)
         timeout = end_time - fiber.time()
         if not net_status and not storage_status and
            not can_retry_after_error(retval) then

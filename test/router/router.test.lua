@@ -182,6 +182,24 @@ vshard.router.callro(bucket_id, 'space_get', {'test', {1}})
 vshard.router.callro(bucket_id + 1500, 'space_get', {'test', {1}}) -- nothing
 
 --
+-- gh-82: support box.session.push().
+--
+messages = {}
+args = {100, 200}
+opts = {on_push = table.insert, on_push_ctx = messages}
+vshard.router.callrw(bucket_id, 'do_push', args, opts)
+messages
+messages[1] = nil
+vshard.router.callro(bucket_id, 'do_push', args, opts)
+messages
+messages[1] = nil
+vshard.router.route(bucket_id):callro('do_push', args, opts)
+messages
+messages[1] = nil
+vshard.router.route(bucket_id):callrw('do_push', args, opts)
+messages
+
+--
 -- Test errors from router call.
 --
 new_bid = vshard.consts.DEFAULT_BUCKET_COUNT + 1
