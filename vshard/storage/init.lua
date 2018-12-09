@@ -327,7 +327,10 @@ end
 local function recovery_step_by_type(type)
     local _bucket = box.space._bucket
     local is_empty = true
+    local recovered = 0
+    local total = 0
     for _, bucket in _bucket.index.status:pairs(type) do
+        total = total + 1
         local bucket_id = bucket.id
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
@@ -364,13 +367,16 @@ local function recovery_step_by_type(type)
         end
         if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.GARBAGE}})
+            recovered = recovered + 1
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+            recovered = recovered + 1
         end
 ::continue::
     end
     if not is_empty then
-        log.info('Finish bucket recovery step')
+        log.info('Finish bucket recovery step, %d %s buckets are recovered '..
+                 'among %d', recovered, type, total)
     end
 end
 
