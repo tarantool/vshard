@@ -253,6 +253,32 @@ local function replica_call(replica, func, args, opts)
 end
 
 --
+-- Detach the connection object from its replica object.
+-- Detachment means that the connection is not closed, but all its
+-- links with the replica are teared. All current requests are
+-- finished, but next calls on this replica are processed by
+-- another connection.
+-- Initially this function is intended for failover, which should
+-- not close the old connection in case if it receives a huge
+-- response and because of it ignores pings.
+--
+local function replica_detach_conn(replica)
+    local c = replica.conn
+    if c ~= nil then
+        -- The connection now has nothing to do with the replica
+        -- object. In particular, it shall not touch up and down
+        -- ts.
+        c:on_connect(nil, netbox_on_connect)
+        c:on_disconnect(nil, netbox_on_disconnect)
+        -- Detach looks like disconnect for an observer.
+        netbox_on_disconnect(c)
+        c.replica = nil
+        c.replicaset = nil
+        replica.conn = nil
+    end
+end
+
+--
 -- Call a function on remote storage
 -- Note: this function uses pcall-style error handling
 -- @retval false, err on error
@@ -417,6 +443,7 @@ local replica_mt = {
             uri.password = nil
             return luri.format(uri)
         end,
+        detach_conn = replica_detach_conn,
     },
     __tostring = function(replica)
         if replica.name then

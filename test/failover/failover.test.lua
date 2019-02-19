@@ -168,6 +168,16 @@ log.info(string.rep('padding', 200))
 cfg.failover_ping_timeout = 0.0000001
 vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'Ping error from', 1000) do fiber.sleep(0.01) end
+
+t = string.rep('a', 1024 * 1024 * 500)
+rs = vshard.router.route(31)
+while rs.master ~= rs.replica do fiber.sleep(0.01) end
+future = nil
+while not future do fiber.sleep(0.01) future = vshard.router.callrw(31, 'echo', {t}, {is_async = true}) end
+vshard.router.static.failover_fiber:wakeup()
+res, err = future:wait_result(5)
+err
+#res[1]
 cfg.failover_ping_timeout = nil
 vshard.router.cfg(cfg)
 

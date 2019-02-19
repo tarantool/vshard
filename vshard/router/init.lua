@@ -446,8 +446,12 @@ local function failover_ping_round(router)
                 log.info('Ping error from %s: perhaps a connection is down',
                          replica)
                 -- Connection hangs. Recreate it to be able to
-                -- fail over to a replica next by priority.
-                replica.conn:close()
+                -- fail over to a replica next by priority. The
+                -- old connection is not closed in case if it just
+                -- processes too big response at this moment. Any
+                -- way it will be eventually garbage collected
+                -- and closed.
+                replica:detach_conn()
                 replicaset:connect_replica(replica)
             end
         end
