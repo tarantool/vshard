@@ -10,7 +10,7 @@ vshard = require('vshard')
 os = require('os')
 fiber = require('fiber')
 local names = require('names')
-local log = require('log')
+log = require('log')
 rs_uuid = names.rs_uuid
 replica_uuid = names.replica_uuid
 local port

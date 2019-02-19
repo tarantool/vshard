@@ -159,6 +159,18 @@ vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
 vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
 
+--
+-- gh-169: do not close connections on too long ping when this is
+-- because of too big response.
+--
+test_run:switch('router_1')
+log.info(string.rep('padding', 200))
+cfg.failover_ping_timeout = 0.0000001
+vshard.router.cfg(cfg)
+while not test_run:grep_log('router_1', 'Ping error from', 1000) do fiber.sleep(0.01) end
+cfg.failover_ping_timeout = nil
+vshard.router.cfg(cfg)
+
 test_run:switch('default')
 kill_router('router_1')
 kill_router('router_2')

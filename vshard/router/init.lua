@@ -68,6 +68,10 @@ local ROUTER_TEMPLATE = {
         total_bucket_count = 0,
         -- Boolean lua_gc state (create periodic gc task).
         collect_lua_garbage = nil,
+        -- Timeout after which a ping is considered to be
+        -- unacknowledged. Used by failover fiber to detect if a
+        -- node is down.
+        failover_ping_timeout = nil,
 }
 
 local STATIC_ROUTER_NAME = '_static_router'
@@ -437,7 +441,8 @@ local function failover_ping_round(router)
         local replica = replicaset.replica
         if replica ~= nil and replica.conn ~= nil and
            replica.down_ts == nil then
-            if not replica.conn:ping({timeout = 5}) then
+            if not replica.conn:ping({timeout =
+                                      router.failover_ping_timeout}) then
                 log.info('Ping error from %s: perhaps a connection is down',
                          replica)
                 -- Connection hangs. Recreate it to be able to
@@ -633,6 +638,7 @@ local function router_cfg(router, cfg, is_reload)
     router.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     router.current_cfg = cfg
     router.replicasets = new_replicasets
+    router.failover_ping_timeout = vshard_cfg.failover_ping_timeout
     local old_route_map = router.route_map
     router.route_map = table_new(router.total_bucket_count, 0)
     for bucket, rs in pairs(old_route_map) do

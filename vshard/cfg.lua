@@ -225,6 +225,10 @@ local cfg_template = {
         type = 'non-negative number', name = 'Object outdate timeout',
         is_optional = true
     },
+    failover_ping_timeout = {
+        type = 'positive number', name = 'Failover ping timeout',
+        is_optional = true, default = consts.DEFAULT_FAILOVER_PING_TIMEOUT
+    },
 }
 
 --
