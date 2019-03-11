@@ -22,6 +22,7 @@ local name_to_uuid = {
 local box_uuid = {
     box_1_a = '3e01062d-5c1b-4382-b14e-f80a517cb462',
     box_1_b = 'db778aec-267f-47bb-9347-49828232c8db',
+    box_1_c = '84705440-4433-11e9-b210-d663bd873d93',
     box_2_a = '7223fc89-1a0d-480b-a33e-a8d2b117b13d',
     box_2_b = '56bb8450-9526-442b-ba96-b96cc38ee2f9',
     box_3_a = 'ad40a200-730e-401a-9400-30dbd96dedbd',

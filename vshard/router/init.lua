@@ -297,7 +297,8 @@ end
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
 --
-local function router_call(router, bucket_id, mode, func, args, opts)
+local function router_call_impl(router, bucket_id, mode, prefer_replica, func,
+                                args, opts)
     if opts and (type(opts) ~= 'table' or
                  (opts.timeout and type(opts.timeout) ~= 'number')) then
         error('Usage: call(bucket_id, mode, func, args, opts)')
@@ -312,7 +313,11 @@ local function router_call(router, bucket_id, mode, func, args, opts)
     end
     local call
     if mode == 'read' then
-        call = 'callro'
+        if prefer_replica then
+            call = 'callre'
+        else
+            call = 'callro'
+        end
     else
         call = 'callrw'
     end
@@ -405,11 +410,32 @@ end
 -- Wrappers for router_call with preset mode.
 --
 local function router_callro(router, bucket_id, ...)
-    return router_call(router, bucket_id, 'read', ...)
+    return router_call_impl(router, bucket_id, 'read', false, ...)
 end
 
 local function router_callrw(router, bucket_id, ...)
-    return router_call(router, bucket_id, 'write', ...)
+    return router_call_impl(router, bucket_id, 'write', false, ...)
+end
+
+local function router_callre(router, bucket_id, ...)
+    return router_call_impl(router, bucket_id, 'read', true, ...)
+end
+
+local function router_call(router, bucket_id, opts, ...)
+    local mode, prefer_replica
+    if opts then
+        if type(opts) == 'string' then
+            mode = opts
+        elseif type(opts) == 'table' then
+            mode = opts.mode or 'write'
+            prefer_replica = opts.prefer_replica
+        else
+            error('Usage: router.call(bucket_id, shard_opts, func, args, opts)')
+        end
+    else
+        mode = 'write'
+    end
+    return router_call_impl(router, bucket_id, mode, prefer_replica, ...)
 end
 
 --
@@ -936,6 +962,7 @@ local router_mt = {
         call = router_call;
         callro = router_callro;
         callrw = router_callrw;
+        callre = router_callre;
         route = router_route;
         routeall = router_routeall;
         bucket_id = router_bucket_id;

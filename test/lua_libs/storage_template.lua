@@ -12,6 +12,7 @@ if not cfg.shard_index then
 end
 
 vshard = require('vshard')
+echo_count = 0
 cfg.replication_connect_timeout = 3
 vshard.storage.cfg(cfg, util.name_to_uuid[NAME])
 function bootstrap_storage(engine)
@@ -51,6 +52,7 @@ function bootstrap_storage(engine)
 end
 
 function echo(...)
+    echo_count = echo_count + 1
     return ...
 end
 

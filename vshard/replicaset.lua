@@ -327,17 +327,25 @@ end
 -- available now, then use master's connection - we can not wait
 -- until failover fiber will repair the nearest connection.
 --
-local function replicaset_template_multicallro()
+local function replicaset_template_multicallro(prefer_replica)
     local function pick_next_replica(replicaset)
         local r = replicaset.replica
-        if r and r:is_connected() then
+        local master = replicaset.master
+        if prefer_replica then
+            while r do
+                if r:is_connected() and r ~= master then
+                    return r
+                end
+                r = r.next_by_priority
+            end
+        elseif r and r:is_connected() then
             return r
         end
         local conn, err = replicaset_connect_master(replicaset)
         if not conn then
             return nil, err
         end
-        return replicaset.master
+        return master
     end
 
     return function(replicaset, func, args, opts)
@@ -429,7 +437,8 @@ local replicaset_mt = {
         up_replica_priority = replicaset_up_replica_priority;
         call = replicaset_master_call;
         callrw = replicaset_master_call;
-        callro = replicaset_template_multicallro();
+        callro = replicaset_template_multicallro(false);
+        callre = replicaset_template_multicallro(true);
     };
     __tostring = replicaset_tostring;
 }

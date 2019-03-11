@@ -242,7 +242,7 @@ info
         network_timeout: number
         status: available
         uri: storage@127.0.0.1:3307
-        uuid: <fullbox_4_a>
+        uuid: <box_4_a>
       bucket:
         available_rw: 50
       uuid: <replicaset_4>
@@ -262,7 +262,7 @@ info
         network_timeout: number
         status: available
         uri: storage@127.0.0.1:3305
-        uuid: <fullbox_3_a>
+        uuid: <box_3_a>
       bucket:
         available_rw: 50
       uuid: <replicaset_3>
