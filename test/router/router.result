@@ -1102,11 +1102,13 @@ error_messages
   - Use replicaset:callre(...) instead of replicaset.callre(...)
   - Use replicaset:connect_replica(...) instead of replicaset.connect_replica(...)
   - Use replicaset:down_replica_priority(...) instead of replicaset.down_replica_priority(...)
-  - Use replicaset:call(...) instead of replicaset.call(...)
   - Use replicaset:callrw(...) instead of replicaset.callrw(...)
+  - Use replicaset:callbro(...) instead of replicaset.callbro(...)
+  - Use replicaset:connect_all(...) instead of replicaset.connect_all(...)
+  - Use replicaset:call(...) instead of replicaset.call(...)
   - Use replicaset:connect(...) instead of replicaset.connect(...)
   - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
-  - Use replicaset:connect_all(...) instead of replicaset.connect_all(...)
+  - Use replicaset:callbre(...) instead of replicaset.callbre(...)
 ...
 _, replica = next(replicaset.replicas)
 ---

@@ -297,8 +297,8 @@ end
 -- Function will restart operation after wrong bucket response until timeout
 -- is reached
 --
-local function router_call_impl(router, bucket_id, mode, prefer_replica, func,
-                                args, opts)
+local function router_call_impl(router, bucket_id, mode, prefer_replica,
+                                balance, func, args, opts)
     if opts and (type(opts) ~= 'table' or
                  (opts.timeout and type(opts.timeout) ~= 'number')) then
         error('Usage: call(bucket_id, mode, func, args, opts)')
@@ -314,7 +314,13 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica, func,
     local call
     if mode == 'read' then
         if prefer_replica then
-            call = 'callre'
+            if balance then
+                call = 'callbre'
+            else
+                call = 'callre'
+            end
+        elseif balance then
+            call = 'callbro'
         else
             call = 'callro'
         end
@@ -410,32 +416,42 @@ end
 -- Wrappers for router_call with preset mode.
 --
 local function router_callro(router, bucket_id, ...)
-    return router_call_impl(router, bucket_id, 'read', false, ...)
+    return router_call_impl(router, bucket_id, 'read', false, false, ...)
+end
+
+local function router_callbro(router, bucket_id, ...)
+    return router_call_impl(router, bucket_id, 'read', false, true, ...)
 end
 
 local function router_callrw(router, bucket_id, ...)
-    return router_call_impl(router, bucket_id, 'write', false, ...)
+    return router_call_impl(router, bucket_id, 'write', false, false, ...)
 end
 
 local function router_callre(router, bucket_id, ...)
-    return router_call_impl(router, bucket_id, 'read', true, ...)
+    return router_call_impl(router, bucket_id, 'read', true, false, ...)
+end
+
+local function router_callbre(router, bucket_id, ...)
+    return router_call_impl(router, bucket_id, 'read', true, true, ...)
 end
 
 local function router_call(router, bucket_id, opts, ...)
-    local mode, prefer_replica
+    local mode, prefer_replica, balance
     if opts then
         if type(opts) == 'string' then
             mode = opts
         elseif type(opts) == 'table' then
             mode = opts.mode or 'write'
             prefer_replica = opts.prefer_replica
+            balance = opts.balance
         else
             error('Usage: router.call(bucket_id, shard_opts, func, args, opts)')
         end
     else
         mode = 'write'
     end
-    return router_call_impl(router, bucket_id, mode, prefer_replica, ...)
+    return router_call_impl(router, bucket_id, mode, prefer_replica, balance,
+                            ...)
 end
 
 --
@@ -961,8 +977,10 @@ local router_mt = {
         buckets_info = router_buckets_info;
         call = router_call;
         callro = router_callro;
+        callbro = router_callbro;
         callrw = router_callrw;
         callre = router_callre;
+        callbre = router_callbre;
         route = router_route;
         routeall = router_routeall;
         bucket_id = router_bucket_id;

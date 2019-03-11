@@ -26,6 +26,8 @@
 --      },
 --      master = <master server from the array above>,
 --      replica = <nearest available replica object>,
+--      balance_i = <index of a next replica in priority_list to
+--                   use for a load-balanced request>,
 --      replica_up_ts = <timestamp updated on each attempt to
 --                       connect to the nearest replica, and on
 --                       each connect event>,
@@ -320,6 +322,19 @@ local function can_retry_after_error(e)
 end
 
 --
+-- Pick a next replica according to round-robin load balancing
+-- policy.
+--
+local function replicaset_balance_replica(replicaset)
+    local i = replicaset.balance_i
+    local pl = replicaset.priority_list
+    local size = #pl
+    replicaset.balance_i = i % size + 1
+    assert(i <= size)
+    return pl[i]
+end
+
+--
 -- Template to implement a function able to visit multiple
 -- replicas with certain details. One of applicatinos - a function
 -- making a call on a nearest available replica. It is possible
@@ -327,19 +342,32 @@ end
 -- available now, then use master's connection - we can not wait
 -- until failover fiber will repair the nearest connection.
 --
-local function replicaset_template_multicallro(prefer_replica)
+local function replicaset_template_multicallro(prefer_replica, balance)
     local function pick_next_replica(replicaset)
-        local r = replicaset.replica
+        local r
         local master = replicaset.master
-        if prefer_replica then
+        if balance then
+            local i = #replicaset.priority_list
+            while i > 0 do
+                r = replicaset_balance_replica(replicaset)
+                i = i - 1
+                if r:is_connected() and (not prefer_replica or r ~= master) then
+                    return r
+                end
+            end
+        elseif prefer_replica then
+            r = replicaset.replica
             while r do
                 if r:is_connected() and r ~= master then
                     return r
                 end
                 r = r.next_by_priority
             end
-        elseif r and r:is_connected() then
-            return r
+        else
+            r = replicaset.replica
+            if r and r:is_connected() then
+                return r
+            end
         end
         local conn, err = replicaset_connect_master(replicaset)
         if not conn then
@@ -437,8 +465,10 @@ local replicaset_mt = {
         up_replica_priority = replicaset_up_replica_priority;
         call = replicaset_master_call;
         callrw = replicaset_master_call;
-        callro = replicaset_template_multicallro(false);
-        callre = replicaset_template_multicallro(true);
+        callro = replicaset_template_multicallro(false, false);
+        callbro = replicaset_template_multicallro(false, true);
+        callre = replicaset_template_multicallro(true, false);
+        callbre = replicaset_template_multicallro(true, true);
     };
     __tostring = replicaset_tostring;
 }
@@ -638,6 +668,7 @@ local function buildall(sharding_cfg)
             weight = replicaset.weight,
             bucket_count = 0,
             lock = replicaset.lock,
+            balance_i = 1,
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
