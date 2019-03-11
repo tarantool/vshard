@@ -320,47 +320,56 @@ local function can_retry_after_error(e)
 end
 
 --
--- Call a function on a nearest available replica. It is possible
+-- Template to implement a function able to visit multiple
+-- replicas with certain details. One of applicatinos - a function
+-- making a call on a nearest available replica. It is possible
 -- for 'read' requests only. And if the nearest replica is not
 -- available now, then use master's connection - we can not wait
 -- until failover fiber will repair the nearest connection.
 --
-local function replicaset_nearest_call(replicaset, func, args, opts)
-    assert(opts == nil or type(opts) == 'table')
-    assert(type(func) == 'string', 'function name')
-    assert(args == nil or type(args) == 'table', 'function arguments')
-    opts = opts or {}
-    local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
-    local net_status, storage_status, retval, error_object
-    local end_time = fiber.time() + timeout
-    while not net_status and timeout > 0 do
-        local replica = replicaset.replica
-        local conn
-        if replica and replica:is_connected() then
-            conn = replica.conn
-        else
-            conn, error_object = replicaset_connect_master(replicaset)
-            if not conn then
-                return nil, error_object
-            end
-            replica = replicaset.master
+local function replicaset_template_multicallro()
+    local function pick_next_replica(replicaset)
+        local r = replicaset.replica
+        if r and r:is_connected() then
+            return r
         end
-        opts.timeout = timeout
-        net_status, storage_status, retval, error_object =
-            replica_call(replica, func, args, opts)
-        timeout = end_time - fiber.time()
-        if not net_status and not storage_status and
-           not can_retry_after_error(retval) then
-            -- There is no sense to retry LuaJit errors, such as
-            -- assetions, not defined variables etc.
-            net_status = true
-            break
+        local conn, err = replicaset_connect_master(replicaset)
+        if not conn then
+            return nil, err
         end
+        return replicaset.master
     end
-    if not net_status then
-        return nil, lerror.make(retval)
-    else
-        return storage_status, retval, error_object
+
+    return function(replicaset, func, args, opts)
+        assert(opts == nil or type(opts) == 'table')
+        assert(type(func) == 'string', 'function name')
+        assert(args == nil or type(args) == 'table', 'function arguments')
+        opts = opts or {}
+        local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
+        local net_status, storage_status, retval, err
+        local end_time = fiber.time() + timeout
+        while not net_status and timeout > 0 do
+            local replica, err = pick_next_replica(replicaset)
+            if not replica then
+                return nil, err
+            end
+            opts.timeout = timeout
+            net_status, storage_status, retval, err =
+                replica_call(replica, func, args, opts)
+            timeout = end_time - fiber.time()
+            if not net_status and not storage_status and
+               not can_retry_after_error(retval) then
+                -- There is no sense to retry LuaJit errors, such as
+                -- assetions, not defined variables etc.
+                net_status = true
+                break
+            end
+        end
+        if not net_status then
+            return nil, lerror.make(retval)
+        else
+            return storage_status, retval, err
+        end
     end
 end
 
@@ -420,7 +429,7 @@ local replicaset_mt = {
         up_replica_priority = replicaset_up_replica_priority;
         call = replicaset_master_call;
         callrw = replicaset_master_call;
-        callro = replicaset_nearest_call;
+        callro = replicaset_template_multicallro();
     };
     __tostring = replicaset_tostring;
 }
