@@ -287,7 +287,29 @@ e.trace = nil
 ...
 e
 ---
-- {'type': 'ClientError', 'message': 'Unknown error', 'code': 32}
+- type: ClientError
+  message: Unknown error
+  code: 32
+...
+tostring(e)
+---
+- '{"type":"ClientError","message":"Unknown error","code":32}'
+...
+_, e = vshard.router.route(1):callro('raise_client_error', {})
+---
+...
+e.trace = nil
+---
+...
+e
+---
+- type: ClientError
+  code: 0
+  message: Unknown error
+...
+tostring(e)
+---
+- '{"type":"ClientError","code":0,"message":"Unknown error"}'
 ...
 --
 -- gh-48: more precise error messages about bucket unavailability.
@@ -346,9 +368,12 @@ vshard.router.call(1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 ---
 - null
-- {'bucket_id': 1, 'code': 7, 'type': 'ShardingError', 'destination': '<replicaset_1>',
-  'name': 'TRANSFER_IS_IN_PROGRESS', 'message': 'Bucket 1 is transferring to replicaset
-    <replicaset_1>'}
+- bucket_id: 1
+  code: 7
+  type: ShardingError
+  destination: <replicaset_1>
+  name: TRANSFER_IS_IN_PROGRESS
+  message: Bucket 1 is transferring to replicaset <replicaset_1>
 ...
 _ = test_run:switch('storage_2_a')
 ---
@@ -1047,10 +1072,13 @@ _ = test_run:switch("router_1")
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
 - null
-- {'replica_uuid': '<storage_2_a>', 'replicaset_uuid': '<replicaset_2>',
-  'type': 'ShardingError', 'message': 'Replica <storage_2_a>
-    is not a master for replicaset <replicaset_2> anymore',
-  'name': 'NON_MASTER', 'code': 2}
+- replica_uuid: <storage_2_a>
+  replicaset_uuid: <replicaset_2>
+  type: ShardingError
+  message: Replica <storage_2_a> is not a master for replicaset
+    <replicaset_2> anymore
+  name: NON_MASTER
+  code: 2
 ...
 -- Reconfigure router and test that the WRITE request does work
 vshard.router.cfg(cfg)

@@ -108,6 +108,11 @@ vshard.router.static.replicasets[util.replicasets[2]].bucket_count
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
 e.trace = nil
 e
+tostring(e)
+_, e = vshard.router.route(1):callro('raise_client_error', {})
+e.trace = nil
+e
+tostring(e)
 
 --
 -- gh-48: more precise error messages about bucket unavailability.

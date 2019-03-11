@@ -201,9 +201,13 @@ test_run:grep_log('router_1', 'please update configuration')
 ...
 err
 ---
-- {'bucket_id': 100, 'reason': 'write is prohibited', 'code': 1, 'destination': 'ac522f65-aa94-4134-9f64-51ee384f1a54',
-  'type': 'ShardingError', 'name': 'WRONG_BUCKET', 'message': 'Cannot perform action
-    with bucket 100, reason: write is prohibited'}
+- bucket_id: 100
+  reason: write is prohibited
+  code: 1
+  destination: ac522f65-aa94-4134-9f64-51ee384f1a54
+  type: ShardingError
+  name: WRONG_BUCKET
+  message: 'Cannot perform action with bucket 100, reason: write is prohibited'
 ...
 --
 -- Now try again, but update configuration during call(). It must

@@ -348,7 +348,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                     return wrap_storage_call_future(storage_call_status)
                 end
             end
-            err = call_status
+            err = lerror.make(call_status)
             if err.code == lerror.code.WRONG_BUCKET or
                err.code == lerror.code.BUCKET_IS_LOCKED then
                 bucket_reset(router, bucket_id)
