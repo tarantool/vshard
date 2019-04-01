@@ -113,6 +113,9 @@ _, e = vshard.router.route(1):callro('raise_client_error', {})
 e.trace = nil
 e
 tostring(e)
+-- Ensure, that despite not working multi-return, it is allowed
+-- to return 'nil, err_obj'.
+vshard.router.callro(1, 'echo', {nil, 'error_object'}, {})
 
 --
 -- gh-48: more precise error messages about bucket unavailability.

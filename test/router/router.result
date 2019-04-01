@@ -311,6 +311,13 @@ tostring(e)
 ---
 - '{"type":"ClientError","code":0,"message":"Unknown error"}'
 ...
+-- Ensure, that despite not working multi-return, it is allowed
+-- to return 'nil, err_obj'.
+vshard.router.callro(1, 'echo', {nil, 'error_object'}, {})
+---
+- null
+- error_object
+...
 --
 -- gh-48: more precise error messages about bucket unavailability.
 --
