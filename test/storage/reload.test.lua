@@ -54,8 +54,11 @@ _ = test_run:cmd("setopt delimiter ''");
 --
 old_internal = copy_functions(vshard.storage.internal)
 package.loaded["vshard.storage"] = nil
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 vshard.storage.module_version()
+-- gh-178: bucket ref FFI constructor was nullified on reload.
+bid = box.space._bucket.index[1]:min().id
+vshard.storage.bucket_refro(bid)
 
 check_reloaded()
 
@@ -83,7 +86,7 @@ vshard.storage.module_version()
 vshard.storage.internal.errinj.ERRINJ_RELOAD = false
 old_internal = copy_functions(vshard.storage.internal)
 package.loaded["vshard.storage"] = nil
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 vshard.storage.module_version()
 check_reloaded()
 
@@ -92,7 +95,7 @@ check_reloaded()
 --
 _, rs = next(vshard.storage.internal.replicasets)
 package.loaded["vshard.storage"] = nil
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 rs.callro(rs, 'echo', {'some_data'})
 _, rs = next(vshard.storage.internal.replicasets)
 rs.callro(rs, 'echo', {'some_data'})

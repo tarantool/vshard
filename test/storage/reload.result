@@ -99,12 +99,20 @@ old_internal = copy_functions(vshard.storage.internal)
 package.loaded["vshard.storage"] = nil
 ---
 ...
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 ---
 ...
 vshard.storage.module_version()
 ---
 - 1
+...
+-- gh-178: bucket ref FFI constructor was nullified on reload.
+bid = box.space._bucket.index[1]:min().id
+---
+...
+vshard.storage.bucket_refro(bid)
+---
+- true
 ...
 check_reloaded()
 ---
@@ -160,7 +168,7 @@ old_internal = copy_functions(vshard.storage.internal)
 package.loaded["vshard.storage"] = nil
 ---
 ...
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 ---
 ...
 vshard.storage.module_version()
@@ -179,7 +187,7 @@ _, rs = next(vshard.storage.internal.replicasets)
 package.loaded["vshard.storage"] = nil
 ---
 ...
-_ = require('vshard.storage')
+vshard.storage = require('vshard.storage')
 ---
 ...
 rs.callro(rs, 'echo', {'some_data'})
