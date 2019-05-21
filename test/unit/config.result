@@ -561,3 +561,20 @@ util.check_error(lcfg.check, cfg, cfg_with_non_default)
 ---
 - Non-dynamic option shard_index cannot be reconfigured
 ...
+-- gh-170: forbid infinite replicaset weight.
+replica = {uri = 'uri:uri@uri', name = 'name'}
+---
+...
+replicaset = {replicas = {['id'] = replica}, weight = math.huge}
+---
+...
+cfg.sharding = {rsid = replicaset}
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Replicaset weight can not be Inf
+...
+cfg.sharding = nil
+---
+...

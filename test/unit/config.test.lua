@@ -223,3 +223,10 @@ cfg_with_non_default = table.copy(cfg)
 cfg.shard_index = nil
 cfg_with_non_default.shard_index = 'non_default_name'
 util.check_error(lcfg.check, cfg, cfg_with_non_default)
+
+-- gh-170: forbid infinite replicaset weight.
+replica = {uri = 'uri:uri@uri', name = 'name'}
+replicaset = {replicas = {['id'] = replica}, weight = math.huge}
+cfg.sharding = {rsid = replicaset}
+util.check_error(lcfg.check, cfg)
+cfg.sharding = nil

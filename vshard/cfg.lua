@@ -20,25 +20,37 @@ local function check_master(master, ctx)
     end
 end
 
+local function is_number(v)
+    return type(v) == 'number' and v == v
+end
+
+local function is_non_negative_number(v)
+    return is_number(v) and v >= 0
+end
+
+local function is_positive_number(v)
+    return is_number(v) and v > 0
+end
+
+local function is_non_negative_integer(v)
+    return is_non_negative_number(v) and math.floor(v) == v
+end
+
+local function is_positive_integer(v)
+    return is_positive_number(v) and math.floor(v) == v
+end
+
 local type_validate = {
     ['string'] = function(v) return type(v) == 'string' end,
     ['non-empty string'] = function(v)
         return type(v) == 'string' and #v > 0
     end,
     ['boolean'] = function(v) return type(v) == 'boolean' end,
-    ['number'] = function(v) return type(v) == 'number' end,
-    ['non-negative number'] = function(v)
-        return type(v) == 'number' and v >= 0
-    end,
-    ['positive number'] = function(v)
-        return type(v) == 'number' and v > 0
-    end,
-    ['non-negative integer'] = function(v)
-        return type(v) == 'number' and v >= 0 and math.floor(v) == v
-    end,
-    ['positive integer'] = function(v)
-        return type(v) == 'number' and v > 0 and math.floor(v) == v
-    end,
+    ['number'] = is_number,
+    ['non-negative number'] = is_non_negative_number,
+    ['positive number'] = is_positive_number,
+    ['non-negative integer'] = is_non_negative_integer,
+    ['positive integer'] = is_positive_integer,
     ['table'] = function(v) return type(v) == 'table' end,
 }
 
@@ -140,7 +152,6 @@ local function check_sharding(sharding)
     local uris = {}
     local names = {}
     local is_all_weights_zero = true
-    local weight_sum = 0
     for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
@@ -148,6 +159,10 @@ local function check_sharding(sharding)
         uuids[replicaset_uuid] = true
         if type(replicaset) ~= 'table' then
             error('Replicaset must be a table')
+        end
+        local w = replicaset.weight
+        if w == math.huge or w == -math.huge then
+            error('Replicaset weight can not be Inf')
         end
         validate_config(replicaset, replicaset_template)
         for replica_uuid, replica in pairs(replicaset.replicas) do
