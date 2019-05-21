@@ -115,7 +115,12 @@ local error_message_template = {
         name = 'BUCKET_IS_LOCKED',
         msg = 'Bucket %d is locked',
         args = {'bucket_id'},
-    }
+    },
+    [23] = {
+        name = 'INVALID_CFG',
+        msg = 'Invalid configuration: %s',
+        args = {'reason'},
+    },
 }
 
 --

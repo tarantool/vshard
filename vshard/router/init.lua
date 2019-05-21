@@ -888,6 +888,12 @@ local function router_info(router)
         state.status = math.max(state.status, consts.STATUS.YELLOW)
         table.insert(state.alerts, lerror.alert(lerror.code.UNKNOWN_BUCKETS,
                                                 bucket_info.unknown))
+    elseif bucket_info.unknown < 0 then
+        state.status = consts.STATUS.RED
+        local msg = "probably router's cfg.bucket_count is different from "..
+                    "storages' one, difference is "..(0 - bucket_info.unknown)
+        bucket_info.unknown = '???'
+        table.insert(state.alerts, lerror.alert(lerror.code.INVALID_CFG, msg))
     end
     return state
 end
