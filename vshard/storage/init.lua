@@ -445,9 +445,11 @@ local function sync(timeout)
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
-            if replica.downstream and replica.downstream.vclock and
-               not vclock_lesseq(vclock, replica.downstream.vclock) then
+            local down = replica.downstream
+            if down and (down.status == 'stopped' or
+                         not vclock_lesseq(vclock, down.vclock)) then
                 done = false
+                break
             end
         end
         if done then
