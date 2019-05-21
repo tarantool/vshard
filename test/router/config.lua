@@ -19,5 +19,6 @@ return {
                 },
             }
         }
-    }
+    },
+    replication_connect_quorum = 0,
 }

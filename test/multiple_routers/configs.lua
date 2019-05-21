@@ -5,7 +5,7 @@ rs_1_2 = util.replicasets[2]
 rs_2_1 = util.replicasets[3]
 rs_2_2 = util.replicasets[4]
 
-local cfg_1 = {}
+local cfg_1 = {replication_connect_quorum = 0}
 cfg_1.sharding = {
     [rs_1_1] = {
         replicas = {
@@ -36,7 +36,7 @@ cfg_1.sharding = {
 }
 
 
-local cfg_2 = {}
+local cfg_2 = {replication_connect_quorum = 0}
 cfg_2.sharding = {
     [rs_2_1] = {
         replicas = {

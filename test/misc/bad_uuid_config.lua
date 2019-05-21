@@ -40,4 +40,4 @@ local shard_cfg = {
 }
 
 return {cfg = shard_cfg, replicaset_uuid = replicaset_uuid,
-	name_to_uuid = name_to_uuid}
+	name_to_uuid = name_to_uuid, replication_connect_quorum = 0}

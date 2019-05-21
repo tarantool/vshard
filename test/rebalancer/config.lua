@@ -79,4 +79,5 @@ return {
     sharding = sharding,
     rebalancer_disbalance_threshold = 0.01,
     shard_index = 'vbucket',
+    replication_connect_quorum = 0,
 }

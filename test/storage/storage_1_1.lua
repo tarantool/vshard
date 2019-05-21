@@ -37,7 +37,8 @@ cfg = {
                 }
             }
         }
-    }
+    },
+    replication_connect_quorum = 0,
 }
 
 vshard = require('vshard')

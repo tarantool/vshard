@@ -28,4 +28,5 @@ return {
             },
         }, -- replicaset #2
     }, -- sharding
+    replication_connect_quorum = 0,
 }
