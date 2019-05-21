@@ -247,31 +247,12 @@ _ = test_run:cmd("stop server storage_2_a")
 box.cfg{replication_timeout = 0.01}
 ---
 ...
-vshard.storage.info()
+alerts = vshard.storage.info().alerts
 ---
-- replicasets:
-    <replicaset_2>:
-      uuid: <replicaset_2>
-      master:
-        uri: storage@127.0.0.1:3303
-    <replicaset_1>:
-      uuid: <replicaset_1>
-      master:
-        uri: storage@127.0.0.1:3301
-  bucket:
-    receiving: 0
-    active: 2
-    total: 2
-    garbage: 0
-    pinned: 0
-    sending: 0
-  status: 1
-  replication:
-    status: disconnected
-    idle: <idle>
-  alerts:
-  - ['UNREACHABLE_MASTER', 'Master of replicaset <replicaset_2>
-      is unreachable: disconnected']
+...
+#alerts == 1 and alerts[1][1] or alerts
+---
+- UNREACHABLE_MASTER
 ...
 _ = test_run:cmd("start server storage_2_a")
 ---

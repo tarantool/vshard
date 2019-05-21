@@ -70,7 +70,8 @@ box.cfg{replication_timeout = 0.01}
 vshard.storage.info()
 _ = test_run:cmd("stop server storage_2_a")
 box.cfg{replication_timeout = 0.01}
-vshard.storage.info()
+alerts = vshard.storage.info().alerts
+#alerts == 1 and alerts[1][1] or alerts
 _ = test_run:cmd("start server storage_2_a")
 _ = test_run:switch("storage_2_a")
 fiber = require('fiber')
