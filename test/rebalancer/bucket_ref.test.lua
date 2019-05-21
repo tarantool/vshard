@@ -52,8 +52,16 @@ vshard.storage.bucket_unref(1, 'read')
 -- Force GC to take an RO lock on the bucket now.
 vshard.storage.garbage_collector_wakeup()
 vshard.storage.buckets_info(1)
-while box.space._bucket:get{1}.status ~= vshard.consts.BUCKET.GARBAGE do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
-vshard.storage.garbage_collector_wakeup()
+_ = test_run:cmd("setopt delimiter ';'")
+while true do
+	local i = vshard.storage.buckets_info(1)[1]
+    if i.status == vshard.consts.BUCKET.GARBAGE and i.ro_lock then
+        break
+    end
+    vshard.storage.garbage_collector_wakeup()
+    fiber.sleep(0.01)
+end;
+_ = test_run:cmd("setopt delimiter ''");
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_refro(1)
 finish_refs = true
