@@ -100,10 +100,12 @@ end
 local function replicaset_connect_to_replica(replicaset, replica)
     local conn = replica.conn
     if not conn or conn.state == 'closed' then
+        log.info('netbox connect begin')
         conn = netbox.connect(replica.uri, {
             reconnect_after = consts.RECONNECT_TIMEOUT,
             wait_connected = false
         })
+        log.info('netbox connect end')
         conn.replica = replica
         conn.replicaset = replicaset
         conn:on_connect(netbox_on_connect)
@@ -290,18 +292,23 @@ local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
+    log.info('connect master begin')
     local conn, err = replicaset_connect_master(replicaset)
     if not conn then
+        log.info('connect master end error')
         return nil, err
     end
+    log.info('connect master end success')
     if not opts then
         opts = {timeout = replicaset.master.net_timeout}
     elseif not opts.timeout then
         opts = table.copy(opts)
         opts.timeout = replicaset.master.net_timeout
     end
+    log.info('replica call begin')
     local net_status, storage_status, retval, error_object =
         replica_call(replicaset.master, func, args, opts)
+    log.info('replica call end')
     -- Ignore net_status - master does not retry requests.
     return storage_status, retval, error_object
 end
