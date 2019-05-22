@@ -188,6 +188,19 @@ vshard.router.callrw(bucket_id, 'space_insert', {'test', {1, bucket_id}})
 vshard.router.callrw(bucket_id, 'vshard.storage.sync', {})
 vshard.router.callro(bucket_id, 'space_get', {'test', {1}})
 vshard.router.callro(bucket_id + 1500, 'space_get', {'test', {1}}) -- nothing
+-- Check that call does not modify its argument.
+opts = {}
+vshard.router.callrw(bucket_id, 'echo', {'echo'}, opts)
+opts
+opts = {}
+vshard.router.callro(bucket_id, 'echo', {'echo'}, opts)
+opts
+opts = {}
+vshard.router.route(bucket_id):callrw('echo', {'echo'}, opts)
+opts
+opts = {}
+vshard.router.route(bucket_id):callro('echo', {'echo'}, opts)
+opts
 
 --
 -- gh-82: support box.session.push().

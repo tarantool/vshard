@@ -299,9 +299,12 @@ end
 --
 local function router_call_impl(router, bucket_id, mode, prefer_replica,
                                 balance, func, args, opts)
-    if opts and (type(opts) ~= 'table' or
-                 (opts.timeout and type(opts.timeout) ~= 'number')) then
-        error('Usage: call(bucket_id, mode, func, args, opts)')
+    if opts then
+        if type(opts) ~= 'table' or
+           (opts.timeout and type(opts.timeout) ~= 'number') then
+            error('Usage: call(bucket_id, mode, func, args, opts)')
+        end
+        opts = table.copy(opts)
     elseif not opts then
         opts = {}
     end

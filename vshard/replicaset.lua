@@ -297,6 +297,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
     if not opts then
         opts = {timeout = replicaset.master.net_timeout}
     elseif not opts.timeout then
+        opts = table.copy(opts)
         opts.timeout = replicaset.master.net_timeout
     end
     local net_status, storage_status, retval, error_object =
@@ -380,7 +381,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         assert(opts == nil or type(opts) == 'table')
         assert(type(func) == 'string', 'function name')
         assert(args == nil or type(args) == 'table', 'function arguments')
-        opts = opts or {}
+        opts = opts and table.copy(opts) or {}
         local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
         local net_status, storage_status, retval, err, replica
         local end_time = fiber.time() + timeout
