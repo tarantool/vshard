@@ -2079,7 +2079,9 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     reload_evolution.upgrade(M)
-    storage_cfg(M.current_cfg, M.this_replica.uuid, true)
+    if M.current_cfg then
+        storage_cfg(M.current_cfg, M.this_replica.uuid, true)
+    end
     M.module_version = M.module_version + 1
 end
 

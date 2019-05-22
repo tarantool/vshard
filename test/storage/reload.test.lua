@@ -1,4 +1,20 @@
 test_run = require('test_run').new()
+
+_ = test_run:cmd("create server storage_1_1 with script='storage/storage_1_1.lua'")
+_ = test_run:cmd("start server storage_1_1")
+_ = test_run:switch('storage_1_1')
+
+--
+-- gh-182: reload should work even if storage.cfg() was not
+-- called.
+--
+package.loaded["vshard.storage"] = nil
+vshard.storage = require('vshard.storage')
+
+_ = test_run:switch('default')
+_ = test_run:cmd('stop server storage_1_1')
+_ = test_run:cmd('cleanup server storage_1_1')
+
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 test_run:create_cluster(REPLICASET_1, 'storage')
