@@ -961,14 +961,27 @@ local function router_sync(router, timeout)
     if timeout ~= nil and type(timeout) ~= 'number' then
         error('Usage: vshard.router.sync([timeout: number])')
     end
+    local arg = {timeout}
+    local clock = lfiber.clock
+    local deadline = timeout and (clock() + timeout)
+    local opts = {timeout = timeout}
     for rs_uuid, replicaset in pairs(router.replicasets) do
-        local status, err = replicaset:callrw('vshard.storage.sync', {timeout})
+        if timeout and timeout < 0 then
+            return nil, box.error.new(box.error.TIMEOUT)
+        end
+        local status, err = replicaset:callrw('vshard.storage.sync', arg, opts)
         if not status then
             -- Add information about replicaset
             err.replicaset = rs_uuid
             return nil, err
         end
+        if timeout then
+            timeout = deadline - clock()
+            arg[1] = timeout
+            opts.timeout = timeout
+        end
     end
+    return true
 end
 
 if M.errinj.ERRINJ_RELOAD then

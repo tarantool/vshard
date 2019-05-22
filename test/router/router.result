@@ -1147,6 +1147,7 @@ vshard.router.call(1, 'write', 'echo', { 'hello world' })
 -- Sync API
 vshard.router.sync()
 ---
+- true
 ...
 util.check_error(vshard.router.sync, "xxx")
 ---
@@ -1154,6 +1155,7 @@ util.check_error(vshard.router.sync, "xxx")
 ...
 vshard.router.sync(100500)
 ---
+- true
 ...
 --
 -- gh-81: Check that user passed self arg.
