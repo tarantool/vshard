@@ -18,12 +18,17 @@ env:
       - OS=el DIST=7
       - OS=fedora DIST=26
       - OS=fedora DIST=27
-      - OS=ubuntu DIST=precise
+      - OS=fedora DIST=28
+      - OS=fedora DIST=29
+      - OS=fedora DIST=30
       - OS=ubuntu DIST=trusty
       - OS=ubuntu DIST=xenial
-      - OS=debian DIST=wheezy
+      - OS=ubuntu DIST=bionic
+      - OS=ubuntu DIST=cosmic
+      - OS=ubuntu DIST=disco
       - OS=debian DIST=jessie
       - OS=debian DIST=stretch
+      - OS=debian DIST=buster
 
 script:
   - git describe --long
@@ -48,6 +53,26 @@ deploy:
   - provider: packagecloud
     username: tarantool
     repository: "1_10"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      branch: "master"
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+  - provider: packagecloud
+    username: tarantool
+    repository: "2x"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      branch: "master"
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+  - provider: packagecloud
+    username: tarantool
+    repository: "2_2"
     token: ${PACKAGECLOUD_TOKEN}
     dist: ${OS}/${DIST}
     package_glob: build/*.{deb,rpm,dsc}
