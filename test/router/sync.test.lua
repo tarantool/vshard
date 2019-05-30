@@ -1,4 +1,5 @@
 test_run = require('test_run').new()
+test_run:cmd("push filter 'line: *[0-9]+' to 'line: <line>'")
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
 test_run:create_cluster(REPLICASET_1, 'router')
