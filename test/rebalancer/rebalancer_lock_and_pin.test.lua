@@ -65,6 +65,12 @@ info.active
 info.lock
 
 --
+-- gh-189: locked replicaset does not allow to send buckets even
+-- explicitly.
+--
+vshard.storage.bucket_send(1, util.replicasets[2])
+
+--
 -- Vshard ensures that if a replicaset is locked, then it will not
 -- allow to change its bucket set even if a rebalancer does not
 -- know about a lock yet. For example, a locked replicaset could
@@ -198,6 +204,14 @@ ok, err = vshard.storage.bucket_unpin(first_id)
 assert(not ok and err)
 box.rollback()
 test_run:cmd("setopt delimiter ''");
+
+--
+-- gh-189: a pinned bucket can't be sent. Unpin is required
+-- beforehand.
+--
+vshard.storage.bucket_pin(first_id)
+vshard.storage.bucket_send(first_id, util.replicasets[2])
+vshard.storage.bucket_unpin(first_id)
 
 --
 -- Now pin some buckets and create such disbalance, that the

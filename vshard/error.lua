@@ -121,6 +121,11 @@ local error_message_template = {
         msg = 'Invalid configuration: %s',
         args = {'reason'},
     },
+    [24] = {
+        name = 'BUCKET_IS_PINNED',
+        msg = 'Bucket %d is pinned',
+        args = {'bucket_id'}
+    },
 }
 
 --

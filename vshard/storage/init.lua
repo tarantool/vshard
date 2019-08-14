@@ -949,9 +949,15 @@ end
 --
 local function bucket_send_xc(bucket_id, destination, opts)
     local uuid = box.info.cluster.uuid
-    local status, err = bucket_check_state(bucket_id, 'write')
+    local bucket, err = bucket_check_state(bucket_id, 'write')
     if err then
         return nil, err
+    end
+    if is_this_replicaset_locked() then
+        return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
+    end
+    if bucket.status == consts.BUCKET.PINNED then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
     end
     local replicaset = M.replicasets[destination]
     if replicaset == nil then
@@ -961,6 +967,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
                                   replicaset_uuid)
     end
+    local status
     local data = {}
     local spaces = find_sharded_spaces()
     local limit = consts.BUCKET_CHUNK_SIZE
