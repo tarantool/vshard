@@ -1,6 +1,10 @@
 test_run = require('test_run').new()
 ---
 ...
+test_run:cmd("push filter 'line: *[0-9]+' to 'line: <line>'")
+---
+- true
+...
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 ---
 ...
@@ -50,7 +54,7 @@ vshard.router.sync(0)
   code: 78
   trace:
   - file: builtin/box/net_box.lua
-    line: 372
+    line: <line>
   type: ClientError
   message: Timeout exceeded
 ...
