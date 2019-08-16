@@ -1,1 +1,1 @@
-test-run/test-run.py
+../test-run/test-run.py

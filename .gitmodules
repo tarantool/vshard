@@ -1,3 +1,3 @@
 [submodule "test/test-run"]
-	path = test/test-run
+	path = test-run
 	url = https://github.com/tarantool/test-run.git
