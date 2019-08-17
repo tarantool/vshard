@@ -19,7 +19,8 @@ vshard.storage.sync(0.5)
 _ = test_run:cmd('stop server storage_1_b')
 s:replace{1}
 box.info.replication[2].downstream.status
-vshard.storage.sync(0.5)
+ok, err = vshard.storage.sync(0.5)
+ok, err.code == box.error.TIMEOUT or err
 
 _ = test_run:cmd('start server storage_1_b')
 
