@@ -1,6 +1,7 @@
 #!/usr/bin/env tarantool
 
 require('strict').on()
+fiber = require('fiber')
 
 -- Check if we are running under test-run
 if os.getenv('ADMIN') then

@@ -72,6 +72,11 @@ local ROUTER_TEMPLATE = {
         -- unacknowledged. Used by failover fiber to detect if a
         -- node is down.
         failover_ping_timeout = nil,
+        --
+        -- Timeout to wait sync on storages. Used by sync() call
+        -- when no timeout is specified.
+        --
+        sync_timeout = consts.DEFAULT_SYNC_TIMEOUT,
 }
 
 local STATIC_ROUTER_NAME = '_static_router'
@@ -688,6 +693,7 @@ local function router_cfg(router, cfg, is_reload)
     router.current_cfg = cfg
     router.replicasets = new_replicasets
     router.failover_ping_timeout = vshard_cfg.failover_ping_timeout
+    router.sync_timeout = vshard_cfg.sync_timeout
     local old_route_map = router.route_map
     router.route_map = table_new(router.total_bucket_count, 0)
     for bucket, rs in pairs(old_route_map) do
@@ -958,15 +964,19 @@ local function router_bucket_count(router)
 end
 
 local function router_sync(router, timeout)
-    if timeout ~= nil and type(timeout) ~= 'number' then
-        error('Usage: vshard.router.sync([timeout: number])')
+    if timeout ~= nil then
+        if type(timeout) ~= 'number' then
+            error('Usage: vshard.router.sync([timeout: number])')
+        end
+    else
+        timeout = router.sync_timeout
     end
     local arg = {timeout}
     local clock = lfiber.clock
     local deadline = timeout and (clock() + timeout)
     local opts = {timeout = timeout}
     for rs_uuid, replicaset in pairs(router.replicasets) do
-        if timeout and timeout < 0 then
+        if timeout < 0 then
             return nil, box.error.new(box.error.TIMEOUT)
         end
         local status, err = replicaset:callrw('vshard.storage.sync', arg, opts)
@@ -975,11 +985,9 @@ local function router_sync(router, timeout)
             err.replicaset = rs_uuid
             return nil, err
         end
-        if timeout then
-            timeout = deadline - clock()
-            arg[1] = timeout
-            opts.timeout = timeout
-        end
+        timeout = deadline - clock()
+        arg[1] = timeout
+        opts.timeout = timeout
     end
     return true
 end

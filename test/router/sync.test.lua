@@ -17,6 +17,34 @@ vshard.router.bootstrap()
 vshard.router.sync(-1)
 vshard.router.sync(0)
 
+--
+-- gh-190: router should not ignore cfg.sync_timeout.
+--
+test_run:cmd('stop server storage_1_b')
+test_run:switch('storage_1_a')
+cfg.sync_timeout = 0.01
+vshard.storage.cfg(cfg, box.info.uuid)
+
+test_run:switch('router_1')
+cfg.sync_timeout = 0.1
+vshard.router.cfg(cfg)
+start = fiber.time()
+ok, err = vshard.router.sync()
+ok, err ~= nil
+-- Storage 1a has no 1b replica available. Its sync would fail in
+-- ~0.01 seconds by timeout by default. But router should pass its
+-- own sync_timeout - 0.1.
+fiber.time() - start >= 0.1
+cfg.sync_timeout = nil
+vshard.router.cfg(cfg)
+
+test_run:switch('storage_1_a')
+cfg.sync_timeout = nil
+vshard.storage.cfg(cfg, box.info.uuid)
+
+test_run:switch('router_1')
+test_run:cmd('start server storage_1_b')
+
 test_run:cmd('stop server storage_1_a')
 ok, err = nil, nil
 -- Check that explicit timeout overwrites automatic ones.

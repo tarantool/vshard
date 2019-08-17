@@ -459,7 +459,7 @@ local function sync(timeout)
         lfiber.sleep(0.001)
     until not (lfiber.time() <= tstart + timeout)
     log.warn("Timed out during synchronizing replicaset")
-    return false
+    return nil, lerror.make(box.error.new(box.error.TIMEOUT))
 end
 
 --------------------------------------------------------------------------------

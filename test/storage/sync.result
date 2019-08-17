@@ -57,7 +57,13 @@ box.info.replication[2].downstream.status
 ...
 vshard.storage.sync(0.5)
 ---
-- false
+- null
+- type: ClientError
+  code: 78
+  message: Timeout exceeded
+  trace:
+  - file: '.../gerold/Work/Repositories/vshard/vshard/storage/init.lua'
+    line: 462
 ...
 _ = test_run:cmd('start server storage_1_b')
 ---
