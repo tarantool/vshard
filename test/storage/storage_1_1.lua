@@ -38,6 +38,7 @@ cfg = {
             }
         }
     },
+    replication_connect_timeout = 0.01,
     replication_connect_quorum = 0,
 }
 

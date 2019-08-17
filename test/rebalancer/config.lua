@@ -80,4 +80,5 @@ return {
     rebalancer_disbalance_threshold = 0.01,
     shard_index = 'vbucket',
     replication_connect_quorum = 0,
+    replication_connect_timeout = 0.01,
 }

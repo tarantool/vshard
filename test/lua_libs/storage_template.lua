@@ -14,6 +14,7 @@ end
 vshard = require('vshard')
 echo_count = 0
 cfg.replication_connect_timeout = 3
+cfg.replication_timeout = 0.1
 vshard.storage.cfg(cfg, util.name_to_uuid[NAME])
 function bootstrap_storage(engine)
     box.once("testapp:schema:1", function()
