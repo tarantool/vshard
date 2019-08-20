@@ -1360,25 +1360,29 @@ end
 --     ...
 -- }
 --
--- @retval Maximal disbalance over all replicasets.
+-- @retval Maximal disbalance over all replicasets, and UUID of
+--        a replicaset having it.
 --
 local function rebalancer_calculate_metrics(replicasets)
     local max_disbalance = 0
-    for _, replicaset in pairs(replicasets) do
+    local max_disbalance_uuid
+    for uuid, replicaset in pairs(replicasets) do
         local needed = replicaset.etalon_bucket_count - replicaset.bucket_count
         if replicaset.etalon_bucket_count ~= 0 then
             local disbalance =
                 math.abs(needed) / replicaset.etalon_bucket_count * 100
             if disbalance > max_disbalance then
                 max_disbalance = disbalance
+                max_disbalance_uuid = uuid
             end
         elseif replicaset.bucket_count ~= 0 then
             max_disbalance = math.huge
+            max_disbalance_uuid = uuid
         end
         assert(needed >= 0 or -needed <= replicaset.bucket_count)
         replicaset.needed = needed
     end
-    return max_disbalance
+    return max_disbalance, max_disbalance_uuid
 end
 
 --
@@ -1582,10 +1586,24 @@ local function rebalancer_f()
         end
         lreplicaset.calculate_etalon_balance(replicasets,
                                              total_bucket_active_count)
-        local max_disbalance = rebalancer_calculate_metrics(replicasets)
-        if max_disbalance <= M.rebalancer_disbalance_threshold then
-            log.info('The cluster is balanced ok. Schedule next rebalancing '..
-                     'after %f seconds', consts.REBALANCER_IDLE_INTERVAL)
+        local max_disbalance, max_disbalance_uuid =
+            rebalancer_calculate_metrics(replicasets)
+        local threshold = M.rebalancer_disbalance_threshold
+        if max_disbalance <= threshold then
+            local balance_msg
+            if max_disbalance > 0 then
+                local rep = replicasets[max_disbalance_uuid]
+                balance_msg = string.format(
+                    'The cluster is balanced ok with max disbalance %f%% at '..
+                    '"%s": etalon bucket count is %d, stored count is %d. '..
+                    'The disbalance is smaller than your threshold %f%%, '..
+                    'nothing to do.', max_disbalance, max_disbalance_uuid,
+                    rep.etalon_bucket_count, rep.bucket_count, threshold)
+            else
+                balance_msg = 'The cluster is balanced ok.'
+            end
+            log.info('%s Schedule next rebalancing after %f seconds',
+                     balance_msg, consts.REBALANCER_IDLE_INTERVAL)
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
             goto continue
         end
