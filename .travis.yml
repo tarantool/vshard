@@ -80,6 +80,16 @@ deploy:
     on:
       branch: "master"
       condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+  - provider: packagecloud
+    username: tarantool
+    repository: "2_3"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      branch: "master"
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
     # Deploy packages to PackageCloud from tags
     # see:
     #   * https://github.com/tarantool/tarantool/issues/3745
@@ -117,6 +127,16 @@ deploy:
   - provider: packagecloud
     username: tarantool
     repository: "2_2"
+    token: ${PACKAGECLOUD_TOKEN}
+    dist: ${OS}/${DIST}
+    package_glob: build/*.{deb,rpm,dsc}
+    skip_cleanup: true
+    on:
+      tags: true
+      condition: -n "${OS}" && -n "${DIST}" && -n "${PACKAGECLOUD_TOKEN}"
+  - provider: packagecloud
+    username: tarantool
+    repository: "2_3"
     token: ${PACKAGECLOUD_TOKEN}
     dist: ${OS}/${DIST}
     package_glob: build/*.{deb,rpm,dsc}
