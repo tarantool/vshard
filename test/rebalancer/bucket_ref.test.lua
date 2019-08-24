@@ -15,6 +15,11 @@ util.push_rs_filters(test_run)
 -- allow bucket transfer or GC during a request execution.
 --
 _ = test_run:switch('box_1_a')
+vshard.storage.bucket_force_create(1, 100)
+_ = test_run:switch('box_2_a')
+vshard.storage.bucket_force_create(101, 100)
+_ = test_run:switch('box_1_a')
+
 box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
 
 vshard.storage.bucket_refro(1)
@@ -70,6 +75,7 @@ vshard.storage.buckets_info(1)
 while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
 _ = test_run:switch('box_2_a')
 vshard.storage.buckets_info(1)
+vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = false
 
 --
 -- Test that when bucket_send waits for rw == 0, it is waked up
@@ -86,6 +92,52 @@ while vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 _ = test_run:switch('box_1_a')
 vshard.storage.buckets_info(1)
+
+--
+-- Rebalancer takes buckets starting from the minimal id. If a
+-- bucket with that ID is locked, it should try another. The case
+-- makes bucket with minimal ID locked for RW requests. The only
+-- function taking the lock is bucket_send, so to test that a
+-- manual bucket_send is called before rebalancer.
+--
+keep_lock = true
+send_result = nil
+-- To make first bucket_send keeping rw_lock it is necessary to
+-- make rw ref counter > 0.
+fiber_to_ref = fiber.create(function()						\
+	vshard.storage.bucket_refrw(1)						\
+	while keep_lock do							\
+		fiber.sleep(0.01)						\
+	end									\
+	vshard.storage.bucket_unrefrw(1)					\
+end)
+while vshard.storage.buckets_info(1)[1].ref_rw ~= 1 do fiber.sleep(0.01) end
+
+-- Now bucket_send on that bucket blocks.
+fiber_to_lock = fiber.create(function()						\
+	send_result = {								\
+		vshard.storage.bucket_send(1, util.replicasets[2],		\
+					   {timeout = 9999999})			\
+	}									\
+end)
+while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
+
+
+cfg.sharding[util.replicasets[1]].weight = 99
+cfg.sharding[util.replicasets[2]].weight = 101
+cfg.rebalancer_disbalance_threshold = 0
+vshard.storage.cfg(cfg, box.info.uuid)
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+
+-- Cleanup after the test.
+keep_lock = false
+while not send_result do fiber.sleep(0.01) end
+send_result
+cfg.sharding[util.replicasets[1]].weight = nil
+cfg.sharding[util.replicasets[2]].weight = nil
+cfg.rebalancer_disbalance_threshold = nil
+vshard.storage.cfg(cfg, box.info.uuid)
+wait_rebalancer_state('The cluster is balanced ok', test_run)
 
 _ = test_run:cmd("switch default")
 test_run:drop_cluster(REPLICASET_2)

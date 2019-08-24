@@ -16,6 +16,12 @@ build_routes = vshard.storage.internal.rebalancer_build_routes
 calc_etalon = require('vshard.replicaset').calculate_etalon_balance
 ---
 ...
+dispenser = vshard.storage.internal.route_dispenser
+---
+...
+rlist = vshard.storage.internal.rlist
+---
+...
 consts = vshard.consts
 ---
 ...
@@ -996,6 +1002,260 @@ build_routes(replicasets)
     uuid4: 2500
   uuid2:
     uuid4: 2500
+...
+--
+-- gh-161: parallel rebalancer. One of the most important part of
+-- the latter is a dispenser. It is a structure which hands out
+-- destination UUIDs in a round-robin manner to worker fibers.
+--
+list = rlist.new()
+---
+...
+list
+---
+- count: 0
+...
+obj1 = {i = 1}
+---
+...
+rlist.remove(list, obj1)
+---
+...
+list
+---
+- count: 0
+...
+rlist.add_tail(list, obj1)
+---
+...
+list
+---
+- count: 1
+  last: &0
+    i: 1
+  first: *0
+...
+rlist.remove(list, obj1)
+---
+...
+list
+---
+- count: 0
+...
+obj1
+---
+- i: 1
+...
+rlist.add_tail(list, obj1)
+---
+...
+obj2 = {i = 2}
+---
+...
+rlist.add_tail(list, obj2)
+---
+...
+list
+---
+- count: 2
+  last: &0
+    i: 2
+    prev: &1
+      i: 1
+      next: *0
+  first: *1
+...
+obj3 = {i = 3}
+---
+...
+rlist.add_tail(list, obj3)
+---
+...
+list
+---
+- count: 3
+  last: &0
+    i: 3
+    prev: &1
+      i: 2
+      next: *0
+      prev: &2
+        i: 1
+        next: *1
+  first: *2
+...
+rlist.remove(list, obj2)
+---
+...
+list
+---
+- count: 2
+  last: &0
+    i: 3
+    prev: &1
+      i: 1
+      next: *0
+  first: *1
+...
+rlist.remove(list, obj1)
+---
+...
+list
+---
+- count: 1
+  last: &0
+    i: 3
+  first: *0
+...
+d = dispenser.create({uuid = 15})
+---
+...
+dispenser.pop(d)
+---
+- uuid
+...
+for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end
+---
+...
+dispenser.pop(d)
+---
+- null
+...
+dispenser.pop(d)
+---
+- null
+...
+dispenser.pop(d)
+---
+- null
+...
+dispenser.pop(d)
+---
+- null
+...
+d
+---
+- rlist:
+    count: 0
+  map:
+    uuid:
+      bucket_count: 0
+      progress: 0
+      is_throttle_warned: false
+      uuid: uuid
+      need_to_send: 15
+...
+d = dispenser.create({uuid1 = 5, uuid2 = 5})
+---
+...
+u = dispenser.pop(d)
+---
+...
+u, d
+---
+- uuid2
+- rlist:
+    count: 2
+    last: &0
+      bucket_count: 4
+      prev: &1
+        bucket_count: 5
+        next: *0
+        progress: 0
+        is_throttle_warned: false
+        uuid: uuid1
+        need_to_send: 5
+      progress: 0
+      is_throttle_warned: false
+      uuid: uuid2
+      need_to_send: 5
+    first: *1
+  map:
+    uuid1: *1
+    uuid2: *0
+...
+dispenser.put(d, u)
+---
+...
+d
+---
+- rlist:
+    count: 2
+    last: &0
+      bucket_count: 5
+      prev: &1
+        bucket_count: 5
+        next: *0
+        progress: 0
+        is_throttle_warned: false
+        uuid: uuid1
+        need_to_send: 5
+      progress: 0
+      is_throttle_warned: false
+      uuid: uuid2
+      need_to_send: 5
+    first: *1
+  map:
+    uuid1: *1
+    uuid2: *0
+...
+dispenser.throttle(d, u)
+---
+- true
+...
+d
+---
+- rlist:
+    count: 2
+    last: &0
+      bucket_count: 5
+      prev: &1
+        bucket_count: 5
+        next: *0
+        progress: 0
+        is_throttle_warned: false
+        uuid: uuid1
+        need_to_send: 5
+      progress: 0
+      is_throttle_warned: true
+      uuid: uuid2
+      need_to_send: 5
+    first: *1
+  map:
+    uuid1: *1
+    uuid2: *0
+...
+dispenser.throttle(d, u)
+---
+- false
+...
+u1 = dispenser.pop(d)
+---
+...
+u2 = dispenser.pop(d)
+---
+...
+u1, u2
+---
+- uuid1
+- uuid2
+...
+for i = 1, 4 do					\
+	assert(dispenser.pop(d) == u1)		\
+	assert(dispenser.pop(d) == u2)		\
+end
+---
+...
+-- Double skip should be ok. It happens, if there were several
+-- workers on one destination, and all of them received an error.
+d = dispenser.create({uuid1 = 1})
+---
+...
+dispenser.skip(d, 'uuid1')
+---
+...
+dispenser.skip(d, 'uuid1')
+---
 ...
 _bucket:drop()
 ---
