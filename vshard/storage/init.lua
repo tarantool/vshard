@@ -1202,12 +1202,18 @@ local function gc_bucket_drop_xc(bucket_ids, status)
         return
     end
     local limit = consts.BUCKET_CHUNK_SIZE
-    local bucket_generation = M.bucket_generation
     box.begin()
     local _bucket = box.space._bucket
     for _, id in pairs(bucket_ids) do
-        bucket_guard_xc(bucket_generation, id, status)
-        _bucket:delete{id}
+        local bucket_exists = _bucket:get{id} ~= nil
+        local b = _bucket:get{id}
+        if b then
+            if b.status ~= status then
+                return error('Bucket %d status is changed. Was %s, became %s',
+                             id, status, b.status)
+            end
+            _bucket:delete{id}
+        end
         limit = limit - 1
         if limit == 0 then
             box.commit()
