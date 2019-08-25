@@ -206,7 +206,7 @@ local function bucket_guard_xc(bucket_generation, bucket_id, status)
         if not ok or (not b and status) or (b and b.status ~= status) then
             local msg =
                 string.format("bucket status is changed, was %s, became %s",
-                              status, b.status)
+                              status, b and b.status or 'dropped')
             error(lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg, nil))
         end
         return M.bucket_generation
