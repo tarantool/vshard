@@ -78,7 +78,7 @@ replicasets
     bucket_count: 0
     etalon_bucket_count: 20
 ...
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 ---
 - uuid1:
     uuid2: 20
@@ -143,7 +143,7 @@ replicasets
     bucket_count: 2
     etalon_bucket_count: 4
 ...
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 ---
 - uuid3:
     uuid2: 2
@@ -208,7 +208,7 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 172
 ...
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 ---
 - uuid1:
     uuid2: 15
@@ -274,114 +274,9 @@ replicasets
     bucket_count: 100
     etalon_bucket_count: 100
 ...
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 ---
 - []
-...
---
--- gh-4: limit number of buckets receiving at once by node. In the
--- test below a new replicaset is introduced and it needed 1000
--- buckets. But at once it can receive only specified in config
--- ones.
---
-test_run:cmd("setopt delimiter ';'")
----
-- true
-...
-replicasets = {
-	uuid1 = {bucket_count = 750, weight = 1},
-	uuid2 = {bucket_count = 750, weight = 1},
-	uuid3 = {bucket_count = 750, weight = 1},
-	uuid4 = {bucket_count = 750, weight = 1},
-	uuid5 = {bucket_count = 0, weight = 1},
-};
----
-...
-test_run:cmd("setopt delimiter ''");
----
-- true
-...
-calc_etalon(replicasets, 3000)
----
-...
-replicasets
----
-- uuid3:
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid4:
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid1:
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid5:
-    weight: 1
-    bucket_count: 0
-    etalon_bucket_count: 600
-  uuid2:
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-...
-calc_metrics(replicasets)
----
-- 100
-- uuid5
-...
-replicasets
----
-- uuid3:
-    needed: -150
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid4:
-    needed: -150
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid1:
-    needed: -150
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-  uuid5:
-    needed: 600
-    weight: 1
-    bucket_count: 0
-    etalon_bucket_count: 600
-  uuid2:
-    needed: -150
-    weight: 1
-    bucket_count: 750
-    etalon_bucket_count: 600
-...
-copy = table.deepcopy(replicasets)
----
-...
-build_routes(copy, 3)
----
-- uuid4:
-    uuid5: 150
-  uuid3:
-    uuid5: 150
-  uuid1:
-    uuid5: 150
-...
-build_routes(replicasets, 4)
----
-- uuid4:
-    uuid5: 150
-  uuid3:
-    uuid5: 150
-  uuid1:
-    uuid5: 150
-  uuid2:
-    uuid5: 150
 ...
 --
 -- Test rebalancer local state.
@@ -1025,8 +920,7 @@ replicasets
     etalon_bucket_count: 25
 ...
 --
--- gh-164: rebalancer_max_receiving limits sending buckets as
--- well as receiving ones.
+-- gh-164: rebalancer_max_receiving limits receiving buckets.
 --
 test_run:cmd("setopt delimiter ';'")
 ---
@@ -1094,11 +988,7 @@ replicasets
     bucket_count: 10000
     etalon_bucket_count: 7500
 ...
---
--- Note that in the result total sending bucket count is 7.5k,
--- but in parallel a new node will receive only 3.
---
-build_routes(replicasets, 3)
+build_routes(replicasets)
 ---
 - uuid1:
     uuid4: 2500

@@ -20,7 +20,7 @@ calc_etalon(replicasets, 100)
 replicasets
 calc_metrics(replicasets)
 replicasets
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 
 --
 -- Test removing replicasets.
@@ -36,7 +36,7 @@ calc_etalon(replicasets, 7)
 replicasets
 calc_metrics(replicasets)
 replicasets
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 
 --
 -- Test big weights.
@@ -52,7 +52,7 @@ calc_etalon(replicasets, 300)
 replicasets
 calc_metrics(replicasets)
 replicasets
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
+build_routes(replicasets)
 
 --
 -- Test no changes on already balanced cluster.
@@ -68,30 +68,7 @@ calc_etalon(replicasets, 300)
 replicasets
 calc_metrics(replicasets)
 replicasets
-build_routes(replicasets, consts.DEFAULT_REBALANCER_MAX_RECEIVING)
-
---
--- gh-4: limit number of buckets receiving at once by node. In the
--- test below a new replicaset is introduced and it needed 1000
--- buckets. But at once it can receive only specified in config
--- ones.
---
-test_run:cmd("setopt delimiter ';'")
-replicasets = {
-	uuid1 = {bucket_count = 750, weight = 1},
-	uuid2 = {bucket_count = 750, weight = 1},
-	uuid3 = {bucket_count = 750, weight = 1},
-	uuid4 = {bucket_count = 750, weight = 1},
-	uuid5 = {bucket_count = 0, weight = 1},
-};
-test_run:cmd("setopt delimiter ''");
-calc_etalon(replicasets, 3000)
-replicasets
-calc_metrics(replicasets)
-replicasets
-copy = table.deepcopy(replicasets)
-build_routes(copy, 3)
-build_routes(replicasets, 4)
+build_routes(replicasets)
 
 --
 -- Test rebalancer local state.
@@ -246,8 +223,7 @@ calc_metrics(replicasets)
 replicasets
 
 --
--- gh-164: rebalancer_max_receiving limits sending buckets as
--- well as receiving ones.
+-- gh-164: rebalancer_max_receiving limits receiving buckets.
 --
 test_run:cmd("setopt delimiter ';'")
 replicasets = {
@@ -261,10 +237,6 @@ calc_etalon(replicasets, 30000)
 replicasets
 calc_metrics(replicasets)
 replicasets
---
--- Note that in the result total sending bucket count is 7.5k,
--- but in parallel a new node will receive only 3.
---
-build_routes(replicasets, 3)
+build_routes(replicasets)
 
 _bucket:drop()

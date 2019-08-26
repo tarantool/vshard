@@ -115,9 +115,14 @@ if not M then
         -- Maximal allowed percent deviation of bucket count on a
         -- replicaset from etalon bucket count.
         rebalancer_disbalance_threshold = 0,
-        -- Maximal bucket count that can be received by a single
-        -- replicaset simultaneously.
-        rebalancer_max_receiving = 0,
+        -- How many more receiving buckets this replicaset can
+        -- handle simultaneously. This is not just a constant
+        -- 'max' number, because in that case a 'count' would be
+        -- needed. And such a 'count' wouldn't be precise, because
+        -- 'receiving' buckets can appear not only from
+        -- bucket_recv. For example, the tests can manually create
+        -- receiving buckets.
+        rebalancer_receiving_quota = consts.DEFAULT_REBALANCER_MAX_RECEIVING,
         -- Identifier of a bucket that rebalancer is sending or
         -- receiving now. If a bucket has state SENDING/RECEIVING,
         -- but its id is not stored here, it means, that its
@@ -212,6 +217,35 @@ local function bucket_guard_xc(bucket_generation, bucket_id, status)
         return M.bucket_generation
     end
     return bucket_generation
+end
+
+--
+-- Add a positive or a negative value to the receiving buckets
+-- quota. Typically this is what bucket_recv() and recovery do.
+-- @return Whether the value was added successfully and the quota
+--        is changed.
+local function bucket_receiving_quota_add(count)
+    local new_quota = M.rebalancer_receiving_quota + count
+    if new_quota >= 0 then
+        local max_quota = M.current_cfg.rebalancer_max_receiving
+        if new_quota <= max_quota then
+            M.rebalancer_receiving_quota = new_quota
+        else
+            M.rebalancer_receiving_quota = max_quota
+        end
+        return true
+    end
+    return false
+end
+
+--
+-- Reset the receiving buckets quota. It is used by recovery, when
+-- it is discovered, that no receiving buckets are left. In case
+-- there was an error which somehow prevented quota return, and a
+-- part of the quota was lost.
+--
+local function bucket_receiving_quota_reset()
+    M.rebalancer_receiving_quota = M.current_cfg.rebalancer_max_receiving
 end
 
 --------------------------------------------------------------------------------
@@ -380,6 +414,7 @@ local function recovery_step_by_type(type)
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
+    return total, recovered
 end
 
 --
@@ -396,13 +431,19 @@ local function recovery_f()
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
-        local ok, err = pcall(recovery_step_by_type, consts.BUCKET.SENDING)
+        local ok, total, recovered = pcall(recovery_step_by_type,
+                                           consts.BUCKET.SENDING)
         if not ok then
-            log.error('Error during sending buckets recovery: %s', err)
+            log.error('Error during sending buckets recovery: %s', total)
         end
-        ok, err = pcall(recovery_step_by_type, consts.BUCKET.RECEIVING)
+        ok, total, recovered = pcall(recovery_step_by_type,
+                                     consts.BUCKET.RECEIVING)
         if not ok then
-            log.error('Error during receiving buckets recovery: %s', err)
+            log.error('Error during receiving buckets recovery: %s', total)
+        elseif total == 0 then
+            bucket_receiving_quota_reset()
+        else
+            bucket_receiving_quota_add(recovered)
         end
         lfiber.sleep(consts.RECOVERY_INTERVAL)
     end
@@ -726,6 +767,9 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
                                       from)
         end
+        if not bucket_receiving_quota_add(-1) then
+            return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
+        end
         _bucket:insert({bucket_id, recvg, from})
     elseif b.status ~= recvg then
         local msg = string.format("bucket state is changed: was receiving, "..
@@ -766,6 +810,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     end
     if is_last then
         _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        bucket_receiving_quota_add(1)
         if M.errinj.ERRINJ_LONG_RECEIVE then
             box.error(box.error.TIMEOUT)
         end
@@ -1395,12 +1440,8 @@ end
 -- Move @a needed bucket count from a pool to @a dst_uuid and
 -- remember the route in @a bucket_routes table.
 --
--- @param max_receiving Maximal bucket count that can be received
---        in parallel by a single master.
---
 local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
-                                                 dst_uuid, needed,
-                                                 max_receiving)
+                                                 dst_uuid, needed)
     local to_remove_from_pool = {}
     for src_uuid, bucket_count in pairs(bucket_pool) do
         local count = math.min(bucket_count, needed)
@@ -1421,8 +1462,7 @@ local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
         if new_count == 0 then
             table.insert(to_remove_from_pool, src_uuid)
         end
-        max_receiving = max_receiving - 1
-        if needed == 0 or max_receiving == 0 then
+        if needed == 0 then
             break
         end
     end
@@ -1442,9 +1482,6 @@ end
 -- }      This parameter is a result of
 --        rebalancer_calculate_metrics().
 --
--- @param max_receiving Maximal bucket count that can be received
---        in parallel by a single master.
---
 -- @retval Bucket routes. It is a map of type: {
 --     src_uuid = {
 --         dst_uuid = number, -- Bucket count to move from
@@ -1454,7 +1491,7 @@ end
 --     ...
 -- }
 --
-local function rebalancer_build_routes(replicasets, max_receiving)
+local function rebalancer_build_routes(replicasets)
     -- Map of type: {
     --     uuid = number, -- free buckets of uuid.
     -- }
@@ -1469,7 +1506,7 @@ local function rebalancer_build_routes(replicasets, max_receiving)
     for uuid, replicaset in pairs(replicasets) do
         if replicaset.needed > 0 then
             rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes, uuid,
-                                              replicaset.needed, max_receiving)
+                                              replicaset.needed)
         end
     end
     return bucket_routes
@@ -1613,8 +1650,7 @@ local function rebalancer_f()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
             goto continue
         end
-        local routes = rebalancer_build_routes(replicasets,
-                                               M.rebalancer_max_receiving)
+        local routes = rebalancer_build_routes(replicasets)
         -- Routes table can not be empty. If it had been empty,
         -- then max_disbalance would have been calculated
         -- incorrectly.
@@ -1858,7 +1894,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     M.total_bucket_count = vshard_cfg.bucket_count
     M.rebalancer_disbalance_threshold =
         vshard_cfg.rebalancer_disbalance_threshold
-    M.rebalancer_max_receiving = vshard_cfg.rebalancer_max_receiving
+    M.rebalancer_receiving_quota = vshard_cfg.rebalancer_max_receiving
     M.shard_index = vshard_cfg.shard_index
     M.collect_bucket_garbage_interval =
         vshard_cfg.collect_bucket_garbage_interval

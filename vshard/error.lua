@@ -126,6 +126,10 @@ local error_message_template = {
         msg = 'Bucket %d is pinned',
         args = {'bucket_id'}
     },
+    [25] = {
+        name = 'TOO_MANY_RECEIVING',
+        msg = 'Too many receiving buckets at once, please, throttle'
+    },
 }
 
 --
