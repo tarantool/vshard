@@ -648,6 +648,19 @@ local function bucket_unrefrw(bucket_id)
 end
 
 --
+-- Ensure that a bucket ref exists and can be referenced for an RW
+-- request.
+--
+local function bucket_refrw_touch(bucket_id)
+    local status, err = bucket_refrw(bucket_id)
+    if not status then
+        return nil, err
+    end
+    bucket_unrefrw(bucket_id)
+    return M.bucket_refs[bucket_id]
+end
+
+--
 -- Ref/unref shortcuts for an obscure mode.
 --
 
@@ -993,12 +1006,28 @@ end
 --
 -- Send a bucket to other replicaset.
 --
-local function bucket_send_xc(bucket_id, destination, opts)
+local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local uuid = box.info.cluster.uuid
-    local bucket, err = bucket_check_state(bucket_id, 'write')
-    if err then
+    local status
+    local ref, err = bucket_refrw_touch(bucket_id)
+    if not ref then
         return nil, err
     end
+    ref.rw_lock = true
+    exception_guard.ref = ref
+    exception_guard.drop_rw_lock = true
+    local deadline = lfiber.clock() + (opts and opts.timeout or 10)
+    while ref.rw ~= 0 do
+        if not M.bucket_rw_lock_is_ready_cond:wait(deadline -
+                                                   lfiber.clock()) then
+            status, err = pcall(box.error, box.error.TIMEOUT)
+            return nil, lerror.make(err)
+        end
+        lfiber.testcancel()
+    end
+
+    local _bucket = box.space._bucket
+    local bucket = _bucket:get({bucket_id})
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -1013,15 +1042,17 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
                                   replicaset_uuid)
     end
-    local status
     local data = {}
     local spaces = find_sharded_spaces()
     local limit = consts.BUCKET_CHUNK_SIZE
     local idx = M.shard_index
     local bucket_generation = M.bucket_generation
     local sendg = consts.BUCKET.SENDING
-    local _bucket = box.space._bucket
     _bucket:replace({bucket_id, sendg, destination})
+    -- From this moment the bucket is SENDING. Such a status is
+    -- even stronger than the lock.
+    ref.rw_lock = false
+    exception_guard.drop_rw_lock = false
     for _, space in pairs(spaces) do
         local index = space.index[idx]
         local space_data = {}
@@ -1062,11 +1093,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return status, lerror.make(err)
     end
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
-    -- Replace yields and GC may manage to drop the ref.
-    local ref = M.bucket_refs[bucket_id]
-    if ref then
-        ref.ro_lock = true
-    end
+    ref.ro_lock = true
     return true
 end
 
@@ -1077,29 +1104,14 @@ local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
-    local status, err, ret = bucket_refrw(bucket_id)
-    if not status then
-        return nil, err
-    end
-    -- Ref-unref is used to force ref object creation.
-    bucket_unrefrw(bucket_id)
-    local ref = M.bucket_refs[bucket_id]
     M.rebalancer_transfering_buckets[bucket_id] = true
-    ref.rw_lock = true
-    local deadline = lfiber.clock() + (opts and opts.timeout or 10)
-    while ref.rw ~= 0 do
-        if not M.bucket_rw_lock_is_ready_cond:wait(deadline -
-                                                   lfiber.clock()) then
-            status, ret = pcall(box.error, box.error.TIMEOUT)
-            ret = lerror.make(ret)
-            status = nil
-            goto finish
-        end
+    local exception_guard = {}
+    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
+                                   exception_guard)
+    if exception_guard.drop_rw_lock then
+        exception_guard.ref.rw_lock = false
     end
-    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
-::finish::
     M.rebalancer_transfering_buckets[bucket_id] = nil
-    ref.rw_lock = false
     if status then
         if ret then
             return ret

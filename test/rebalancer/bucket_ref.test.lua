@@ -104,22 +104,24 @@ keep_lock = true
 send_result = nil
 -- To make first bucket_send keeping rw_lock it is necessary to
 -- make rw ref counter > 0.
-fiber_to_ref = fiber.create(function()						\
+function keep_ref(id)								\
 	vshard.storage.bucket_refrw(1)						\
 	while keep_lock do							\
 		fiber.sleep(0.01)						\
 	end									\
 	vshard.storage.bucket_unrefrw(1)					\
-end)
+end
+fiber_to_ref = fiber.create(keep_ref, 1)
 while vshard.storage.buckets_info(1)[1].ref_rw ~= 1 do fiber.sleep(0.01) end
 
 -- Now bucket_send on that bucket blocks.
-fiber_to_lock = fiber.create(function()						\
+function do_send(id)								\
 	send_result = {								\
-		vshard.storage.bucket_send(1, util.replicasets[2],		\
+		vshard.storage.bucket_send(id, util.replicasets[2],		\
 					   {timeout = 9999999})			\
 	}									\
-end)
+end
+fiber_to_lock = fiber.create(do_send, 1)
 while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 
 
@@ -135,8 +137,27 @@ while not send_result do fiber.sleep(0.01) end
 send_result
 cfg.sharding[util.replicasets[1]].weight = nil
 cfg.sharding[util.replicasets[2]].weight = nil
-cfg.rebalancer_disbalance_threshold = nil
 vshard.storage.cfg(cfg, box.info.uuid)
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+
+--
+-- Cancel during bucket_send. In that case all the locks should
+-- be freed, obviously.
+--
+keep_lock = true
+fiber_to_ref = fiber.create(keep_ref, 1)
+while vshard.storage.buckets_info(1)[1].ref_rw ~= 1 do fiber.sleep(0.01) end
+
+send_result = nil
+fiber_to_lock = fiber.create(do_send, 1)
+while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
+
+fiber_to_lock:cancel()
+while not send_result do fiber.sleep(0.01) end
+send_result
+vshard.storage.buckets_info(1)
+
+-- Cleanup after the test.
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 
 _ = test_run:cmd("switch default")
