@@ -78,6 +78,7 @@ return {
     bucket_count = 200,
     sharding = sharding,
     rebalancer_disbalance_threshold = 0.01,
+    rebalancer_max_sending = 5,
     shard_index = 'vbucket',
     replication_connect_quorum = 0,
     replication_connect_timeout = 0.01,

@@ -578,3 +578,43 @@ util.check_error(lcfg.check, cfg)
 cfg.sharding = nil
 ---
 ...
+--
+-- gh-161: parallel rebalancer and its option - max sending.
+--
+cfg.sharding = {}
+---
+...
+cfg.rebalancer_max_sending = 'ten'
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Rebalancer max sending bucket count must be positive integer
+...
+cfg.rebalancer_max_sending = 100
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Rebalancer max sending bucket count must not be greater than 15
+...
+cfg.rebalancer_max_sending = 0
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Rebalancer max sending bucket count must be positive integer
+...
+cfg.rebalancer_max_sending = 15
+---
+...
+lcfg.check(cfg).rebalancer_max_sending
+---
+- 15
+...
+cfg.rebalancer_max_sending = nil
+---
+...
+cfg.sharding = nil
+---
+...

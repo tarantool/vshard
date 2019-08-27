@@ -57,32 +57,36 @@ local type_validate = {
 local function validate_config(config, template, check_arg)
     for key, template_value in pairs(template) do
         local value = config[key]
+        local name = template_value.name
+        local expected_type = template_value.type
         if not value then
             if not template_value.is_optional then
-                error(string.format('%s must be specified',
-                                    template_value.name))
+                error(string.format('%s must be specified', name))
             else
                 config[key] = template_value.default
             end
         else
-            if type(template_value.type) == 'string' then
-                if not type_validate[template_value.type](value) then
-                    error(string.format('%s must be %s', template_value.name,
-                                        template_value.type))
+            if type(expected_type) == 'string' then
+                if not type_validate[expected_type](value) then
+                    error(string.format('%s must be %s', name, expected_type))
+                end
+                local max = template_value.max
+                if max and value > max then
+                    error(string.format('%s must not be greater than %s', name,
+                                        max))
                 end
             else
                 local is_valid_type_found = false
-                for _, t in pairs(template_value.type) do
+                for _, t in pairs(expected_type) do
                     if type_validate[t](value) then
                         is_valid_type_found = true
                         break
                     end
                 end
                 if not is_valid_type_found then
-                    local types = table.concat(template_value.type, ', ')
+                    local types = table.concat(expected_type, ', ')
                     error(string.format('%s must be one of the following '..
-                                        'types: %s', template_value.name,
-                                        types))
+                                        'types: %s', name, types))
                 end
             end
             if template_value.check then
@@ -222,6 +226,13 @@ local cfg_template = {
         type = 'positive integer',
         name = 'Rebalancer max receiving bucket count', is_optional = true,
         default = consts.DEFAULT_REBALANCER_MAX_RECEIVING
+    },
+    rebalancer_max_sending = {
+        type = 'positive integer',
+        name = 'Rebalancer max sending bucket count',
+        is_optional = true,
+        default = consts.DEFAULT_REBALANCER_MAX_SENDING,
+        max = consts.REBALANCER_MAX_SENDING_MAX
     },
     collect_bucket_garbage_interval = {
         type = 'positive number', name = 'Garbage bucket collect interval',

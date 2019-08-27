@@ -230,3 +230,18 @@ replicaset = {replicas = {['id'] = replica}, weight = math.huge}
 cfg.sharding = {rsid = replicaset}
 util.check_error(lcfg.check, cfg)
 cfg.sharding = nil
+
+--
+-- gh-161: parallel rebalancer and its option - max sending.
+--
+cfg.sharding = {}
+cfg.rebalancer_max_sending = 'ten'
+util.check_error(lcfg.check, cfg)
+cfg.rebalancer_max_sending = 100
+util.check_error(lcfg.check, cfg)
+cfg.rebalancer_max_sending = 0
+util.check_error(lcfg.check, cfg)
+cfg.rebalancer_max_sending = 15
+lcfg.check(cfg).rebalancer_max_sending
+cfg.rebalancer_max_sending = nil
+cfg.sharding = nil

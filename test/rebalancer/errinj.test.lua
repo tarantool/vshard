@@ -69,7 +69,7 @@ errinj.set('ERRINJ_WAL_DELAY', false)
 -- the bucket. On the destination the bucket is applied too long,
 -- and the bucket_send gets timeout error.
 --
-while not test_run:grep_log('box_1_a', 'Can not apply routes') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
+while not test_run:grep_log('box_1_a', 'Error during rebalancer routes applying') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
 test_run:grep_log('box_1_a', 'Timeout exceeded') ~= nil
 
 test_run:switch('box_2_a')

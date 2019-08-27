@@ -129,6 +129,10 @@ if not M then
         -- but its id is not stored here, it means, that its
         -- transfer has failed.
         rebalancer_transfering_buckets = {},
+        -- How many worker fibers will execute the rebalancer
+        -- order in parallel. Each fiber sends 1 bucket at a
+        -- moment.
+        rebalancer_worker_count = consts.DEFAULT_REBALANCER_WORKER_COUNT,
         -- Map of bucket ro/rw reference counters. These counters
         -- works like bucket pins, but countable and are not
         -- persisted. Persistency is not needed since the refs are
@@ -1702,23 +1706,19 @@ local function route_dispenser_pop(dispenser)
 end
 
 --
--- Fiber function to apply routes as described below.
+-- Body of one rebalancer worker. All the workers share a
+-- dispenser to synchronize their round-robin, and a quit
+-- condition to be able to quit, when one of the workers sees that
+-- no more buckets are stored, and others took a nap because of
+-- throttling.
 --
-local function rebalancer_apply_routes_f(routes)
-    lfiber.name('vshard.rebalancer_applier')
-    log.info('Apply rebalancer routes:\n%s', yaml_encode(routes))
+local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
+    lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
     local _status = box.space._bucket.index.status
-    assert(_status:count({consts.BUCKET.SENDING}) == 0)
-    assert(_status:count({consts.BUCKET.RECEIVING}) == 0)
-    -- Can not assing it on fiber.create() like
-    -- var = fiber.create(), because when it yields, we have no
-    -- guarantee that an event loop does not contain events
-    -- between this fiber and its creator.
-    M.rebalancer_applier_fiber = lfiber.self()
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     local active_key = {consts.BUCKET.ACTIVE}
-    local dispenser = route_dispenser_create(routes)
     local uuid = route_dispenser_pop(dispenser)
+    local worker_throttle_count = 0
     local bucket_id, is_found
     while uuid do
         is_found = false
@@ -1737,14 +1737,91 @@ local function rebalancer_apply_routes_f(routes)
             break
         end
         local ret, err = bucket_send(bucket_id, uuid, opts)
-        if not ret then
-            log.error('Error during rebalancer routes applying: %s', err)
-            log.info('Can not apply routes')
-            return
+        if ret then
+            worker_throttle_count = 0
+            local finished, total = route_dispenser_sent(dispenser, uuid)
+            if finished then
+                log.info('%d buckets were successfully sent to %s', total, uuid)
+            end
+            goto continue
         end
+        route_dispenser_put(dispenser, uuid)
+        if err.type ~= 'ShardingError' or
+           err.code ~= lerror.code.TOO_MANY_RECEIVING then
+            log.error('Error during rebalancer routes applying: receiver %s, '..
+                      'error %s', uuid, err)
+            log.info('Can not finish transfers to %s, skip to next round', uuid)
+            worker_throttle_count = 0
+            route_dispenser_skip(dispenser, uuid)
+            goto continue
+        end
+        worker_throttle_count = worker_throttle_count + 1
+        if route_dispenser_throttle(dispenser, uuid) then
+            log.error('Too many buckets is being sent to %s', uuid)
+        end
+        if worker_throttle_count < dispenser.rlist.count then
+            goto continue
+        end
+        log.info('The worker was asked for throttle %d times in a row. '..
+                 'Sleep for %d seconds', worker_throttle_count,
+                 consts.REBALANCER_WORK_INTERVAL)
+        worker_throttle_count = 0
+        if not quit_cond:wait(consts.REBALANCER_WORK_INTERVAL) then
+            log.info('The worker is back')
+        end
+::continue::
         uuid = route_dispenser_pop(dispenser)
     end
+    quit_cond:broadcast()
+end
+
+--
+-- Main applier of rebalancer routes. It manages worker fibers,
+-- logs total results.
+--
+local function rebalancer_apply_routes_f(routes)
+    lfiber.name('vshard.rebalancer_applier')
+    local worker_count = M.rebalancer_worker_count
+    setmetatable(routes, {__serialize = 'mapping'})
+    log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
+             yaml_encode(routes))
+    local dispenser = route_dispenser_create(routes)
+    local _status = box.space._bucket.index.status
+    assert(_status:count({consts.BUCKET.SENDING}) == 0)
+    assert(_status:count({consts.BUCKET.RECEIVING}) == 0)
+    -- Can not assign it on fiber.create() like
+    -- var = fiber.create(), because when it yields, we have no
+    -- guarantee that an event loop does not contain events
+    -- between this fiber and its creator.
+    M.rebalancer_applier_fiber = lfiber.self()
+    local quit_cond = lfiber.cond()
+    local workers = table.new(worker_count, 0)
+    for i = 1, worker_count do
+        local f = fiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
+        f:set_joinable(true)
+        workers[i] = f
+    end
+    log.info('Rebalancer workers have started, wait for their termination')
+    for i = 1, worker_count do
+        local f = workers[i]
+        local ok, res = f:join()
+        if not ok then
+            log.error('Rebalancer worker %d threw an exception: %s', i, res)
+        end
+    end
     log.info('Rebalancer routes are applied')
+    local throttled = {}
+    for uuid, dst in pairs(dispenser.map) do
+        if dst.is_throttle_warned then
+            table.insert(throttled, uuid)
+        end
+    end
+    if next(throttled) then
+        log.warn('Note, the replicasets {%s} reported too many receiving '..
+                 'buckets. Perhaps you need to increase '..
+                 '"rebalancer_max_receiving" or decrease '..
+                 '"rebalancer_worker_count"', table.concat(throttled, ', '))
+    end
 end
 
 --
@@ -2099,6 +2176,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     M.collect_bucket_garbage_interval =
         vshard_cfg.collect_bucket_garbage_interval
     M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
+    M.rebalancer_worker_count = vshard_cfg.rebalancer_max_sending
     M.current_cfg = cfg
 
     if was_master and not is_master then
