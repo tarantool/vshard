@@ -1267,8 +1267,9 @@ local function gc_bucket_drop_xc(bucket_ids, status)
         local b = _bucket:get{id}
         if b then
             if b.status ~= status then
-                return error('Bucket %d status is changed. Was %s, became %s',
-                             id, status, b.status)
+                return error(string.format('Bucket %d status is changed. Was '..
+                                           '%s, became %s', id, status,
+                                           b.status))
             end
             _bucket:delete{id}
         end
