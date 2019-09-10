@@ -106,7 +106,9 @@ local function replicaset_connect_to_replica(replicaset, replica)
         })
         conn.replica = replica
         conn.replicaset = replicaset
+        conn.on_connect_ref = netbox_on_connect
         conn:on_connect(netbox_on_connect)
+        conn.on_disconnect_ref = netbox_on_disconnect
         conn:on_disconnect(netbox_on_disconnect)
         replica.conn = conn
     end
@@ -270,8 +272,10 @@ local function replica_detach_conn(replica)
         -- The connection now has nothing to do with the replica
         -- object. In particular, it shall not touch up and down
         -- ts.
-        c:on_connect(nil, netbox_on_connect)
-        c:on_disconnect(nil, netbox_on_disconnect)
+        c:on_connect(nil, c.on_connect_ref)
+        c.on_connect_ref = nil
+        c:on_disconnect(nil, c.on_disconnect_ref)
+        c.on_disconnect_ref = nil
         -- Detach looks like disconnect for an observer.
         netbox_on_disconnect(c)
         c.replica = nil

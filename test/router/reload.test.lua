@@ -123,6 +123,15 @@ replica_old.conn == nil
 replica_old.is_outdated == true
 rs_new:callro('echo', {'some_data'})
 
+--
+-- gh-193: code should not rely on global function addresses
+-- stability. They change at reload. Because of that, for example,
+-- removal of an old trigger becomes impossible by a global
+-- function name.
+--
+-- The call below should not throw an exception.
+rs_new.master:detach_conn()
+
 _ = test_run:switch('default')
 _ = test_run:cmd('stop server router_1')
 _ = test_run:cmd('cleanup server router_1')
