@@ -191,10 +191,102 @@ local function bucket_resolve(router, bucket_id)
 end
 
 --
+-- Arrange downloaded buckets to the route map so as they
+-- reference a given replicaset.
+--
+local function discovery_handle_buckets(router, replicaset, buckets)
+    local count = replicaset.bucket_count
+    local affected = {}
+    for _, bucket_id in pairs(buckets) do
+        local old_rs = router.route_map[bucket_id]
+        if old_rs ~= replicaset then
+            count = count + 1
+            if old_rs then
+                local bc = old_rs.bucket_count
+                if not affected[old_rs] then
+                    affected[old_rs] = bc
+                end
+                old_rs.bucket_count = bc - 1
+            end
+            router.route_map[bucket_id] = replicaset
+        end
+    end
+    if count ~= replicaset.bucket_count then
+        log.info('Updated %s buckets: was %d, became %d', replicaset,
+                 replicaset.bucket_count, count)
+    end
+    replicaset.bucket_count = count
+    for rs, old_bucket_count in pairs(affected) do
+        log.info('Affected buckets of %s: was %d, became %d', rs,
+                 old_bucket_count, rs.bucket_count)
+    end
+end
+
+local discovery_f
+
+if util.version_is_at_least(1, 10, 0) then
+--
+-- >= 1.10 version of discovery fiber does parallel discovery of
+-- all replicasets at once. It uses is_async feature of netbox
+-- for that.
+--
+discovery_f = function(router)
+    local module_version = M.module_version
+    while module_version == M.module_version do
+        while not next(router.replicasets) do
+            lfiber.sleep(consts.DISCOVERY_INTERVAL)
+        end
+        if module_version ~= M.module_version then
+            return
+        end
+        -- Just typical map reduce - send request to each
+        -- replicaset in parallel, and collect responses.
+        local pending = {}
+        local opts = {timeout = consts.DISCOVERY_INTERVAL, is_async = true}
+        local args = {}
+        for rs_uuid, replicaset in pairs(router.replicasets) do
+            local future, err =
+                replicaset:callro('vshard.storage.buckets_discovery',
+                                  args, opts)
+            if not future then
+                log.error('Error during discovery %s: %s', rs_uuid, err)
+            else
+                pending[rs_uuid] = future
+            end
+        end
+
+        local deadline = lfiber.clock() + consts.DISCOVERY_INTERVAL
+        for rs_uuid, p in pairs(pending) do
+            lfiber.yield()
+            local timeout = deadline - lfiber.clock()
+            local buckets, err = p:wait_result(timeout)
+            while M.errinj.ERRINJ_LONG_DISCOVERY do
+                M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
+                lfiber.sleep(0.01)
+            end
+            local replicaset = router.replicasets[rs_uuid]
+            if not buckets then
+                log.error('Error during discovery %s: %s', rs_uuid, err)
+            elseif module_version ~= M.module_version then
+                return
+            elseif replicaset then
+                discovery_handle_buckets(router, replicaset, buckets[1])
+            end
+        end
+
+        lfiber.sleep(deadline - lfiber.clock())
+    end
+end
+
+-- Version >= 1.10.
+else
+-- Version < 1.10.
+
+--
 -- Background fiber to perform discovery. It periodically scans
 -- replicasets one by one and updates route_map.
 --
-local function discovery_f(router)
+discovery_f = function(router)
     local module_version = M.module_version
     while module_version == M.module_version do
         while not next(router.replicasets) do
@@ -217,23 +309,14 @@ local function discovery_f(router)
             if not active_buckets then
                 log.error('Error during discovery %s: %s', replicaset, err)
             else
-                if #active_buckets ~= replicaset.bucket_count then
-                    log.info('Updated %s buckets: was %d, became %d',
-                             replicaset, replicaset.bucket_count,
-                             #active_buckets)
-                end
-                replicaset.bucket_count = #active_buckets
-                for _, bucket_id in pairs(active_buckets) do
-                    local old_rs = router.route_map[bucket_id]
-                    if old_rs and old_rs ~= replicaset then
-                        old_rs.bucket_count = old_rs.bucket_count - 1
-                    end
-                    router.route_map[bucket_id] = replicaset
-                end
+                discovery_handle_buckets(router, replicaset, buckets)
             end
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
         end
     end
+end
+
+-- Version < 1.10.
 end
 
 --

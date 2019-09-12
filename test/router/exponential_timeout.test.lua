@@ -24,7 +24,7 @@ util.collect_timeouts(rs2)
 -- Test a case, when timeout is already minimal and tries to
 -- decrease.
 --
-for i = 1, 9 do rs1:callrw('echo') end
+for i = 1, 8 do rs1:callrw('echo') end
 util.collect_timeouts(rs1)
 _ = rs1:callrw('echo')
 util.collect_timeouts(rs1)

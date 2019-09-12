@@ -184,6 +184,9 @@ test_run:switch('bad_uuid_router')
 - true
 ...
 -- Can not discovery - UUID of bucket 1 replicaset is incorrect.
+vshard.router.static.route_map[1] = nil
+---
+...
 vshard.router.bucket_discovery(1)
 ---
 - null

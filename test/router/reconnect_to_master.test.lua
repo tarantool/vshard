@@ -21,11 +21,11 @@ _ = test_run:switch('storage_1_b')
 _bucket = box.space._bucket
 while _bucket:count() ~= 10 do fiber.sleep(0.1) end
 
-_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
-_ = test_run:cmd("start server router_1")
-
 -- Break a connection to a master.
 _ = test_run:cmd('stop server storage_1_a')
+
+_ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
+_ = test_run:cmd("start server router_1")
 
 _ = test_run:switch('router_1')
 util = require('util')

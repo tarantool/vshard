@@ -66,6 +66,7 @@ test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a'
 
 test_run:switch('bad_uuid_router')
 -- Can not discovery - UUID of bucket 1 replicaset is incorrect.
+vshard.router.static.route_map[1] = nil
 vshard.router.bucket_discovery(1)
 -- Ok to work with correct replicasets.
 vshard.router.bucket_discovery(2).uuid

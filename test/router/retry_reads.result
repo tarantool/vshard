@@ -53,7 +53,7 @@ util.collect_timeouts(rs1)
     ok: 0
     timeout: 0.5
   - fail: 0
-    ok: 0
+    ok: 1
     timeout: 0.5
 ...
 _ = rs1:callro('sleep', {min_timeout + 0.5}, {timeout = min_timeout})
