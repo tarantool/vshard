@@ -59,7 +59,7 @@ local function validate_config(config, template, check_arg)
         local value = config[key]
         local name = template_value.name
         local expected_type = template_value.type
-        if not value then
+        if value == nil then
             if not template_value.is_optional then
                 error(string.format('%s must be specified', name))
             else
