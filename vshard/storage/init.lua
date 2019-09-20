@@ -841,7 +841,7 @@ end
 --
 local function bucket_recv(bucket_id, from, data, opts)
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
-        fiber.sleep(0.01)
+        lfiber.sleep(0.01)
     end
     M.rebalancer_transfering_buckets[bucket_id] = true
     local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
@@ -1797,7 +1797,7 @@ local function rebalancer_apply_routes_f(routes)
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
     for i = 1, worker_count do
-        local f = fiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
+        local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
         f:set_joinable(true)
         workers[i] = f
     end
