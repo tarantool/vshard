@@ -1931,12 +1931,7 @@ local function rebalancer_f()
         -- Routes table can not be empty. If it had been empty,
         -- then max_disbalance would have been calculated
         -- incorrectly.
-        local is_empty = true
-        for _,__ in pairs(routes) do
-            is_empty = false
-            break
-        end
-        assert(not is_empty)
+        assert(next(routes) ~= nil)
         for src_uuid, src_routes in pairs(routes) do
             local rs = M.replicasets[src_uuid]
             local status, err =
