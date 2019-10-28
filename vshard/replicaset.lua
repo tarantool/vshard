@@ -489,7 +489,7 @@ replicaset_mt.__index = index
 local replica_mt = {
     __index = {
         is_connected = function(replica)
-            return replica.conn and replica.conn.state == 'active'
+            return replica.conn and replica.conn:is_connected()
         end,
         safe_uri = function(replica)
             local uri = luri.parse(replica.uri)
