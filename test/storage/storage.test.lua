@@ -184,19 +184,32 @@ rs:callro('echo', {'some_data'})
 
 -- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
 _ = test_run:switch("storage_1_a")
-vshard.storage.internal.errinj.ERRINJ_MULTIPLE_CFG = 0
-c = fiber.channel(2)
-f = function()
-    fiber.create(function()
-        local status, err = pcall(vshard.storage.cfg, cfg, box.info.uuid)
-        c:put(status and true or false)
-    end)
-end
-f()
-f()
-c:get()
-c:get()
-vshard.storage.internal.errinj.ERRINJ_MULTIPLE_CFG = nil
+fiber_cfg_status = fiber.channel(2)
+_ = test_run:cmd("setopt delimiter ';'")
+function fiber_cfg(name) 
+	fiber.create(function()
+    	local status, err = pcall(vshard.storage.cfg, cfg, box.info.uuid)
+		fiber_cfg_status:put({
+			name = name,
+			status = status,
+		})
+	end)
+end;
+_ = test_run:cmd("setopt delimiter ''");
+
+-- Fibers apply config one after another.
+fiber_cfg("f1")
+fiber_cfg("f2")
+fiber_cfg_status:get()
+fiber_cfg_status:get()
+
+-- Second fiber gets configuration timeout error.
+vshard.storage.internal.errinj.CONCURRENT_CFG_TIMEOUT = true
+vshard.consts.STORAGE_CFG_TIMEOUT = 1
+fiber_cfg("f1")
+fiber_cfg("f2")
+fiber_cfg_status:get()
+fiber_cfg_status:get()
 
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)

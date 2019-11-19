@@ -68,7 +68,7 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
-            ERRINJ_MULTIPLE_CFG = nil,
+            ERRINJ_CONCURRENT_CFG_TIMEOUT = false,
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
@@ -1847,30 +1847,25 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
 end
 
 --
--- Wrapper around 'storage_cfg' function to provide
--- locking beafore / unlocking after pcall(storage_cfg, ...),
--- so it prevents 'storage_cfg' been called from diffenrent fibers.
--- @param ... Arguments which would be passed to the `storage_cfg`.
--- @retval true, ... on success
+-- Synchronize update of storage configuration from multiple fibers.
+-- At each point of time only single fiber can execute 'storage_cfg'.
+-- Other fibers are waiting for current call of 'storage_cfg' to return.
 --
-local function storage_cfg_wrapper(...)
-    local status, err
-    if M.errinj.ERRINJ_MULTIPLE_CFG then
-        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG + 1
-        if M.errinj.ERRINJ_MULTIPLE_CFG > 1 then
-            error('Multiple cfgs at the same time')
-        end
-        status, err = pcall(storage_cfg, ...)
-        M.errinj.ERRINJ_MULTIPLE_CFG = M.errinj.ERRINJ_MULTIPLE_CFG - 1
-    else
-        M.cfg_lock:put(true)
-        status, err = pcall(storage_cfg, ...)
-        M.cfg_lock:get()
+local function apply_storage_cfg(cfg, this_replica_uuid, is_reload)
+    if not M.cfg_lock:put(true, consts.STORAGE_CFG_TIMEOUT) then
+        error('Configuration timeout')
     end
+
+    if M.errinj.CONCURRENT_CFG_TIMEOUT then
+        fiber.sleep(consts.STORAGE_CFG_TIMEOUT * 2)
+    end
+        
+    local status, err = pcall(storage_cfg, cfg, this_replica_uuid, is_reload)
+    M.cfg_lock:get()
+        
     if not status then
         error(err)
     end
-    return true
 end
 
 --------------------------------------------------------------------------------
@@ -2090,7 +2085,7 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     reload_evolution.upgrade(M)
-    storage_cfg_wrapper(M.current_cfg, M.this_replica.uuid, true)
+    apply_storage_cfg(M.current_cfg, M.this_replica.uuid, true)
     M.module_version = M.module_version + 1
 end
 
@@ -2133,7 +2128,7 @@ return {
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
     call = storage_call,
-    cfg = function(cfg, uuid) return storage_cfg_wrapper(cfg, uuid, false) end,
+    cfg = apply_storage_cfg,
     info = storage_info,
     buckets_info = storage_buckets_info,
     buckets_count = storage_buckets_count,
