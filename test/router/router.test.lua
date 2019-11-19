@@ -498,6 +498,15 @@ vshard.router.route(1):callro('echo', {'some_data'})
 -- object.
 vshard.router.static:route(1):callro('echo', {'some_data'})
 
+--
+-- gh-201: vshard.router.call timeout <= 0 led to indexing a nil
+-- value.
+--
+_, err = vshard.router.callro(1, 'echo', {1}, {timeout = 0})
+err.message
+_, err = vshard.router.callro(1, 'echo', {1}, {timeout = -1})
+err.message
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 

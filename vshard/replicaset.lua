@@ -388,6 +388,9 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         opts = opts and table.copy(opts) or {}
         local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
         local net_status, storage_status, retval, err, replica
+        if timeout <= 0 then
+            return nil, lerror.make(box.error.new(box.error.TIMEOUT))
+        end
         local end_time = fiber.time() + timeout
         while not net_status and timeout > 0 do
             replica, err = pick_next_replica(replicaset)
