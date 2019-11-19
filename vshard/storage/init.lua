@@ -1856,7 +1856,7 @@ local function apply_storage_cfg(cfg, this_replica_uuid, is_reload)
         error('Configuration timeout')
     end
 
-    if M.errinj.CONCURRENT_CFG_TIMEOUT then
+    if M.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT then
         fiber.sleep(consts.STORAGE_CFG_TIMEOUT * 2)
     end
         

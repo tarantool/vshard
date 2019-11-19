@@ -730,7 +730,7 @@ fiber_cfg_status:get()
   status: true
 ...
 -- Second fiber gets configuration timeout error.
-vshard.storage.internal.errinj.CONCURRENT_CFG_TIMEOUT = true
+vshard.storage.internal.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT = true
 ---
 ...
 vshard.consts.STORAGE_CFG_TIMEOUT = 1
