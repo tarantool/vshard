@@ -1131,42 +1131,65 @@ vshard.router.static:route(1):callro('echo', {'some_data'})
 - null
 ...
 -- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
-cfg = {sharding = require('localcfg').sharding}
+fiber_cfg_status = fiber.channel(2)
 ---
 ...
-vshard.router.cfg(cfg)
+_ = test_run:cmd("setopt delimiter ';'")
 ---
 ...
-c = fiber.channel(2)
+function fiber_cfg(name) 
+	fiber.create(function()
+    	local status, err = pcall(vshard.router.cfg, cfg)
+		fiber_cfg_status:put({
+            name = name,
+            status = status,
+		})
+	end)
+end;
 ---
 ...
-vshard.router.internal.errinj.ERRINJ_MULTIPLE_CFG = 0
+_ = test_run:cmd("setopt delimiter ''");
 ---
 ...
-f = function()
-    fiber.create(function()
-        local status, err = pcall(vshard.router.cfg, cfg)
-        c:put(status and true or false)
-    end)
-end
+-- Fibers apply config one after another.
+fiber_cfg("f1")
 ---
 ...
-f()
+fiber_cfg("f2")
 ---
 ...
-f()
+fiber_cfg_status:get()
+---
+- name: f1
+  status: true
+...
+fiber_cfg_status:get()
+---
+- name: f2
+  status: true
+...
+-- Second fiber gets configuration timeout error.
+vshard.router.internal.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT = true
 ---
 ...
-c:get()
+vshard.consts.ROUTER_CFG_TIMEOUT = 1
 ---
-- true
 ...
-c:get()
+fiber_cfg("f1")
 ---
-- true
 ...
-vshard.router.internal.errinj.ERRINJ_MULTIPLE_CFG = nil
+fiber_cfg("f2")
 ---
+...
+fiber_cfg_status:get()
+---
+- name: f2
+  status: false
+...
+fiber_cfg_status:get()
+---
+- name: f1
+  status: true
 ...
 _ = test_run:switch("default")
 ---
