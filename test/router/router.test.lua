@@ -494,6 +494,34 @@ vshard.router.internal.errinj.ERRINJ_CFG = false
 util.has_same_fields(old_internal, vshard.router.internal)
 vshard.router.route(1):callro('echo', {'some_data'})
 
+-- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
+fiber_cfg_status = fiber.channel(2)
+_ = test_run:cmd("setopt delimiter ';'")
+function fiber_cfg(name) 
+	fiber.create(function()
+    	local status, err = pcall(vshard.router.cfg, cfg)
+		fiber_cfg_status:put({
+            name = name,
+            status = status,
+		})
+	end)
+end;
+_ = test_run:cmd("setopt delimiter ''");
+
+-- Fibers apply config one after another.
+fiber_cfg("f1")
+fiber_cfg("f2")
+fiber_cfg_status:get()
+fiber_cfg_status:get()
+
+-- Second fiber gets configuration timeout error.
+vshard.router.internal.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT = true
+vshard.consts.ROUTER_CFG_TIMEOUT = 1
+fiber_cfg("f1")
+fiber_cfg("f2")
+fiber_cfg_status:get()
+fiber_cfg_status:get()
+
 -- Multiple routers: check that static router can be used as an
 -- object.
 vshard.router.static:route(1):callro('echo', {'some_data'})

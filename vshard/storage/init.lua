@@ -49,6 +49,9 @@ if not M then
         ---------------- Common module attributes ----------------
         -- The last passed configuration.
         current_cfg = nil,
+        -- Channel to synchronize updates of configuration by multiple fibers.
+        cfg_lock = lfiber.channel(1),
+        
         --
         -- All known replicasets used for bucket re-balancing.
         -- See format in replicaset.lua.
@@ -67,6 +70,7 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_CONCURRENT_CFG_TIMEOUT = false,
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
@@ -2202,6 +2206,28 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     collectgarbage()
 end
 
+--
+-- Synchronize update of storage configuration from multiple fibers.
+-- At each point of time only single fiber can execute 'storage_cfg'.
+-- Other fibers are waiting for current call of 'storage_cfg' to return.
+--
+local function apply_storage_cfg(cfg, this_replica_uuid, is_reload)
+    if not M.cfg_lock:put(true, consts.STORAGE_CFG_TIMEOUT) then
+        error('Configuration timeout')
+    end
+
+    if M.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT then
+        fiber.sleep(consts.STORAGE_CFG_TIMEOUT * 2)
+    end
+        
+    local status, err = pcall(storage_cfg, cfg, this_replica_uuid, is_reload)
+    M.cfg_lock:get()
+        
+    if not status then
+        error(err)
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
@@ -2420,7 +2446,7 @@ if not rawget(_G, MODULE_INTERNALS) then
 else
     reload_evolution.upgrade(M)
     if M.current_cfg then
-        storage_cfg(M.current_cfg, M.this_replica.uuid, true)
+        apply_storage_cfg(M.current_cfg, M.this_replica.uuid, true)
     end
     M.module_version = M.module_version + 1
 end
@@ -2477,7 +2503,7 @@ return {
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
     call = storage_call,
-    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
+    cfg = function(cfg, uuid) return apply_storage_cfg(cfg, uuid, false) end,
     info = storage_info,
     buckets_info = storage_buckets_info,
     buckets_count = storage_buckets_count,

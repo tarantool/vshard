@@ -29,6 +29,7 @@ if not M then
         ---------------- Common module attributes ----------------
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_CONCURRENT_CFG_TIMEOUT = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -54,6 +55,8 @@ local ROUTER_TEMPLATE = {
         name = nil,
         -- The last passed configuration.
         current_cfg = nil,
+         -- Channel to synchronize updates of configuration by multiple fibers.
+         cfg_lock = nil,
         -- Time to outdate old objects on reload.
         connection_outdate_delay = nil,
         -- Bucket map cache.
@@ -796,6 +799,28 @@ local function router_cfg(router, cfg, is_reload)
     end
 end
 
+--
+-- Synchronize update of router configuration from mutiple fibers.
+-- At each point of time only single fiber can execute 'router_cfg' for particular router.
+-- Other fibers are waiting for current call of 'router_cfg' to return.
+--
+local function apply_router_cfg(router, cfg, is_reload)
+    if not router.cfg_lock:put(true, consts.ROUTER_CFG_TIMEOUT) then
+        error('Configuration timeout')
+    end
+
+    if M.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT then
+        fiber.sleep(consts.ROUTER_CFG_TIMEOUT * 2)
+    end
+
+    local status, err = pcall(router_cfg, router, cfg, is_reload)
+    router.cfg_lock:get()
+
+    if not status then
+        error(err)
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Bootstrap
 --------------------------------------------------------------------------------
@@ -1085,7 +1110,7 @@ end
 
 local router_mt = {
     __index = {
-        cfg = function(router, cfg) return router_cfg(router, cfg, false) end,
+        cfg = function(router, cfg) return apply_router_cfg(router, cfg, false) end,
         info = router_info;
         buckets_info = router_buckets_info;
         call = router_call;
@@ -1146,6 +1171,7 @@ local function router_new(name, cfg)
     local router = table.deepcopy(ROUTER_TEMPLATE)
     setmetatable(router, router_mt)
     router.name = name
+    router.cfg_lock = lfiber.channel(1)
     M.routers[name] = router
     local ok, err = pcall(router_cfg, router, cfg)
     if not ok then
@@ -1162,7 +1188,7 @@ end
 local function legacy_cfg(cfg)
     if M.static_router then
         -- Reconfigure.
-        router_cfg(M.static_router, cfg, false)
+        apply_router_cfg(M.static_router, cfg, false)
     else
         -- Create new static instance.
         local router, err = router_new(STATIC_ROUTER_NAME, cfg)
@@ -1187,7 +1213,7 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     for _, router in pairs(M.routers) do
-        router_cfg(router, router.current_cfg, true)
+        apply_router_cfg(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
     if M.static_router then
