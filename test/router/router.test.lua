@@ -496,29 +496,37 @@ vshard.router.route(1):callro('echo', {'some_data'})
 
 -- gh-140: prohibit vshard.router/storage.cfg from multiple fibers.
 fiber_cfg_status = fiber.channel(2)
+vshard.router.internal.errinj.ERRINJ_CONCURRENT_CFG = true
+
+-- Configuration from second fiber fails.
 _ = test_run:cmd("setopt delimiter ';'")
 function fiber_cfg(name) 
-	fiber.create(function()
-    	local status, err = pcall(vshard.router.cfg, cfg)
-		fiber_cfg_status:put({
+    fiber.create(function()
+        local status, err = pcall(vshard.router.cfg, cfg)
+        fiber_cfg_status:put({
             name = name,
             status = status,
-		})
-	end)
+        })
+    end)
 end;
 _ = test_run:cmd("setopt delimiter ''");
-
--- Fibers apply config one after another.
 fiber_cfg("f1")
 fiber_cfg("f2")
 fiber_cfg_status:get()
 fiber_cfg_status:get()
 
--- Second fiber gets configuration timeout error.
-vshard.router.internal.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT = true
-vshard.consts.ROUTER_CFG_TIMEOUT = 1
-fiber_cfg("f1")
-fiber_cfg("f2")
+-- Reconfiguration from single fiber succeeds.
+_ = test_run:cmd("setopt delimiter ';'")
+_ = fiber.create(function()
+    for i = 1, 2 do
+        local status, err = pcall(vshard.router.cfg, cfg)
+        fiber_cfg_status:put({
+            name = "f1",
+            status = status,
+        })
+    end
+end);
+_ = test_run:cmd("setopt delimiter ''");
 fiber_cfg_status:get()
 fiber_cfg_status:get()
 

@@ -70,7 +70,7 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
-            ERRINJ_CONCURRENT_CFG_TIMEOUT = false,
+            ERRINJ_CONCURRENT_CFG = false,
             ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
@@ -2207,22 +2207,24 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
 end
 
 --
--- Synchronize update of storage configuration from multiple fibers.
--- At each point of time only single fiber can execute 'storage_cfg'.
--- Other fibers are waiting for current call of 'storage_cfg' to return.
+-- Synchronize update of storage configuration from multiple
+-- fibers.-- At each point of time only single fiber can
+-- execute 'storage_cfg',other fibers will receive error.
 --
 local function apply_storage_cfg(cfg, this_replica_uuid, is_reload)
-    if not M.cfg_lock:put(true, consts.STORAGE_CFG_TIMEOUT) then
-        error('Configuration timeout')
+    if not M.cfg_lock:is_empty() then
+        error('Config is being changed from concurrent fibers')
     end
 
-    if M.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT then
-        fiber.sleep(consts.STORAGE_CFG_TIMEOUT * 2)
+    M.cfg_lock:put(true)
+
+    if M.errinj.ERRINJ_CONCURRENT_CFG == true then
+        lfiber.sleep(0.01)
     end
-        
     local status, err = pcall(storage_cfg, cfg, this_replica_uuid, is_reload)
+
     M.cfg_lock:get()
-        
+
     if not status then
         error(err)
     end

@@ -29,7 +29,7 @@ if not M then
         ---------------- Common module attributes ----------------
         errinj = {
             ERRINJ_CFG = false,
-            ERRINJ_CONCURRENT_CFG_TIMEOUT = false,
+            ERRINJ_CONCURRENT_CFG = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -800,20 +800,22 @@ local function router_cfg(router, cfg, is_reload)
 end
 
 --
--- Synchronize update of router configuration from mutiple fibers.
--- At each point of time only single fiber can execute 'router_cfg' for particular router.
--- Other fibers are waiting for current call of 'router_cfg' to return.
+-- Synchronize update of storage configuration from multiple
+-- fibers.-- At each point of time only single fiber can
+-- execute 'router_cfg', other fibers will receive error.
 --
 local function apply_router_cfg(router, cfg, is_reload)
-    if not router.cfg_lock:put(true, consts.ROUTER_CFG_TIMEOUT) then
-        error('Configuration timeout')
+    if not router.cfg_lock:is_empty() then
+        error('Config is being changed from concurrent fibers')
     end
 
-    if M.errinj.ERRINJ_CONCURRENT_CFG_TIMEOUT then
-        fiber.sleep(consts.ROUTER_CFG_TIMEOUT * 2)
-    end
+    router.cfg_lock:put(true)
 
+    if M.errinj.ERRINJ_CONCURRENT_CFG then
+        lfiber.sleep(0.01)
+    end
     local status, err = pcall(router_cfg, router, cfg, is_reload)
+    
     router.cfg_lock:get()
 
     if not status then
