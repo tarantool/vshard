@@ -507,6 +507,14 @@ err.message
 _, err = vshard.router.callro(1, 'echo', {1}, {timeout = -1})
 err.message
 
+--
+-- gh-204: vshard.router.bootstrap() if_not_bootstrapped option.
+--
+vshard.router.bootstrap()
+vshard.router.bootstrap({if_not_bootstrapped = false})
+vshard.router.bootstrap({if_not_bootstrapped = true})
+vshard.router.bootstrap(100)
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 

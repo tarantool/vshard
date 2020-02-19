@@ -1373,6 +1373,33 @@ err.message
 ---
 - Timeout exceeded
 ...
+--
+-- gh-204: vshard.router.bootstrap() if_not_bootstrapped option.
+--
+vshard.router.bootstrap()
+---
+- null
+- type: ShardingError
+  name: NON_EMPTY
+  message: Cluster is already bootstrapped
+  code: 10
+...
+vshard.router.bootstrap({if_not_bootstrapped = false})
+---
+- null
+- type: ShardingError
+  name: NON_EMPTY
+  message: Cluster is already bootstrapped
+  code: 10
+...
+vshard.router.bootstrap({if_not_bootstrapped = true})
+---
+- true
+...
+vshard.router.bootstrap(100)
+---
+- error: 'Usage: vshard.router.bootstrap({<options>})'
+...
 _ = test_run:switch("default")
 ---
 ...

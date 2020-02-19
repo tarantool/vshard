@@ -802,23 +802,49 @@ end
 
 local function cluster_bootstrap(router, opts)
     local replicasets = {}
+    local count, err, last_err, ok, if_not_bootstrapped
+    if opts then
+        if type(opts) ~= 'table' then
+            return error('Usage: vshard.router.bootstrap({<options>})')
+        end
+        if_not_bootstrapped = opts.if_not_bootstrapped
+        opts = {timeout = opts.timeout}
+        if if_not_bootstrapped == nil then
+            if_not_bootstrapped = false
+        end
+    else
+        if_not_bootstrapped = false
+    end
+
     for uuid, replicaset in pairs(router.replicasets) do
         table.insert(replicasets, replicaset)
-        local count, err = replicaset:callrw('vshard.storage.buckets_count',
-                                             {}, opts)
+        count, err = replicaset:callrw('vshard.storage.buckets_count', {}, opts)
         if count == nil then
-            return nil, err
-        end
-        if count > 0 then
+            -- If the client considers a bootstrapped cluster ok,
+            -- then even one count > 0 is enough. So don't stop
+            -- attempts after a first error. Return an error only
+            -- if all replicasets responded with an error.
+            if if_not_bootstrapped then
+                last_err = err
+            else
+                return nil, err
+            end
+        elseif count > 0 then
+            if if_not_bootstrapped then
+                return true
+            end
             return nil, lerror.vshard(lerror.code.NON_EMPTY)
         end
+    end
+    if last_err then
+        return nil, err
     end
     lreplicaset.calculate_etalon_balance(router.replicasets,
                                          router.total_bucket_count)
     local bucket_id = 1
     for uuid, replicaset in pairs(router.replicasets) do
         if replicaset.etalon_bucket_count > 0 then
-            local ok, err =
+            ok, err =
                 replicaset:callrw('vshard.storage.bucket_force_create',
                                   {bucket_id, replicaset.etalon_bucket_count},
                                   opts)
