@@ -597,10 +597,11 @@ end
 --
 local function failover_need_down_priority(replicaset, curr_ts)
     local r = replicaset.replica
-    if r and r.down_ts then
-        assert(not r:is_connected())
-    end
-    return r and r.down_ts and
+    -- down_ts not nil does not mean that the replica is not
+    -- connected. Probably it is connected and now fetches schema,
+    -- or does authorization. Either case, it is healthy, no need
+    -- to down the prio.
+    return r and r.down_ts and not r:is_connected() and
            curr_ts - r.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
            and r.next_by_priority
 end
