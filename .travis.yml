@@ -24,7 +24,6 @@ env:
       - OS=ubuntu DIST=trusty
       - OS=ubuntu DIST=xenial
       - OS=ubuntu DIST=bionic
-      - OS=ubuntu DIST=cosmic
       - OS=ubuntu DIST=disco
       - OS=debian DIST=jessie
       - OS=debian DIST=stretch
