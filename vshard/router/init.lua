@@ -249,7 +249,7 @@ discovery_f = function(router)
                 replicaset:callro('vshard.storage.buckets_discovery',
                                   args, opts)
             if not future then
-                log.error('Error during discovery %s: %s', rs_uuid, err)
+                log.warn('Error during discovery %s: %s', rs_uuid, err)
             else
                 pending[rs_uuid] = future
             end
@@ -267,7 +267,7 @@ discovery_f = function(router)
             local replicaset = router.replicasets[rs_uuid]
             if not buckets then
                 p:discard()
-                log.error('Error during discovery %s: %s', rs_uuid, err)
+                log.warn('Error during discovery %s: %s', rs_uuid, err)
             elseif module_version ~= M.module_version then
                 return
             elseif replicaset then
