@@ -242,7 +242,7 @@ discovery_f = function(router)
         -- Just typical map reduce - send request to each
         -- replicaset in parallel, and collect responses.
         local pending = {}
-        local opts = {timeout = consts.DISCOVERY_INTERVAL, is_async = true}
+        local opts = {is_async = true}
         local args = {}
         for rs_uuid, replicaset in pairs(router.replicasets) do
             local future, err =
