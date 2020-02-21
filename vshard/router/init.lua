@@ -266,6 +266,7 @@ discovery_f = function(router)
             end
             local replicaset = router.replicasets[rs_uuid]
             if not buckets then
+                p:discard()
                 log.error('Error during discovery %s: %s', rs_uuid, err)
             elseif module_version ~= M.module_version then
                 return
