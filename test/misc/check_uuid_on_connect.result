@@ -58,7 +58,14 @@ test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%
 ...
 box.space._bucket:select{}
 ---
-- - [1, 'active']
+- - [1, 'sending', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+-- Bucket sending fails, but it remains 'sending'. It is because
+-- we do not know was request executed or not before connection
+-- was lost. Restore it to 'active' manually.
+box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
+---
+- [1, 'active']
 ...
 test_run:cmd('create server bad_uuid_router with script="misc/bad_uuid_router.lua", wait=True, wait_load=True')
 ---

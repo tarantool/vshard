@@ -172,7 +172,7 @@ vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
 ...
 box.space._bucket:get{1}
 ---
-- [1, 'active']
+- [1, 'sending', '<replicaset_1>']
 ...
 _ = test_run:switch('box_1_a')
 ---
@@ -189,6 +189,13 @@ vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
 ...
 _ = test_run:switch('box_2_a')
 ---
+...
+test_run:wait_cond(function()                                                   \
+    vshard.storage.recovery_wakeup()                                            \
+    return box.space._bucket:get{1}.status == vshard.consts.BUCKET.ACTIVE       \
+end)
+---
+- true
 ...
 box.space._bucket:get{1}
 ---

@@ -73,6 +73,7 @@ if not M then
             ERRINJ_LONG_RECEIVE = false,
             ERRINJ_LAST_RECEIVE_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
+            ERRINJ_NO_RECOVERY = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -436,6 +437,10 @@ local function recovery_f()
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
+        if M.errinj.ERRINJ_NO_RECOVERY then
+            lfiber.yield()
+            goto continue
+        end
         local ok, total, recovered = pcall(recovery_step_by_type,
                                            consts.BUCKET.SENDING)
         if not ok then
@@ -451,6 +456,7 @@ local function recovery_f()
             bucket_receiving_quota_add(recovered)
         end
         lfiber.sleep(consts.RECOVERY_INTERVAL)
+        ::continue::
     end
 end
 
@@ -824,6 +830,9 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             end
         end
         box.commit()
+        if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
+            box.error(box.error.INJECTION, "the bucket is received partially")
+        end
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
     if is_last then
@@ -1070,7 +1079,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
-                    _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
                     return status, lerror.make(err)
                 end
                 limit = consts.BUCKET_CHUNK_SIZE
@@ -1083,7 +1091,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     status, err = replicaset:callrw('vshard.storage.bucket_recv',
                                     {bucket_id, uuid, data}, opts)
     if not status then
-        _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
         return status, lerror.make(err)
     end
     -- Always send at least two messages to prevent the case, when

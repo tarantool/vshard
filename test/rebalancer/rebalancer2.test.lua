@@ -1,0 +1,97 @@
+test_run = require('test_run').new()
+
+REPLICASET_1 = { 'fullbox_1_a', 'fullbox_1_b' }
+REPLICASET_2 = { 'fullbox_2_a', 'fullbox_2_b' }
+REPLICASET_3 = { 'fullbox_3_a', 'fullbox_3_b' }
+REPLICASET_4 = { 'fullbox_4_a', 'fullbox_4_b' }
+ALL_REPLICASETS = {REPLICASET_1, REPLICASET_2, REPLICASET_3, REPLICASET_4}
+
+test_run:create_cluster(REPLICASET_1, 'rebalancer')
+test_run:create_cluster(REPLICASET_2, 'rebalancer')
+test_run:create_cluster(REPLICASET_3, 'rebalancer')
+test_run:create_cluster(REPLICASET_4, 'rebalancer')
+util = require('util')
+util.wait_master(test_run, REPLICASET_1, 'fullbox_1_a')
+util.wait_master(test_run, REPLICASET_2, 'fullbox_2_a')
+util.wait_master(test_run, REPLICASET_3, 'fullbox_3_a')
+util.wait_master(test_run, REPLICASET_4, 'fullbox_4_a')
+util.map_evals(test_run, ALL_REPLICASETS, 'bootstrap_storage(\'%s\')', 'memtx')
+
+--
+-- gh-213: duplicate active bucket when bucket sender tried to
+-- make SENDING bucket ACTIVE assuming that it can't be ACTIVE on
+-- the other side.
+--
+-- A very nasty bug. Here is what happened and is tested below.
+-- There are 4 replicasets: rs1, rs2, rs3, rs4.
+--
+-- Rs1 gets weight 0. It sends buckets to rs2, rs3, rs4 in
+-- parallel. Sending of each bucket worked in two steps: send
+-- data, and finalize bucket making it ACTIVE on receiving side.
+-- If an error happened before sending finalization, the bucket
+-- became ACTIVE on the sender immediately. There was an
+-- assumption, that if the final packet was not sent, the bucket,
+-- indeed, couldn't be ACTIVE on the receiving side.
+--
+-- As a result, rs1 partially sent a bucket to rs2, declared it
+-- ACTIVE again, and successfully sent it to rs3 or rs4. Rs2
+-- recovery woke up and saw, that the bucket is RECEIVING here and
+-- GARBAGE/not existing in rs1. As a result, it was recovered to
+-- ACTIVE on rs2 too. Now the bucket is ACTIVE on rs2 and rs3 or
+-- rs4.
+--
+-- On the summary, this broke recovery rules. According to them,
+-- there is a strict order how a bucket should be recovered -
+-- firstly RECEIVING should be garbaged, and only then the SENDING
+-- should become active again.
+--
+
+test_run:switch('fullbox_1_a')
+vshard.storage.bucket_force_create(1, cfg.bucket_count)
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+idx = box.space._bucket.index.status
+s = box.space.test
+i = 1
+for _, b in idx:pairs({vshard.consts.BUCKET.ACTIVE}) do                         \
+    s:replace{i, b.id}                                                          \
+    i = i + 1                                                                   \
+end
+
+-- Block two replicasets. To prevent a situation, when a single
+-- blocked replicaset is the last one. In that case the test
+-- wouldn't cover the issue.
+test_run:switch('fullbox_2_a')
+vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+
+test_run:switch('fullbox_3_a')
+vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+
+test_run:switch('default')
+command = "cfg.sharding[util.replicasets[1]].weight = 0 vshard.storage.cfg(cfg, util.name_to_uuid[NAME])"
+util.map_evals(test_run, ALL_REPLICASETS, command)
+
+test_run:switch('fullbox_1_a')
+test_run:wait_cond(function()                                                   \
+    return not vshard.storage.rebalancing_is_in_progress()                      \
+end)
+
+test_run:switch('fullbox_2_a')
+vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.recovery_wakeup()
+
+test_run:switch('fullbox_3_a')
+vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.recovery_wakeup()
+
+test_run:switch('fullbox_1_a')
+wait_rebalancer_state('The cluster is balanced ok', test_run)
+
+test_run:switch('default')
+test_run:drop_cluster(REPLICASET_4)
+test_run:drop_cluster(REPLICASET_3)
+test_run:drop_cluster(REPLICASET_2)
+test_run:drop_cluster(REPLICASET_1)

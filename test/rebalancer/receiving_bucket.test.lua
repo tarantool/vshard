@@ -69,6 +69,10 @@ box.space._bucket:get{1}
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
 _ = test_run:switch('box_2_a')
+test_run:wait_cond(function()                                                   \
+    vshard.storage.recovery_wakeup()                                            \
+    return box.space._bucket:get{1}.status == vshard.consts.BUCKET.ACTIVE       \
+end)
 box.space._bucket:get{1}
 
 --
