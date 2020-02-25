@@ -13,6 +13,7 @@ git:
 env:
     global:
       - PRODUCT=tarantool-vshard
+      - ROCK_NAME=vshard
     matrix:
       - OS=el DIST=6
       - OS=el DIST=7
@@ -150,3 +151,21 @@ notifications:
       - build@tarantool.org
     on_success: change
     on_failure: always
+
+jobs:
+  include:
+    - stage: deploy
+      script: skip
+      deploy:
+        - provider: script
+          script: curl --fail -X PUT -F rockspec=@$ROCK_NAME-scm-1.rockspec
+            https://$ROCKS_USERNAME:$ROCKS_PASSWORD@$ROCKS_SERVER
+        - on:
+            tags: true
+          provider: script
+          script: cat $ROCK_NAME-scm-1.rockspec |
+            sed -E
+              -e "s/branch = '.+'/tag = '$TRAVIS_TAG'/g"
+              -e "s/version = '.+'/version = '$TRAVIS_TAG-1'/g" |
+            curl --fail -X PUT -F "rockspec=@-;filename=$ROCK_NAME-$TRAVIS_TAG-1.rockspec"
+              https://$ROCKS_USERNAME:$ROCKS_PASSWORD@$ROCKS_SERVER
