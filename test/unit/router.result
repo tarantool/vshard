@@ -1,0 +1,143 @@
+-- test-run result file version 2
+ffi = require('ffi')
+ | ---
+ | ...
+util = require('util')
+ | ---
+ | ...
+vshard = require('vshard')
+ | ---
+ | ...
+vshard.router.cfg({sharding = {}})
+ | ---
+ | ...
+
+--
+-- gh-207: vshard.router.bucket_id() was not consistent when
+-- values were cdata numbers.
+--
+
+function check_values(bid, values)                                              \
+    local result = {}                                                           \
+    for _, v in pairs(values) do                                                \
+        local v1 = bid(v)                                                       \
+        local v2 = bid(v)                                                       \
+        local t = type(v)                                                       \
+        if t == 'cdata' then                                                    \
+            t = ffi.typeof(v)                                                   \
+        end                                                                     \
+        if v1 ~= v2 then                                                        \
+            table.insert(result, {'not stable', {t, v, v1, v2}})                \
+        else                                                                    \
+            table.insert(result, {t, v, v1})                                    \
+        end                                                                     \
+    end                                                                         \
+    return result                                                               \
+end
+ | ---
+ | ...
+
+util.check_error(vshard.router.bucket_id)
+ | ---
+ | - 'Usage: vshard.router.bucket_id(key)'
+ | ...
+
+values = {1, 1LL, 1ULL, ffi.cast('uint64_t', 1), ffi.cast('int64_t', 1), '1'}
+ | ---
+ | ...
+
+check_values(vshard.router.bucket_id, values)
+ | ---
+ | - - - number
+ |     - 1
+ |     - 477
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 730
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 982
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 982
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 730
+ |   - - string
+ |     - '1'
+ |     - 477
+ | ...
+check_values(vshard.router.bucket_id_strcrc32, values)
+ | ---
+ | - - - number
+ |     - 1
+ |     - 477
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 730
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 982
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 982
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 730
+ |   - - string
+ |     - '1'
+ |     - 477
+ | ...
+
+-- Floating point cdata is not tested in strcrc32, because
+-- tostring() is not stable on them, and returns a pointer string.
+table.insert(values, ffi.cast('double', 1))
+ | ---
+ | ...
+table.insert(values, ffi.cast('float', 1))
+ | ---
+ | ...
+check_values(vshard.router.bucket_id_mpcrc32, values)
+ | ---
+ | - - - number
+ |     - 1
+ |     - 1614
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 1614
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 1614
+ |   - - ctype<uint64_t>
+ |     - 1
+ |     - 1614
+ |   - - ctype<int64_t>
+ |     - 1
+ |     - 1614
+ |   - - string
+ |     - '1'
+ |     - 477
+ |   - - ctype<double>
+ |     - 1
+ |     - 1411
+ |   - - ctype<float>
+ |     - 1
+ |     - 193
+ | ...
+
+-- Decimal is not available in 1.10, but vshard and its tests
+-- should work on 1.10. Decimal test is optional.
+has_decimal, decimal = pcall(require, 'decimal')
+ | ---
+ | ...
+
+not has_decimal or vshard.router.bucket_id_mpcrc32(decimal.new(1)) == 1696 or   \
+    vshard.router.bucket_id_mpcrc32(decimal.new(1))
+ | ---
+ | - true
+ | ...
+
+vshard.router.bucket_count()
+ | ---
+ | - 3000
+ | ...

@@ -60,17 +60,6 @@ end;
 _ = test_run:cmd("setopt delimiter ''");
 
 --
--- bucket_id and bucket_count
---
-
-util.check_error(vshard.router.bucket_id) -- invalid arguments
-vshard.router.bucket_id(1)
-vshard.router.bucket_id(2)
-vshard.router.bucket_id({2})
-vshard.router.bucket_id('2')
-vshard.router.bucket_count()
-
---
 -- Initial distribution
 --
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})

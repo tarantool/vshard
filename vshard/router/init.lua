@@ -1063,11 +1063,32 @@ end
 -- Other
 --------------------------------------------------------------------------------
 
+local router_bucket_id_deprecated_warn = true
 local function router_bucket_id(router, key)
     if key == nil then
         error("Usage: vshard.router.bucket_id(key)")
     end
-    return lhash.key_hash(key) % router.total_bucket_count + 1
+    if router_bucket_id_deprecated_warn then
+        router_bucket_id_deprecated_warn = false
+        log.warn('vshard.router.bucket_id() is deprecated, use '..
+                 'vshard.router.bucket_id_strcrc32() or '..
+                 'vshard.router.bucket_id_mpcrc32()')
+    end
+    return lhash.strcrc32(key) % router.total_bucket_count + 1
+end
+
+local function router_bucket_id_strcrc32(router, key)
+    if key == nil then
+        error("Usage: vshard.router.bucket_id_strcrc32(key)")
+    end
+    return lhash.strcrc32(key) % router.total_bucket_count + 1
+end
+
+local function router_bucket_id_mpcrc32(router, key)
+    if key == nil then
+        error("Usage: vshard.router.bucket_id_mpcrc32(key)")
+    end
+    return lhash.mpcrc32(key) % router.total_bucket_count + 1
 end
 
 local function router_bucket_count(router)
@@ -1124,7 +1145,9 @@ local router_mt = {
         callbre = router_callbre;
         route = router_route;
         routeall = router_routeall;
-        bucket_id = router_bucket_id;
+        bucket_id = router_bucket_id,
+        bucket_id_strcrc32 = router_bucket_id_strcrc32,
+        bucket_id_mpcrc32 = router_bucket_id_mpcrc32,
         bucket_count = router_bucket_count;
         sync = router_sync;
         bootstrap = cluster_bootstrap;
