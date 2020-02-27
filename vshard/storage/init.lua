@@ -1052,8 +1052,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
     end
     if destination == uuid then
-        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id,
-                                  replicaset_uuid)
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, uuid)
     end
     local data = {}
     local spaces = find_sharded_spaces()
