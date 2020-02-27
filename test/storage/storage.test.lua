@@ -130,6 +130,8 @@ while box.space._bucket:get{4} do vshard.storage.recovery_wakeup() fiber.sleep(0
 
 -- Transfer to unknown replicaset.
 vshard.storage.bucket_send(1, 'unknown uuid')
+-- gh-217: transfer to self.
+vshard.storage.bucket_send(1, util.replicasets[1])
 
 -- Successful transfer.
 vshard.storage.bucket_send(1, util.replicasets[2])
