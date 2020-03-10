@@ -511,7 +511,8 @@ local function sync(timeout)
         lfiber.sleep(0.001)
     until not (lfiber.time() <= tstart + timeout)
     log.warn("Timed out during synchronizing replicaset")
-    return nil, lerror.make(box.error.new(box.error.TIMEOUT))
+    local ok, err = pcall(box.error, box.error.TIMEOUT)
+    return nil, lerror.make(err)
 end
 
 --------------------------------------------------------------------------------
@@ -1720,6 +1721,13 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
+    if not util.version_is_at_least(1, 10, 0) then
+        -- Return control to the caller immediately to allow it
+        -- to finish preparations. In 1.9 a caller couldn't create
+        -- a fiber without switching to it.
+        lfiber.yield()
+    end
+
     local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     local active_key = {consts.BUCKET.ACTIVE}
@@ -1803,7 +1811,12 @@ local function rebalancer_apply_routes_f(routes)
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
     for i = 1, worker_count do
-        local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
+        local f
+        if util.version_is_at_least(1, 10, 0) then
+            f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
+        else
+            f = lfiber.create(rebalancer_worker_f, i, dispenser, quit_cond)
+        end
         f:set_joinable(true)
         workers[i] = f
     end

@@ -1109,7 +1109,8 @@ local function router_sync(router, timeout)
     local opts = {timeout = timeout}
     for rs_uuid, replicaset in pairs(router.replicasets) do
         if timeout < 0 then
-            return nil, box.error.new(box.error.TIMEOUT)
+            local ok, err = pcall(box.error, box.error.TIMEOUT)
+            return nil, err
         end
         local status, err = replicaset:callrw('vshard.storage.sync', arg, opts)
         if not status then
