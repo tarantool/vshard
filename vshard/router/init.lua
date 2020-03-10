@@ -310,7 +310,7 @@ discovery_f = function(router)
             if not active_buckets then
                 log.error('Error during discovery %s: %s', replicaset, err)
             else
-                discovery_handle_buckets(router, replicaset, buckets)
+                discovery_handle_buckets(router, replicaset, active_buckets)
             end
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
         end
