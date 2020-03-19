@@ -10,6 +10,12 @@ cache:
 git:
     depth: 100500
 
+stages:
+  - test
+  - name: publish_rockspec
+    if: branch = master OR tag IS present
+  - deploy
+
 env:
     global:
       - PRODUCT=tarantool-vshard
@@ -154,7 +160,7 @@ notifications:
 
 jobs:
   include:
-    - stage: deploy
+    - stage: publish_rockspec
       script: skip
       deploy:
         - provider: script
