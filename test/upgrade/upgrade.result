@@ -92,6 +92,10 @@ vshard.storage.internal.schema_latest_version
  | ---
  | - null
  | ...
+vshard.storage._call == nil
+ | ---
+ | - true
+ | ...
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
  | ---
  | ...
@@ -151,6 +155,20 @@ vshard.storage.internal.schema_latest_version
  | ---
  | - '{0.1.16.0}'
  | ...
+vshard.storage._call ~= nil
+ | ---
+ | - true
+ | ...
+vshard.storage._call('test_api', 1, 2, 3)
+ | ---
+ | - bucket_recv: true
+ |   rebalancer_apply_routes: true
+ |   test_api: true
+ |   rebalancer_request_state: true
+ | - 1
+ | - 2
+ | - 3
+ | ...
 
 test_run:switch('storage_1_b')
  | ---
@@ -167,6 +185,10 @@ vshard.storage.internal.schema_current_version()
 vshard.storage.internal.schema_latest_version
  | ---
  | - '{0.1.16.0}'
+ | ...
+vshard.storage._call ~= nil
+ | ---
+ | - true
  | ...
 
 test_run:switch('default')

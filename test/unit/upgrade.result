@@ -204,6 +204,7 @@ upgrade_trace
  |   - No errinj
  |   - - true
  |   - diff:
+ |       func_count: 1
  |       new_version: '{0.1.16.0}'
  |       old_version: '{0.1.15.0}'
  | ...

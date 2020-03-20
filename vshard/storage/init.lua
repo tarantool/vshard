@@ -344,12 +344,30 @@ local function schema_upgrade_to_0_1_16_0(username)
     log.info("Insert 'vshard_version' into _schema")
     box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
     box.space._schema:delete({'oncevshard:storage:1'})
+
+    -- vshard.storage._call() is supposed to replace some internal
+    -- functions exposed in _func; to allow introduction of new
+    -- functions on replicas; to allow change of internal
+    -- functions without touching the schema.
+    local func = 'vshard.storage._call'
+    log.info('Create function %s()', func)
+    box.schema.func.create(func, {setuid = true})
+    box.schema.user.grant(username, 'execute', 'function', func)
+    -- Don't drop old functions in the same version. Removal can
+    -- happen only after 0.1.16. Or there should appear support of
+    -- rebalancing from too old versions. Drop of these functions
+    -- now would immediately make it impossible to rebalance from
+    -- old instances.
 end
 
 local function schema_downgrade_from_0_1_16_0()
     log.info("Remove 'vshard_version' from _schema")
     box.space._schema:replace({'oncevshard:storage:1'})
     box.space._schema:delete({'vshard_version'})
+
+    local func = 'vshard.storage._call'
+    log.info('Remove function %s()', func)
+    box.schema.func.drop(func, {if_exists = true})
 end
 
 local function schema_current_version()
@@ -2218,6 +2236,29 @@ local function storage_call(bucket_id, mode, name, args)
     return ok, ret1, ret2, ret3
 end
 
+local service_call_api
+
+local function service_call_test_api(...)
+    return service_call_api, ...
+end
+
+service_call_api = setmetatable({
+    bucket_recv = bucket_recv,
+    rebalancer_apply_routes = rebalancer_apply_routes,
+    rebalancer_request_state = rebalancer_request_state,
+    test_api = service_call_test_api,
+}, {__serialize = function(api)
+    local res = {}
+    for k, _ in pairs(api) do
+        res[k] = true
+    end
+    return res
+end})
+
+local function service_call(service_name, ...)
+    return service_call_api[service_name](...)
+end
+
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
@@ -2673,6 +2714,7 @@ return {
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
     call = storage_call,
+    _call = service_call,
     cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     info = storage_info,
     buckets_info = storage_buckets_info,
