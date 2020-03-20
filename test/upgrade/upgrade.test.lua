@@ -31,6 +31,7 @@ test_run:switch('storage_2_a')
 box.space._schema:get({'oncevshard:storage:1'}) or box.space._schema:select()
 vshard.storage.internal.schema_current_version
 vshard.storage.internal.schema_latest_version
+vshard.storage._call == nil
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
 first_bucket = vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1
 vshard.storage.bucket_force_create(first_bucket, bucket_count)
@@ -51,11 +52,13 @@ test_run:switch('storage_1_a')
 box.space._schema:get({'vshard_version'})
 vshard.storage.internal.schema_current_version()
 vshard.storage.internal.schema_latest_version
+vshard.storage._call ~= nil
 
 test_run:switch('storage_1_b')
 box.space._schema:get({'vshard_version'})
 vshard.storage.internal.schema_current_version()
 vshard.storage.internal.schema_latest_version
+vshard.storage._call ~= nil
 
 test_run:switch('default')
 -- Main purpose of the test - ensure that data can be safely moved

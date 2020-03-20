@@ -92,6 +92,10 @@ vshard.storage.internal.schema_latest_version
  | ---
  | - null
  | ...
+vshard.storage._call == nil
+ | ---
+ | - true
+ | ...
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
  | ---
  | ...
@@ -157,6 +161,10 @@ vshard.storage.internal.schema_latest_version
  |   - 16
  |   - 0
  | ...
+vshard.storage._call ~= nil
+ | ---
+ | - true
+ | ...
 
 test_run:switch('storage_1_b')
  | ---
@@ -179,6 +187,10 @@ vshard.storage.internal.schema_latest_version
  |   - 1
  |   - 16
  |   - 0
+ | ...
+vshard.storage._call ~= nil
+ | ---
+ | - true
  | ...
 
 test_run:switch('default')
