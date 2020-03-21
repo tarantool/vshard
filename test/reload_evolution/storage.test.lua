@@ -1,18 +1,14 @@
 test_run = require('test_run').new()
 git_util = require('git_util')
 util = require('util')
-vshard_copy_path = util.BUILDDIR .. '/test/var/vshard_git_tree_copy'
-evolution_log = git_util.log_hashes({args='vshard/storage/reload_evolution.lua', dir=util.SOURCEDIR})
--- Cleanup the directory after a previous build.
-_ = os.execute('rm -rf ' .. vshard_copy_path)
--- 1. `git worktree` cannot be used because PACKPACK mounts
--- `/source/` in `ro` mode.
--- 2. Just `cp -rf` cannot be used due to a little different
--- behavior in Centos 7.
-_ = os.execute('mkdir ' .. vshard_copy_path)
-_ = os.execute("cd " .. util.SOURCEDIR .. " && cp -rf ./.git " .. vshard_copy_path)
--- Checkout the first commit with a reload_evolution mechanism.
-git_util.exec('checkout', {args=evolution_log[#evolution_log] .. '~1 -f', dir=vshard_copy_path})
+
+-- Last meaningful to test commit:
+--
+--     "router: fix reload problem with global function refs".
+--
+last_compatible_commit = '139223269cddefe2ba4b8e9f6e44712f099f4b35'
+vshard_copy_path = util.git_checkout('vshard_git_tree_copy',                    \
+                                     last_compatible_commit)
 
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
@@ -34,10 +30,9 @@ vshard.storage.internal.reload_version
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 box.space.test:insert({42, bucket_id_to_move})
 
-test_run:switch('default')
-git_util.exec('checkout', {args=evolution_log[1], dir=vshard_copy_path})
-
-test_run:switch('storage_2_a')
+-- Make the old sources invisible. Next require() is supposed to
+-- use the most actual source.
+package.path = original_package_path
 package.loaded['vshard.storage'] = nil
 vshard.storage = require("vshard.storage")
 test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') ~= nil
@@ -76,12 +71,7 @@ vshard.storage.bucket_force_create(move_start, move_cnt)
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_2_a')
 vshard.storage.rebalancer_enable()
-wait_rebalancer_state('Rebalance routes are sent', test_run)
--- Test that the rebalancing is started. But each bucket raises
--- an error because in the old version it was sent in single
--- message, but in the newer ones in at least 2 messages.
-while not test_run:grep_log('storage_1_a', 'Bucket 1 already exists') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
-while not test_run:grep_log('storage_1_a', 'Bucket 2 already exists') do vshard.storage.rebalancer_wakeup() fiber.sleep(0.01) end
+wait_rebalancer_state('The cluster is balanced ok', test_run)
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_1_a')
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})

@@ -1,6 +1,7 @@
 local fiber = require('fiber')
 local log = require('log')
 local fio = require('fio')
+local git = require('git_util')
 
 local name_to_uuid = {
     storage_1_a = '8a274925-a26d-47fc-9e1b-af88ce939412',
@@ -180,6 +181,18 @@ if not BUILDDIR then
     BUILDDIR = SOURCEDIR
 end
 
+local function git_checkout(dst_dir, version)
+    local vshard_copy_path = BUILDDIR..'/test/var/'..dst_dir
+    -- Cleanup the directory after a previous build.
+    os.execute('rm -rf ' .. vshard_copy_path)
+    -- `git worktree` cannot be used because PACKPACK mounts
+    -- `/source/` in `ro` mode.
+    os.execute('mkdir '..vshard_copy_path)
+    os.execute("cd "..SOURCEDIR.." && cp -rf ./.git "..vshard_copy_path)
+    git_util.exec('checkout', {args = version..' -f', dir = vshard_copy_path})
+    return vshard_copy_path
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -192,4 +205,5 @@ return {
     replicasets = replicasets,
     SOURCEDIR = SOURCEDIR,
     BUILDDIR = BUILDDIR,
+    git_checkout = git_checkout,
 }
