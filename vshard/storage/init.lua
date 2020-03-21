@@ -257,7 +257,16 @@ end
 --------------------------------------------------------------------------------
 -- Schema
 --------------------------------------------------------------------------------
-local function storage_schema_v1(username, password)
+
+-- VShard versioning works in 4 numbers: major, minor, patch, and
+-- a last helper number incremented on every schema change, if
+-- first 3 numbers stay not changed. That happens when users take
+-- the latest master version not having a tag yet. They couldn't
+-- upgrade if not the 4th number changed inside one tag.
+
+-- The schema first time appeared with 0.1.16. So this function
+-- describes schema before that - 0.1.15.
+local function schema_init_0_1_15_0(username, password)
     log.info("Initializing schema")
     box.schema.user.create(username, {
         password = password,
@@ -297,7 +306,105 @@ local function storage_schema_v1(username, password)
         box.schema.user.grant(username, 'execute', 'function', name)
     end
 
-    box.snapshot()
+    box.space._schema:replace({'vshard_version', 0, 1, 15, 0})
+end
+
+local function schema_compare_versions(v1, v2)
+    for i = 1, 4 do
+        if v1[i] ~= v2[i] then
+            return v1[i] - v2[i]
+        end
+    end
+    return 0
+end
+
+local function schema_upgrade_to_0_1_16_0(username)
+    -- Since 0.1.16.0 the old versioning by
+    -- 'oncevshard:storage:<number>' is dropped because it is not
+    -- really extendible nor understandable.
+    log.info('Insert vshard_version into _schema')
+    box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
+    box.space._schema:delete({'oncevshard:storage:1'})
+end
+
+local function schema_current_version()
+    local version = box.space._schema:get({'vshard_version'})
+    if version == nil then
+        version = {0, 1, 15, 0}
+    else
+        version = version:totable()
+        version = {version[2], version[3], version[4], version[5]}
+    end
+    return version
+end
+
+local schema_latest_version = {0, 1, 16, 0}
+
+local function schema_upgrade_replica()
+    local version = schema_current_version()
+    -- Replica can't do upgrade - it is read-only. And it
+    -- shouldn't anyway - that would conflict with master doing
+    -- the same. So the upgrade is either non-critical, and the
+    -- replica can work with the new code but old schema. Or it
+    -- it is critical, and need to wait the schema upgrade from
+    -- the master.
+    -- Or it may happen, that the upgrade just is not possible.
+    -- For example, when an auto-upgrade tries to change a too old
+    -- schema to the newest, skipping some intermediate versions.
+    -- For example, from 1.2.3.4 to 1.7.8.9, when it is assumed
+    -- that a safe upgrade should go 1.2.3.4 -> 1.2.4.1 ->
+    -- 1.3.1.1 and so on step by step.
+    if schema_compare_versions(version, schema_latest_version) == 0 then
+        log.info('Replica\'s vshard schema version is up to date - %s',
+                 table.concat(version, '.'))
+    else
+        log.info('Replica\' vshard schema version is outdated - current '..
+                 '%s vs latest %s, but the replica still can work',
+                 table.concat(version, '.'),
+                 table.concat(schema_latest_version, '.'))
+    end
+    -- In future for hard changes the replica may be suspended
+    -- until its schema is synced with master. Or it may
+    -- reject to upgrade in case of incompatible changes. Now
+    -- there are too few versions so as such problems could
+    -- appear.
+end
+
+local function schema_upgrade_master(username, password)
+    local _schema = box.space._schema
+    local is_old_versioning = _schema:get({'oncevshard:storage:1'}) ~= nil
+    local version = schema_current_version()
+    local is_bootstrap = not box.space._bucket
+
+    if is_bootstrap then
+        schema_init_0_1_15_0(username, password)
+    elseif is_old_versioning then
+        log.info('The instance does not have vshard_version record. '..
+                 'It is 0.1.15.0.')
+    end
+    local handlers = {
+        {version = {0, 1, 16, 0}, func = schema_upgrade_to_0_1_16_0},
+    }
+    assert(schema_compare_versions(handlers[#handlers].version,
+                                   schema_latest_version) == 0)
+    for _, handler in ipairs(handlers) do
+        local next_version = handler.version
+        if schema_compare_versions(next_version, version) > 0 then
+            local next_version_str = table.concat(next_version, '.')
+            log.info("Upgrade vshard to {%s}", next_version_str)
+            handler.func(username, password)
+            log.info("Successful vshard upgrade to {%s}", next_version_str)
+            _schema:replace({'vshard_version', unpack(next_version)})
+        end
+    end
+end
+
+local function schema_upgrade(is_master, username, password)
+    if is_master then
+        return schema_upgrade_master(username, password)
+    else
+        return schema_upgrade_replica()
+    end
 end
 
 local function this_is_master()
@@ -2169,8 +2276,12 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
             error(err)
         end
         log.info("Box has been configured")
-        local uri = luri.parse(this_replica.uri)
-        box.once("vshard:storage:1", storage_schema_v1, uri.login, uri.password)
+    end
+
+    local uri = luri.parse(this_replica.uri)
+    schema_upgrade(is_master, uri.login, uri.password)
+
+    if not is_reload then
         box.space._bucket:on_replace(bucket_generation_increment)
     else
         local old = box.space._bucket:on_replace()[1]
@@ -2469,6 +2580,8 @@ M.rlist = {
     add_tail = rlist_add_tail,
     remove = rlist_remove,
 }
+M.schema_latest_version = schema_latest_version
+M.schema_current_version = schema_current_version
 
 return {
     sync = sync,
