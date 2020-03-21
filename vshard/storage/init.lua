@@ -339,6 +339,11 @@ local function schema_upgrade_to_0_1_16_0(username)
     -- rebalancing from too old versions. Drop of these functions
     -- now would immediately make it impossible to rebalance from
     -- old instances.
+
+    local opts = {if_exists = true}
+    box.schema.func.drop('bucket_recv', opts)
+    box.schema.func.drop('rebalancer_apply_routes', opts)
+    box.schema.func.drop('rebalancer_request_state', opts)
 end
 
 local function schema_current_version()
@@ -1195,8 +1200,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
             limit = limit - 1
             if limit == 0 then
                 table.insert(data, {space.name, space_data})
-                status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                                {bucket_id, uuid, data}, opts)
+                status, err = replicaset:callrw('vshard.storage._call',
+                                                {'bucket_recv', bucket_id, uuid,
+                                                 data}, opts)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
@@ -1209,8 +1215,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         end
         table.insert(data, {space.name, space_data})
     end
-    status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, uuid, data}, opts)
+    status, err = replicaset:callrw('vshard.storage._call', {'bucket_recv',
+                                    bucket_id, uuid, data}, opts)
     if not status then
         return status, lerror.make(err)
     end
@@ -1218,8 +1224,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
     -- the same bucket is activated on the destination.
-    status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, uuid, {}, {is_last = true}},
+    status, err = replicaset:callrw('vshard.storage._call', {'bucket_recv',
+                                    bucket_id, uuid, {}, {is_last = true}},
                                     opts)
     if not status then
         return status, lerror.make(err)
@@ -1993,8 +1999,8 @@ local function rebalancer_download_states()
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(M.replicasets) do
-        local state =
-            replicaset:callrw('vshard.storage.rebalancer_request_state', {})
+        local state = replicaset:callrw('vshard.storage._call',
+                                        {'rebalancer_request_state'})
         if state == nil then
             return
         end
@@ -2075,8 +2081,8 @@ local function rebalancer_f()
         for src_uuid, src_routes in pairs(routes) do
             local rs = M.replicasets[src_uuid]
             local status, err =
-                rs:callrw('vshard.storage.rebalancer_apply_routes',
-                          {src_routes})
+                rs:callrw('vshard.storage._call',
+                          {'rebalancer_apply_routes', src_routes})
             if not status then
                 log.error('Error during routes appying on "%s": %s. '..
                           'Try rebalance later', rs, lerror.make(err))
@@ -2613,7 +2619,6 @@ return {
     bucket_force_create = bucket_force_create,
     bucket_force_drop = bucket_force_drop,
     bucket_collect = bucket_collect,
-    bucket_recv = bucket_recv,
     bucket_send = bucket_send,
     bucket_stat = bucket_stat,
     bucket_pin = bucket_pin,
@@ -2627,7 +2632,6 @@ return {
     bucket_delete_garbage = bucket_delete_garbage,
     garbage_collector_wakeup = garbage_collector_wakeup,
     rebalancer_wakeup = rebalancer_wakeup,
-    rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_disable = rebalancer_disable,
     rebalancer_enable = rebalancer_enable,
     is_locked = is_this_replicaset_locked,
@@ -2640,7 +2644,6 @@ return {
     buckets_info = storage_buckets_info,
     buckets_count = storage_buckets_count,
     buckets_discovery = buckets_discovery,
-    rebalancer_request_state = rebalancer_request_state,
     internal = M,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,

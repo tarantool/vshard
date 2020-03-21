@@ -239,7 +239,7 @@ future:wait_result()
 new_bid = vshard.consts.DEFAULT_BUCKET_COUNT + 1
 space_data = {{1000, {{1}, {2}}}}
 -- Insert in a not existing space - it must return box.error.
-vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
+vshard.router.call(bucket_id, 'write', 'vshard.storage._call', {'bucket_recv', new_bid, 'from_uuid', space_data})
 
 --
 -- Monitoring

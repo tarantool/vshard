@@ -117,11 +117,11 @@ vshard.storage.call(100500, 'read', 'space_get', {'test', {1}})
 --
 -- Test not existing uuid.
 --
-vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
+vshard.storage._call('bucket_recv', 100, 'from_uuid', {{1000, {{1}}}})
 --
 -- Test not existing space in bucket data.
 --
-vshard.storage.bucket_recv(4, util.replicasets[2], {{1000, {{1}}}})
+vshard.storage._call('bucket_recv', 4, util.replicasets[2], {{1000, {{1}}}})
 while box.space._bucket:get{4} do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 
 --
