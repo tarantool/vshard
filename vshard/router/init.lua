@@ -134,7 +134,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Search bucket in whole cluster
-local function bucket_discovery(router, bucket_id)
+local function bucket_discovery(router, bucket_id, timeout)
     local replicaset = router.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
@@ -143,15 +143,18 @@ local function bucket_discovery(router, bucket_id)
     log.verbose("Discovering bucket %d", bucket_id)
     local last_err = nil
     local unreachable_uuid = nil
+    local deadline = lfiber.time() + (timeout or 0)
+    timeout = {timeout = timeout}
     for uuid, replicaset in pairs(router.replicasets) do
-        local _, err =
-            replicaset:callrw('vshard.storage.bucket_stat', {bucket_id})
+        local _, err = replicaset:callrw('vshard.storage.bucket_stat',
+                                         {bucket_id}, timeout)
         if err == nil then
             return bucket_set(router, bucket_id, replicaset.uuid)
         elseif err.code ~= lerror.code.WRONG_BUCKET then
             last_err = err
             unreachable_uuid = uuid
         end
+        timeout.timeout = deadline - lfiber.time()
     end
     local err = nil
     if last_err then
@@ -176,14 +179,14 @@ local function bucket_discovery(router, bucket_id)
 end
 
 -- Resolve bucket id to replicaset uuid
-local function bucket_resolve(router, bucket_id)
+local function bucket_resolve(router, bucket_id, timeout)
     local replicaset, err
     local replicaset = router.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
     end
     -- Replicaset removed from cluster, perform discovery
-    replicaset, err = bucket_discovery(router, bucket_id)
+    replicaset, err = bucket_discovery(router, bucket_id, timeout)
     if replicaset == nil then
         return nil, err
     end
@@ -259,6 +262,9 @@ discovery_f = function(router)
         for rs_uuid, p in pairs(pending) do
             lfiber.yield()
             local timeout = deadline - lfiber.clock()
+            if timeout < 0 then
+                timeout = 0
+            end
             local buckets, err = p:wait_result(timeout)
             while M.errinj.ERRINJ_LONG_DISCOVERY do
                 M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
@@ -420,7 +426,8 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
         call = 'callrw'
     end
     repeat
-        replicaset, err = bucket_resolve(router, bucket_id)
+        opts.timeout = tend - lfiber.time()
+        replicaset, err = bucket_resolve(router, bucket_id, opts.timeout)
         if replicaset then
 ::replicaset_is_found::
             opts.timeout = tend - lfiber.time()
