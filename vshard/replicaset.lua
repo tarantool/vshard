@@ -94,7 +94,7 @@ local function netbox_on_connect(conn)
     end
     if replica == rs.replica and replica == rs.priority_list[1] then
         -- Update replica_up_ts, if the current replica has the
-        -- biggest priority. Really, it is not neccessary to
+        -- biggest priority. Really, it is not necessary to
         -- increase replica connection priority, if the current
         -- one already has the biggest priority. (See failover_f).
         rs.replica_up_ts = fiber_clock()
@@ -505,7 +505,7 @@ end
 
 --
 -- Template to implement a function able to visit multiple
--- replicas with certain details. One of applicatinos - a function
+-- replicas with certain details. One of applications - a function
 -- making a call on a nearest available replica. It is possible
 -- for 'read' requests only. And if the nearest replica is not
 -- available now, then use master's connection - we can not wait

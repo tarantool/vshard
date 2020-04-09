@@ -155,7 +155,7 @@ local function cfg_check_weights(weights)
         if type(zone1) ~= 'number' and type(zone1) ~= 'string' then
             -- Zone1 can be not number or string, if an user made
             -- this: weights = {[{1}] = ...}. In such a case
-            -- {1} is the unaccassible key of a lua table, which
+            -- {1} is the unaccessible key of a lua table, which
             -- is available only via pairs.
             error('Zone identifier must be either string or number')
         end

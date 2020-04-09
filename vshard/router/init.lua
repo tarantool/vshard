@@ -1481,7 +1481,7 @@ local function router_info(router)
             bucket_info.available_rw = bucket_info.available_rw +
                                        replicaset.bucket_count
         end
-        -- No necessarity to update color - it is done above
+        -- Not necessary to update the color - it is done above
         -- during replicaset master and replica checking.
         -- If a bucket is unreachable, then replicaset is
         -- unreachable too and color already is red.

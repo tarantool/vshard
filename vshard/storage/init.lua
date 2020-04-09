@@ -160,7 +160,7 @@ if not M then
         ----------------------- Rebalancer -----------------------
         -- Fiber to rebalance a cluster.
         rebalancer_fiber = nil,
-        -- Fiber which applies routes one by one. Its presense and
+        -- Fiber which applies routes one by one. Its presence and
         -- active status means that the rebalancing is in progress
         -- now on the current node.
         rebalancer_applier_fiber = nil,
@@ -189,7 +189,7 @@ if not M then
         rebalancer_worker_count = consts.DEFAULT_REBALANCER_WORKER_COUNT,
         -- Map of bucket ro/rw reference counters. These counters
         -- works like bucket pins, but countable and are not
-        -- persisted. Persistency is not needed since the refs are
+        -- persisted. Persistence is not needed since the refs are
         -- used to keep a bucket during a request execution, but
         -- on restart evidently each request fails.
         bucket_refs = {},
@@ -1231,7 +1231,7 @@ end
 --        It is set to true when the data portion is last and the
 --        bucket can be activated here.
 --
--- @retval nil, error Error occured.
+-- @retval nil, error Error occurred.
 -- @retval true The data is received ok.
 --
 local function bucket_recv_xc(bucket_id, from, data, opts)
@@ -3034,7 +3034,7 @@ end
 -- (reload is success, if an interpreter came to the 'return'
 -- command).
 --
--- Functions of type 2 can be omited, because outside of a module
+-- Functions of type 2 can be omitted, because outside of a module
 -- they are updated only in a case of successful reload, and
 -- inside of the module they are used only inside functions of the
 -- type 3.
