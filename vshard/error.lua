@@ -4,7 +4,7 @@ local json = require('json')
 --
 -- Error messages description.
 -- * name -- Key by which an error code can be retrieved from
---   the expoted by the module `code` dictionary.
+--   the exported by the module `code` dictionary.
 -- * msg -- Error message which can use `args` using
 --   `string.format` notation.
 -- * args -- Names of arguments passed while constructing an
@@ -189,7 +189,7 @@ end
 --   oom error, socket error etc. It has type = one of tarantool
 --   error types, trace (file, line), message;
 -- * vshard_error - it is created on sharding errors like
---   replicaset unavailability, master absense etc. It has type =
+--   replicaset unavailability, master absence etc. It has type =
 --   'ShardingError', one of codes below and optional
 --   message.
 --
