@@ -41,9 +41,6 @@ script:
   - git clone https://github.com/packpack/packpack.git packpack
   - packpack/packpack -e PACKPACK_GIT_SOURCEDIR=/source/
 
-before_deploy:
-  - ls -l build/
-
 deploy:
   # Deploy packages to PackageCloud from master branch
   - provider: packagecloud
