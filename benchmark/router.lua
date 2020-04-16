@@ -9,6 +9,7 @@ log.info('Start router %s', instance_name)
 
 common.config.listen = common.router_listen[instance_name]
 vshard.router.cfg(common.config)
+bootres = vshard.router.bootstrap({if_not_bootstrapped = true})
 
 box.schema.user.grant('guest', 'super', nil, nil, {if_not_exists = true})
 

@@ -5,16 +5,34 @@ require('strict').on()
 local instance_uuid = {
     storage_1_1 = '8a274925-a26d-47fc-9e1b-af88ce939412',
     storage_2_1 = '3de2e3e1-9ebe-4d0d-abb1-26d301b84633',
+    storage_3_1 = '0be2896c-2a82-4f5f-ba93-56306790c488',
+    storage_4_1 = 'fd581199-c4e5-452c-9004-69af179ef113',
 }
 
 local replicaset_uuid = {
     storage_1 = 'cbf06940-0790-498b-948d-042b62cf3d29',
     storage_2 = 'ac522f65-aa94-4134-9f64-51ee384f1a54',
+    storage_3 = '2266e99f-903b-43ad-8387-ee79e21835cc',
+    storage_4 = '3683f897-15cd-40d5-a6d8-9d629697c507',
 }
 
 local router_listen = {
-    router_1 = '127.0.0.1:3401',
-    router_2 = '127.0.0.1:3402',
+    router_01 = '127.0.0.1:3401',
+    router_02 = '127.0.0.1:3402',
+    router_03 = '127.0.0.1:3403',
+    router_04 = '127.0.0.1:3404',
+    router_05 = '127.0.0.1:3405',
+    router_06 = '127.0.0.1:3406',
+    router_07 = '127.0.0.1:3407',
+    router_08 = '127.0.0.1:3408',
+    router_09 = '127.0.0.1:3409',
+    router_10 = '127.0.0.1:3410',
+    router_11 = '127.0.0.1:3411',
+    router_12 = '127.0.0.1:3412',
+    router_13 = '127.0.0.1:3413',
+    router_14 = '127.0.0.1:3414',
+    router_15 = '127.0.0.1:3415',
+    router_16 = '127.0.0.1:3416',
 }
 
 -- Change these values to try different benchmarks.
@@ -104,8 +122,26 @@ return {
                     },
                 },
             },
+            [replicaset_uuid.storage_3] = {
+                replicas = {
+                    [instance_uuid.storage_3_1] = {
+                        uri = 'guest@127.0.0.1:3303',
+                        name = 'storage_3_a',
+                        master = true
+                    },
+                },
+            },
+            [replicaset_uuid.storage_4] = {
+                replicas = {
+                    [instance_uuid.storage_4_1] = {
+                        uri = 'guest@127.0.0.1:3304',
+                        name = 'storage_4_a',
+                        master = true
+                    },
+                },
+            },
         },
-        bucket_count = 3000,
+        bucket_count = 4096,
         replication_connect_quorum = 0,
         net_msg_max = client_params.worker_count,
         readahead = 1024 * 1024,
