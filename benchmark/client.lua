@@ -86,7 +86,7 @@ else
     client_bench_call = function(func, args)
         local conn = client_bench_next_conn()
         return conn:call('vshard.router.callrw',
-                         {client_bench_next_bid(), func, arg, timeout})
+                         {client_bench_next_bid(), func, args, timeout})
     end
 end
 
