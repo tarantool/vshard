@@ -57,5 +57,11 @@ stop:
 	tarantoolctl stop storage_3_1
 	tarantoolctl stop storage_4_1
 
+bench: ./bench.cpp
+	g++ ./bench.cpp -O2 -DNDEBUG=1 -std=c++11 -pthread -o bench
+
+start_bench: bench
+	./bench
+
 clean:
 	rm -rf data/
