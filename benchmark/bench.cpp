@@ -66,7 +66,7 @@ struct __attribute__((packed)) MagicCallCore
 	uint8_t m_BodyFuncValueTag = 0xa0 + 20;
 	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','.','r','o','u','t','e','r','.','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
-	uint8_t m_BodyTupleValueTag = 0x93;
+	uint8_t m_BodyTupleValueTag = 0x94;
 	uint8_t m_BucketTag = 0xd1;
 	uint16_t m_Bucket = 0;
 	uint8_t m_StoreFuncTag = 0xa0 + 15;
@@ -80,6 +80,14 @@ struct __attribute__((packed)) MagicCall
 	MagicSizeMark m_SizeMark;
 	MagicCallCore m_Core;
 	char m_Args[MAX_ARGS_SIZE];
+};
+
+struct __attribute__((packed)) MagicCallTail
+{
+	uint8_t m_OptionsMap = 0x81;
+	uint8_t m_TimeoutKeyTag = 0xa0 + 7;
+	char m_TimeoutKey[7] = {'t','i','m','e','o','u','t'};
+	uint8_t m_TimeoutValue = 30;
 };
 
 struct __attribute__((packed)) MagicCall2Core
@@ -184,9 +192,13 @@ const char* generateRequest(size_t arg_count, size_t& size)
 	call.m_Core.m_Bucket = __builtin_bswap16(vbucket);
 
 	size = generateArgs(call.m_Args, arg_count);
-	assert(size < MAX_ARGS_SIZE);
-	size += sizeof(call.m_Core);
 
+	MagicCallTail tail;
+	memcpy(call.m_Args + size, &tail, sizeof(tail));
+	size += sizeof(tail);
+	check(size <= MAX_ARGS_SIZE, "magic buff is too small");
+
+	size += sizeof(call.m_Core);
 	call.m_SizeMark.m_TotalSize = __builtin_bswap16(size);
 	size += sizeof(call.m_SizeMark);
 
