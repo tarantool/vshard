@@ -65,6 +65,7 @@ struct __attribute__((packed)) MagicCallCore
 	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
 	uint8_t m_BodyFuncValueTag = 0xa0 + 20;
 	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','.','r','o','u','t','e','r','.','c','a','l','l','r','w'};
+	//char m_BodyFuncValue[20] = {'v','s','h','a','r','d','_','r','o','u','t','e','r','_','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
 	uint8_t m_BucketTag = 0xd1;
