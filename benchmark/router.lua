@@ -25,6 +25,7 @@ for i = 1,num_stors do test_stors[i] = netbox.connect('127.0.0.1:330' .. i) end
 for i = 1,num_stors do test_stors['storage_'..i..'_a'] = test_stors[i] end
 
 function vshard_router_callrw(vbucket, f, args, opts)
-    return test_stors[vshard.router.internal.routers._static_router.route_map[vbucket].master.name]:call(f, args)
+    return test_stors[vshard.router.internal.routers._static_router.route_map[vbucket].master.name]:call('vshard.storage.call', {vbucket, 'read', f, args})
+    --return test_stors[vshard.router.internal.routers._static_router.route_map[vbucket].master.name]:call(f, args)
     --return test_stors[vbucket % num_stors + 1]:call(f, args)
 end
