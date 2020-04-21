@@ -131,12 +131,13 @@ size_t generateArgs(char* data, size_t count)
 		memcpy(data, &cp, 2);
 		data += 2;
 	}
+	thread_local unsigned int randr = time(0);
 	for (size_t i = 0; i < count; i++)
 	{
-		if (rand() % 1)
+		if (rand_r(&randr) % 1)
 		{
 			static const char strings[4][16] = {"", "a", "abc", "1234567"};
-			const char* str = strings[rand() % 4];
+			const char* str = strings[rand_r(&randr) % 4];
 			size_t len = strlen(str);
 			*data = 0xa0;
 			++data;
@@ -145,26 +146,26 @@ size_t generateArgs(char* data, size_t count)
 		}
 		else
 		{
-			int r = rand() % 4;
+			int r = rand_r(&randr) % 4;
 			if (r == 0)
 			{
-				*data = rand() % 128;
+				*data = rand_r(&randr) % 128;
 				++data;
 			}
 			else if (r == 1)
 			{
 				*data = 0xcc;
 				++data;
-				*data = uint8_t(128 +  rand() % 128);
+				*data = uint8_t(128 + rand_r(&randr) % 128);
 				++data;
 			}
 			else if (r == 2)
 			{
 				*data = 0xcd;
 				++data;
-				uint16_t val = rand();
+				uint16_t val = rand_r(&randr);
 				while (val < 256)
-					val = rand();
+					val = rand_r(&randr);
 				val = __builtin_bswap16(val);
 				memcpy(data, &val, sizeof(val));
 				data += sizeof(val);
@@ -173,9 +174,9 @@ size_t generateArgs(char* data, size_t count)
 			{
 				*data = 0xce;
 				++data;
-				uint32_t val = rand();
+				uint32_t val = rand_r(&randr);
 				while (val < 65536)
-					val = rand();
+					val = rand_r(&randr);
 				val = __builtin_bswap32(val);
 				memcpy(data, &val, sizeof(val));
 				data += sizeof(val);
