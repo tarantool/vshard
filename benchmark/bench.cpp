@@ -115,6 +115,36 @@ struct __attribute__((packed)) MagicCall2
 	char m_Args[MAX_ARGS_SIZE];
 };
 
+struct __attribute__((packed)) MagicCall3Core
+{
+	uint8_t m_HeaderMap = 0x82;
+	uint8_t m_HeaderCodeKey = 0x00; // IPROTO_REQUEST_TYPE
+	uint8_t m_HeaderCodeValue = 0x0a; //  IPROTO_CALL
+	uint8_t m_HeaderSyncKey = 0x01; // IPROTO_SYNC
+	uint8_t m_HeaderSyncValue = 0;
+	uint8_t m_BodyMap = 0x82;
+	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
+	uint8_t m_BodyFuncValueTag = 0xa0 + 19;
+	char m_BodyFuncValue[19] = {'v','s','h','a','r','d','.','s','t','o','r','a','g','e','.','c','a','l','l'};
+	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
+	uint8_t m_BodyTupleValueTag = 0x94;
+	uint8_t m_BucketTag = 0xd1;
+	uint16_t m_Bucket = 1;
+	uint8_t m_ModeTag = 0xa0 + 4;
+	char m_Mode[4] = {'r','e','a','d'};
+	uint8_t m_StoreFuncTag = 0xa0 + 15;
+	char m_StoreFunc[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
+	uint8_t m_ArgsTag = 0x91;
+};
+//call('vshard.storage.call', {1, 'read', 'bench_call_echo', {{1, 2, 3}}})
+
+struct __attribute__((packed)) MagicCall3
+{
+	MagicSizeMark m_SizeMark;
+	MagicCall3Core m_Core;
+	char m_Args[MAX_ARGS_SIZE];
+};
+
 size_t generateArgs(char* data, size_t count)
 {
 	char *data_begin = data;
@@ -210,6 +240,22 @@ const char* generateRequest(size_t arg_count, size_t& size)
 const char* generateRequest2(size_t arg_count, size_t& size)
 {
 	thread_local MagicCall2 call;
+
+	size = generateArgs(call.m_Args, arg_count);
+	assert(size < MAX_ARGS_SIZE);
+	size += sizeof(call.m_Core);
+
+	call.m_SizeMark.m_TotalSize = __builtin_bswap16(size);
+	size += sizeof(call.m_SizeMark);
+
+	return reinterpret_cast<char*>(&call);
+}
+
+const char* generateRequest3(size_t arg_count, size_t& size)
+{
+	thread_local MagicCall3 call;
+//	uint16_t vbucket = 1 + rand() % MAX_VBUCKET;
+//	call.m_Core.m_Bucket = __builtin_bswap16(vbucket);
 
 	size = generateArgs(call.m_Args, arg_count);
 	assert(size < MAX_ARGS_SIZE);
