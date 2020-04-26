@@ -1,6 +1,7 @@
 test_run = require('test_run').new()
 vshard = require('vshard')
 util = require('util')
+json = require('json')
 lerror = vshard.error
 
 --
@@ -8,7 +9,8 @@ lerror = vshard.error
 --
 ok, err = pcall(box.error, box.error.TIMEOUT)
 box_error = lerror.box(err)
-tostring(box_error)
+str = tostring(box_error)
+util.portable_error(json.decode(str))
 
 vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, 'uuid', 'reason')
 tostring(vshard_error)
@@ -32,4 +34,5 @@ util.check_error(lerror.vshard, 'Wrong format code', 'arg1', 'arg2')
 
 function raise_lua_err() assert(false) end
 ok, err = pcall(raise_lua_err)
-lerror.make(err)
+err = lerror.make(err)
+util.portable_error(err)

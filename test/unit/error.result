@@ -7,6 +7,9 @@ vshard = require('vshard')
 util = require('util')
 ---
 ...
+json = require('json')
+---
+...
 lerror = vshard.error
 ---
 ...
@@ -19,9 +22,14 @@ ok, err = pcall(box.error, box.error.TIMEOUT)
 box_error = lerror.box(err)
 ---
 ...
-tostring(box_error)
+str = tostring(box_error)
 ---
-- '{"type":"ClientError","code":78,"message":"Timeout exceeded","trace":[{"file":"[C]","line":4294967295}]}'
+...
+util.portable_error(json.decode(str))
+---
+- type: ClientError
+  code: 78
+  message: Timeout exceeded
 ...
 vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, 'uuid', 'reason')
 ---
@@ -80,12 +88,12 @@ function raise_lua_err() assert(false) end
 ok, err = pcall(raise_lua_err)
 ---
 ...
-lerror.make(err)
+err = lerror.make(err)
+---
+...
+util.portable_error(err)
 ---
 - type: ClientError
   code: 32
   message: '[string "function raise_lua_err() assert(false) end "]:1: assertion failed!'
-  trace:
-  - file: '[C]'
-    line: 4294967295
 ...

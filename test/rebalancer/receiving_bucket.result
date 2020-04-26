@@ -160,15 +160,15 @@ vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
 _ = test_run:switch('box_2_a')
 ---
 ...
-vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
+res, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
+---
+...
+res, util.portable_error(err)
 ---
 - null
 - type: ClientError
   code: 32
   message: Error injection 'the bucket is received partially'
-  trace:
-  - file: '[C]'
-    line: 4294967295
 ...
 box.space._bucket:get{1}
 ---
@@ -222,10 +222,7 @@ _ = test_run:switch('box_2_a')
 _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
 ---
 ...
-err.trace = nil
----
-...
-err
+util.portable_error(err)
 ---
 - type: ClientError
   code: 78
@@ -331,15 +328,12 @@ vshard.storage.bucket_refrw(1)
 while f1:status() ~= 'dead' do fiber.sleep(0.01) end
 ---
 ...
-ret, err
+ret, util.portable_error(err)
 ---
 - null
 - type: ClientError
   code: 78
   message: Timeout exceeded
-  trace:
-  - file: '[C]'
-    line: 4294967295
 ...
 finish_long_thing = true
 ---

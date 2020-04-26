@@ -1,6 +1,5 @@
 test_run = require('test_run').new()
 fiber = require('fiber')
-test_run:cmd("push filter 'line: *[0-9]+' to 'line: <line>'")
 
 REPLICASET_1 = { 'bad_uuid_1_a', 'bad_uuid_1_b' }
 REPLICASET_2 = { 'bad_uuid_2_a', 'bad_uuid_2_b' }
@@ -16,7 +15,8 @@ util = require('util')
 vshard.storage.bucket_force_create(1)
 -- Fail, because replicaset_1 sees not the actual replicaset_2's
 -- master UUID.
-vshard.storage.bucket_send(1, replicaset_uuid[2])
+res, err = vshard.storage.bucket_send(1, replicaset_uuid[2])
+res, util.portable_error(err)
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%(storage%@')
 box.space._bucket:select{}
 -- Bucket sending fails, but it remains 'sending'. It is because
@@ -64,7 +64,8 @@ util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
 
 test_run:switch('bad_uuid_1_a')
 vshard.storage.bucket_force_create(2)
-vshard.storage.bucket_send(2, replicaset_uuid[2])
+res, err = vshard.storage.bucket_send(2, replicaset_uuid[2])
+res, util.portable_error(err)
 -- Close existing connection on a first error and log it.
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a') ~= nil
 

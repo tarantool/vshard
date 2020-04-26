@@ -48,7 +48,8 @@ vshard.storage.buckets_info(1)
 _ = test_run:switch('box_2_a')
 vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = true
 _ = test_run:switch('box_1_a')
-vshard.storage.bucket_send(1, util.replicasets[2])
+res, err = vshard.storage.bucket_send(1, util.replicasets[2])
+res, util.portable_error(err)
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_ref(1, 'write')
 vshard.storage.bucket_unref(1, 'write') -- Error, no refs.

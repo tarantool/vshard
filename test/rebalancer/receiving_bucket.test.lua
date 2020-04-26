@@ -62,7 +62,8 @@ _ = test_run:switch('box_1_a')
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
 _ = test_run:switch('box_2_a')
-vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
+res, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
+res, util.portable_error(err)
 box.space._bucket:get{1}
 _ = test_run:switch('box_1_a')
 box.space._bucket:get{1}
@@ -88,8 +89,7 @@ _ = test_run:switch('box_1_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 _ = test_run:switch('box_2_a')
 _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
-err.trace = nil
-err
+util.portable_error(err)
 box.space._bucket:get{101}
 while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 box.space._bucket:get{101}
@@ -126,7 +126,7 @@ while f1:status() ~= 'suspended' do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_refrw(1)
 while f1:status() ~= 'dead' do fiber.sleep(0.01) end
-ret, err
+ret, util.portable_error(err)
 finish_long_thing = true
 while f:status() ~= 'dead' do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)

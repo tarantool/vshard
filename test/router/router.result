@@ -255,34 +255,20 @@ vshard.router.static.replicasets[util.replicasets[2]].bucket_count
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
 ---
 ...
-e.trace = nil
----
-...
-e
+util.portable_error(e)
 ---
 - type: ClientError
-  message: Unknown error
   code: 32
-...
-tostring(e)
----
-- '{"type":"ClientError","message":"Unknown error","code":32}'
+  message: Unknown error
 ...
 _, e = vshard.router.route(1):callro('raise_client_error', {})
 ---
 ...
-e.trace = nil
----
-...
-e
+util.portable_error(e)
 ---
 - type: ClientError
   code: 0
   message: Unknown error
-...
-tostring(e)
----
-- '{"type":"ClientError","code":0,"message":"Unknown error"}'
 ...
 -- Ensure, that despite not working multi-return, it is allowed
 -- to return 'nil, err_obj'.
@@ -632,11 +618,14 @@ future:is_ready()
 future = vshard.router.callrw(bucket_id, 'raise_client_error', {}, {is_async = true})
 ---
 ...
-future:wait_result()
+res, err = future:wait_result()
 ---
-- null
-- {'type': 'ClientError', 'message': 'Unknown error', 'code': 32, 'trace': [{'file': '[C]',
-      'line': 4294967295}]}
+...
+util.portable_error(err)
+---
+- type: ClientError
+  code: 32
+  message: Unknown error
 ...
 future:is_ready()
 ---

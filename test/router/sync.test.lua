@@ -11,11 +11,13 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
 _ = test_run:cmd("start server router_1")
 _ = test_run:switch("router_1")
+util = require('util')
 
 vshard.router.bootstrap()
 
 vshard.router.sync(-1)
-vshard.router.sync(0)
+res, err = vshard.router.sync(0)
+util.portable_error(err)
 
 --
 -- gh-190: router should not ignore cfg.sync_timeout.

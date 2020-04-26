@@ -95,13 +95,9 @@ vshard.router.static.replicasets[util.replicasets[2]].bucket_count
 -- Test lua errors.
 --
 _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
-e.trace = nil
-e
-tostring(e)
+util.portable_error(e)
 _, e = vshard.router.route(1):callro('raise_client_error', {})
-e.trace = nil
-e
-tostring(e)
+util.portable_error(e)
 -- Ensure, that despite not working multi-return, it is allowed
 -- to return 'nil, err_obj'.
 vshard.router.callro(1, 'echo', {nil, 'error_object'}, {})
@@ -216,7 +212,8 @@ future = vshard.router.callro(bucket_id, 'space_get', {'test', {1}}, {is_async =
 future:wait_result()
 future:is_ready()
 future = vshard.router.callrw(bucket_id, 'raise_client_error', {}, {is_async = true})
-future:wait_result()
+res, err = future:wait_result()
+util.portable_error(err)
 future:is_ready()
 future = vshard.router.callrw(bucket_id, 'do_push', args, {is_async = true})
 func, iter, i = future:pairs()

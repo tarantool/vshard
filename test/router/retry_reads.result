@@ -113,10 +113,7 @@ fiber.time() - start < 1
 ---
 - true
 ...
-e.trace = nil
----
-...
-e
+util.portable_error(e)
 ---
 - type: ClientError
   code: 0
@@ -125,10 +122,7 @@ e
 _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
 ---
 ...
-e.trace = nil
----
-...
-e
+util.portable_error(e)
 ---
 - type: ClientError
   code: 78

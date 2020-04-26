@@ -40,12 +40,10 @@ fiber.time() - start < 1
 start = fiber.time()
 _, e = rs1:callro('raise_client_error', {}, {timeout = 5})
 fiber.time() - start < 1
-e.trace = nil
-e
+util.portable_error(e)
 
 _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
-e.trace = nil
-e
+util.portable_error(e)
 
 --
 -- Do not send multiple requests during timeout - it brokes long

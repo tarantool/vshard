@@ -38,6 +38,9 @@ _ = test_run:cmd("start server router_1")
 _ = test_run:switch("router_1")
 ---
 ...
+util = require('util')
+---
+...
 vshard.router.bootstrap()
 ---
 - true
@@ -47,15 +50,13 @@ vshard.router.sync(-1)
 - null
 - Timeout exceeded
 ...
-vshard.router.sync(0)
+res, err = vshard.router.sync(0)
 ---
-- null
-- replicaset: ac522f65-aa94-4134-9f64-51ee384f1a54
+...
+util.portable_error(err)
+---
+- type: ClientError
   code: 78
-  trace:
-  - file: builtin/box/net_box.lua
-    line: <line>
-  type: ClientError
   message: Timeout exceeded
 ...
 --

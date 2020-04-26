@@ -193,6 +193,14 @@ local function git_checkout(dst_dir, version)
     return vshard_copy_path
 end
 
+-- Portable representation of an error, not depending on Tarantool
+-- version and on any additional fields it can add. Trace is also
+-- trimmed in order for the tests not to depend on line numbers of
+-- the source files, which may slip into a .result file.
+local function portable_error(err)
+    return {code = err.code, type = err.type, message = err.message}
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -206,4 +214,5 @@ return {
     SOURCEDIR = SOURCEDIR,
     BUILDDIR = BUILDDIR,
     git_checkout = git_checkout,
+    portable_error = portable_error,
 }
