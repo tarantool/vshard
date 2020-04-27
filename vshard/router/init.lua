@@ -112,6 +112,13 @@ local function bucket_reset(router, bucket_id)
     router.route_map[bucket_id] = nil
 end
 
+local function route_map_clear(router)
+    router.route_map = {}
+    for _, rs in pairs(router.replicasets) do
+        rs.bucket_count = 0
+    end
+end
+
 --
 -- Increase/decrease number of routers which require to collect
 -- a lua garbage and change state of the `lua_gc` fiber.
@@ -1173,6 +1180,8 @@ local router_mt = {
         bucket_discovery = bucket_discovery;
         discovery_wakeup = discovery_wakeup;
         discovery_set = discovery_set,
+        _route_map_clear = route_map_clear,
+        _bucket_reset = bucket_reset,
     }
 }
 

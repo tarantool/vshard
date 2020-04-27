@@ -175,7 +175,7 @@ vshard.router.bootstrap()
 --
 -- gh-108: negative bucket count on discovery.
 --
-vshard.router.static.route_map = {}
+vshard.router.static:_route_map_clear()
 ---
 ...
 rets = {}
@@ -985,10 +985,8 @@ _ = test_run:cmd("setopt delimiter ';'")
 ---
 ...
 for i = 1, 100 do
-    local rs = vshard.router.static.route_map[i]
-    assert(rs)
-    rs.bucket_count = rs.bucket_count - 1
-    vshard.router.static.route_map[i] = nil
+    assert(vshard.router.static.route_map[i])
+    vshard.router.static:_bucket_reset(i)
 end;
 ---
 ...
@@ -1243,9 +1241,7 @@ end;
 vshard.router.cfg(cfg);
 ---
 ...
-vshard.router.static.route_map = {};
----
-...
+vshard.router.static:_route_map_clear()
 vshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false;
 ---
 ...
