@@ -64,6 +64,9 @@ local ROUTER_TEMPLATE = {
         failover_fiber = nil,
         -- Fiber to discovery buckets in background.
         discovery_fiber = nil,
+        -- How discovery works. On - work infinitely. Off - no
+        -- discovery.
+        discovery_mode = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
         -- Boolean lua_gc state (create periodic gc task).
@@ -232,6 +235,7 @@ if util.version_is_at_least(1, 10, 0) then
 --
 discovery_f = function(router)
     local module_version = M.module_version
+    assert(router.discovery_mode == 'on')
     while module_version == M.module_version do
         while not next(router.replicasets) do
             lfiber.sleep(consts.DISCOVERY_INTERVAL)
@@ -327,6 +331,23 @@ local function discovery_wakeup(router)
     if router.discovery_fiber then
         router.discovery_fiber:wakeup()
     end
+end
+
+local function discovery_set(router, new_mode)
+    local current_mode = router.discovery_mode
+    if current_mode == new_mode then
+        return
+    end
+    router.discovery_mode = new_mode
+    if router.discovery_fiber ~= nil then
+        pcall(router.discovery_fiber.cancel, router.discovery_fiber)
+    end
+    if new_mode == 'off' then
+        router.discovery_fiber = nil
+        return
+    end
+    router.discovery_fiber = util.reloadable_fiber_create(
+        'vshard.discovery.' .. router.name, M, 'discovery_f', router)
 end
 
 --------------------------------------------------------------------------------
@@ -792,10 +813,7 @@ local function router_cfg(router, cfg, is_reload)
         router.failover_fiber = util.reloadable_fiber_create(
             'vshard.failover.' .. router.name, M, 'failover_f', router)
     end
-    if router.discovery_fiber == nil then
-        router.discovery_fiber = util.reloadable_fiber_create(
-            'vshard.discovery.' .. router.name, M, 'discovery_f', router)
-    end
+    discovery_set(router, vshard_cfg.discovery_mode)
 end
 
 --------------------------------------------------------------------------------
@@ -1154,6 +1172,7 @@ local router_mt = {
         bootstrap = cluster_bootstrap;
         bucket_discovery = bucket_discovery;
         discovery_wakeup = discovery_wakeup;
+        discovery_set = discovery_set,
     }
 }
 

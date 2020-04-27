@@ -151,6 +151,12 @@ local function cfg_check_weights(weights)
     end
 end
 
+local function check_discovery_mode(value)
+    if value ~= 'on' and value ~= 'off' then
+        error("Expected 'on' or 'off' for discovery_mode")
+    end
+end
+
 local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
@@ -254,6 +260,10 @@ local cfg_template = {
     failover_ping_timeout = {
         type = 'positive number', name = 'Failover ping timeout',
         is_optional = true, default = consts.DEFAULT_FAILOVER_PING_TIMEOUT
+    },
+    discovery_mode = {
+        type = 'string', name = 'Discovery mode: on, off',
+        is_optional = true, default = 'on', check = check_discovery_mode
     },
 }
 
