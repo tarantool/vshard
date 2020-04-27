@@ -28,7 +28,9 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
 ---
 ...
-_ = test_run:cmd("start server router_1")
+-- Discovery algorithm changes sometimes and should not affect the
+-- read retry decisions.
+_ = test_run:cmd("start server router_1 with args='discovery_disable'")
 ---
 ...
 _ = test_run:switch('router_1')
@@ -53,7 +55,7 @@ util.collect_timeouts(rs1)
     ok: 0
     timeout: 0.5
   - fail: 0
-    ok: 1
+    ok: 0
     timeout: 0.5
 ...
 _ = rs1:callro('sleep', {min_timeout + 0.5}, {timeout = min_timeout})

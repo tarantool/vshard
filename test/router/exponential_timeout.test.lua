@@ -10,7 +10,9 @@ util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
-_ = test_run:cmd("start server router_1")
+-- Discovery algorithm changes sometimes and should not affect the
+-- exponential timeout test.
+_ = test_run:cmd("start server router_1 with args='discovery_disable'")
 _ = test_run:switch('router_1')
 util = require('util')
 

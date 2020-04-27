@@ -9,7 +9,8 @@ util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
 util.push_rs_filters(test_run)
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
-_ = test_run:cmd("start server router_1")
+-- Discovery should not interfere in some first tests.
+_ = test_run:cmd("start server router_1 with args='discovery_disable'")
 
 _ = test_run:switch("router_1")
 -- gh-46: Ensure a cfg is not destroyed after router.cfg().
@@ -242,6 +243,8 @@ vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, '
 -- Monitoring
 --
 
+cfg.discovery_mode = 'on'
+vshard.router.discovery_set('on')
 -- All is ok, when all servers are up.
 -- gh-103: show bucket info for each replicaset.
 info = vshard.router.info()
