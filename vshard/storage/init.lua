@@ -75,6 +75,7 @@ if not M then
             ERRINJ_RECEIVE_PARTIALLY = false,
             ERRINJ_NO_RECOVERY = false,
             ERRINJ_UPGRADE = false,
+            ERRINJ_DISCOVERY = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -1110,10 +1111,58 @@ local function bucket_collect(bucket_id)
     return data
 end
 
+-- Discovery used by routers. It returns limited number of
+-- buckets to avoid stalls when _bucket is huge.
+local function buckets_discovery_extended(opts)
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local buckets = table.new(limit, 0)
+    local active = consts.BUCKET.ACTIVE
+    local pinned = consts.BUCKET.PINNED
+    local next_from
+    local errcnt = M.errinj.ERRINJ_DISCOVERY
+    if errcnt then
+        if errcnt > 0 then
+            M.errinj.ERRINJ_DISCOVERY = errcnt - 1
+            if errcnt % 2 == 0 then
+                box.error(box.error.INJECTION, 'discovery')
+            end
+        else
+            M.errinj.ERRINJ_DISCOVERY = false
+        end
+    end
+    -- No way to select by {status, id}, because there are two
+    -- statuses to select. A router would need to maintain a
+    -- separate iterator for each status it wants to get. This may
+    -- be implemented in future. But _bucket space anyway 99% of
+    -- time contains only active and pinned buckets. So there is
+    -- no big benefit in optimizing that. Perhaps a compound index
+    -- {status, id} could help too.
+    for _, bucket in box.space._bucket:pairs({opts.from},
+                                             {iterator = box.index.GE}) do
+        local status = bucket.status
+        if status == active or status == pinned then
+            table.insert(buckets, bucket.id)
+        end
+        limit = limit - 1
+        if limit == 0 then
+            next_from = bucket.id + 1
+            break
+        end
+    end
+    -- Buckets list can even be empty, if all buckets in the
+    -- scanned chunk are not active/pinned. But next_from still
+    -- should be returned. So as the router could request more.
+    return {buckets = buckets, next_from = next_from}
+end
+
 --
 -- Collect array of active bucket identifiers for discovery.
 --
-local function buckets_discovery()
+local function buckets_discovery(opts)
+    if opts then
+        -- Private method. Is not documented intentionally.
+        return buckets_discovery_extended(opts)
+    end
     local ret = {}
     local status = box.space._bucket.index.status
     for _, bucket in status:pairs({consts.BUCKET.ACTIVE}) do

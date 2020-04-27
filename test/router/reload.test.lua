@@ -15,7 +15,8 @@ fiber = require('fiber')
 vshard.router.bootstrap()
 
 while test_run:grep_log('router_1', 'All replicas are ok') == nil do fiber.sleep(0.1) end
-while test_run:grep_log('router_1', 'buckets: was 0, became 1500') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end
+while test_run:grep_log('router_1', 'buckets: was 0, became 1000') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end
+while test_run:grep_log('router_1', 'buckets: was 1000, became 1500') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end
 
 --
 -- Gh-72: allow reload. Test simple reload, error during

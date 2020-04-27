@@ -943,9 +943,9 @@ calculate_known_buckets()
 ---
 - 3000
 ...
-test_run:grep_log('router_1', 'was 1, became 1500')
+test_run:grep_log('router_1', 'was 1, became 1000')
 ---
-- was 1, became 1500
+- was 1, became 1000
 ...
 info = vshard.router.info()
 ---

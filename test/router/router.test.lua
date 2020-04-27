@@ -316,7 +316,7 @@ vshard.storage.bucket_pin(first_active)
 _ = test_run:switch('router_1')
 wait_discovery()
 calculate_known_buckets()
-test_run:grep_log('router_1', 'was 1, became 1500')
+test_run:grep_log('router_1', 'was 1, became 1000')
 info = vshard.router.info()
 info.bucket
 info.alerts

@@ -43,6 +43,34 @@ vshard.router.static.discovery_fiber:status()
 
 f1:status(), f2, f3:status(), f4:status(), f5, f6:status()
 
+-- Errored discovery continued successfully after errors are gone.
+vshard.router.bootstrap()
+vshard.router.discovery_set('off')
+vshard.router._route_map_clear()
+
+-- Discovery requests 2 and 4 will fail on storages.
+util.map_evals(test_run, {{'storage_1_a'}, {'storage_2_a'}},                    \
+               'vshard.storage.internal.errinj.ERRINJ_DISCOVERY = 4')
+
+vshard.router.info().bucket.unknown
+vshard.router.discovery_set('on')
+function continue_discovery()                                                   \
+    local res = vshard.router.info().bucket.unknown == 0                        \
+    if not res then                                                             \
+        vshard.router.discovery_wakeup()                                        \
+    end                                                                         \
+    return res                                                                  \
+end
+test_run:wait_cond(continue_discovery)
+vshard.router.info().bucket.unknown
+
+-- Discovery injections should be reset meaning they were returned
+-- needed number of times.
+_ = test_run:switch('storage_1_a')
+vshard.storage.internal.errinj.ERRINJ_DISCOVERY
+_ = test_run:switch('storage_2_a')
+vshard.storage.internal.errinj.ERRINJ_DISCOVERY
+
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")
 _ = test_run:cmd("cleanup server router_1")

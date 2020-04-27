@@ -250,50 +250,130 @@ if util.version_is_at_least(1, 10, 0) then
 discovery_f = function(router)
     local module_version = M.module_version
     assert(router.discovery_mode == 'on')
+    local iterators = {}
+    local opts = {is_async = true}
+    local mode
     while module_version == M.module_version do
-        while not next(router.replicasets) do
-            lfiber.sleep(consts.DISCOVERY_INTERVAL)
-        end
-        if module_version ~= M.module_version then
-            return
-        end
         -- Just typical map reduce - send request to each
-        -- replicaset in parallel, and collect responses.
-        local pending = {}
-        local opts = {is_async = true}
-        local args = {}
-        for rs_uuid, replicaset in pairs(router.replicasets) do
-            local future, err =
-                replicaset:callro('vshard.storage.buckets_discovery',
-                                  args, opts)
-            if not future then
-                log.warn('Error during discovery %s: %s', rs_uuid, err)
-            else
-                pending[rs_uuid] = future
+        -- replicaset in parallel, and collect responses. Many
+        -- requests probably will be needed for each replicaset.
+        --
+        -- Step 1: create missing iterators, in case this is a
+        -- first discovery iteration, or some replicasets were
+        -- added after the router is started.
+        for rs_uuid in pairs(router.replicasets) do
+            local iter = iterators[rs_uuid]
+            if not iter then
+                iterators[rs_uuid] = {
+                    args = {{from = 1}},
+                    future = nil,
+                }
             end
         end
-
-        local deadline = lfiber.clock() + consts.DISCOVERY_INTERVAL
-        for rs_uuid, p in pairs(pending) do
+        -- Step 2: map stage - send parallel requests for every
+        -- iterator, prune orphan iterators whose replicasets were
+        -- removed.
+        for rs_uuid, iter in pairs(iterators) do
+            local replicaset = router.replicasets[rs_uuid]
+            if not replicaset then
+                log.warn('Replicaset %s was removed during discovery', rs_uuid)
+                iterators[rs_uuid] = nil
+                goto continue
+            end
+            local future, err =
+                replicaset:callro('vshard.storage.buckets_discovery', iter.args,
+                                  opts)
+            if not future then
+                log.warn('Error during discovery %s, retry will be done '..
+                         'later: %s', rs_uuid, err)
+                goto continue
+            end
+            iter.future = future
+            -- Don't spam many requests at once. Give
+            -- storages time to handle them and other
+            -- requests.
+            lfiber.sleep(consts.DISCOVERY_WORK_STEP)
+            if module_version ~= M.module_version then
+                return
+            end
+            ::continue::
+        end
+        -- Step 3: reduce stage - collect responses, restart
+        -- iterators which reached the end.
+        for rs_uuid, iter in pairs(iterators) do
             lfiber.yield()
-            local timeout = deadline - lfiber.clock()
-            local buckets, err = p:wait_result(timeout)
+            local future = iter.future
+            if not future then
+                goto continue
+            end
+            local result, err = future:wait_result(consts.DISCOVERY_TIMEOUT)
+            if module_version ~= M.module_version then
+                return
+            end
+            if not result then
+                future:discard()
+                log.warn('Error during discovery %s, retry will be done '..
+                         'later: %s', rs_uuid, err)
+                goto continue
+            end
+            local replicaset = router.replicasets[rs_uuid]
+            if not replicaset then
+                iterators[rs_uuid] = nil
+                log.warn('Replicaset %s was removed during discovery', rs_uuid)
+                goto continue
+            end
+            result = result[1]
+            -- Buckets are returned as plain array by storages
+            -- using old vshard version. But if .buckets is set,
+            -- this is a new storage.
+            discovery_handle_buckets(router, replicaset,
+                                     result.buckets or result)
+            local discovery_args = iter.args[1]
+            discovery_args.from = result.next_from
+            if not result.next_from then
+                -- Nil next_from means no more buckets to get.
+                -- Restart the iterator.
+                iterators[rs_uuid] = nil
+            end
+            ::continue::
+        end
+        local unknown_bucket_count
+        repeat
+            unknown_bucket_count =
+                router.total_bucket_count - router.known_bucket_count
+            if unknown_bucket_count == 0 then
+                if mode ~= 'idle' then
+                    log.info('Discovery enters idle mode, all buckets are '..
+                             'known. Discovery works with %s seconds '..
+                             'interval now', consts.DISCOVERY_IDLE_INTERVAL)
+                    mode = 'idle'
+                end
+                lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
+            elseif not next(router.replicasets) then
+                if mode ~= 'idle' then
+                    log.info('Discovery enters idle mode because '..
+                             'configuration does not have replicasets. '..
+                             'Retries will happen with %s seconds interval',
+                             consts.DISCOVERY_IDLE_INTERVAL)
+                    mode = 'idle'
+                end
+                lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
+            else
+                if mode ~= 'aggressive' then
+                    log.info('Start aggressive discovery, %s buckets are '..
+                             'unknown. Discovery works with %s seconds '..
+                             'interval', unknown_bucket_count,
+                             consts.DISCOVERY_WORK_INTERVAL)
+                    mode = 'aggressive'
+                end
+                lfiber.sleep(consts.DISCOVERY_WORK_INTERVAL)
+                break
+            end
             while M.errinj.ERRINJ_LONG_DISCOVERY do
                 M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
                 lfiber.sleep(0.01)
             end
-            local replicaset = router.replicasets[rs_uuid]
-            if not buckets then
-                p:discard()
-                log.warn('Error during discovery %s: %s', rs_uuid, err)
-            elseif module_version ~= M.module_version then
-                return
-            elseif replicaset then
-                discovery_handle_buckets(router, replicaset, buckets[1])
-            end
-        end
-
-        lfiber.sleep(deadline - lfiber.clock())
+        until next(router.replicasets)
     end
 end
 
@@ -355,9 +435,9 @@ local function discovery_set(router, new_mode)
     router.discovery_mode = new_mode
     if router.discovery_fiber ~= nil then
         pcall(router.discovery_fiber.cancel, router.discovery_fiber)
+        router.discovery_fiber = nil
     end
     if new_mode == 'off' then
-        router.discovery_fiber = nil
         return
     end
     router.discovery_fiber = util.reloadable_fiber_create(

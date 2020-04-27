@@ -18,7 +18,10 @@ vshard.router.bootstrap()
 --
 cfg.bucket_count = 1000
 r = vshard.router.new('gh-179', cfg)
-while type(r:info().bucket.unknown) == 'number' and r:info().bucket.unknown > 0 do r:discovery_wakeup() fiber.sleep(0.1) end
+while r:info().bucket.available_rw ~= 3000 do                                   \
+    r:discovery_wakeup()                                                        \
+    fiber.sleep(0.1)                                                            \
+end
 i = r:info()
 i.bucket
 i.alerts
