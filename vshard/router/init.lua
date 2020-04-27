@@ -69,6 +69,7 @@ local ROUTER_TEMPLATE = {
         discovery_mode = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
+        known_bucket_count = 0,
         -- Boolean lua_gc state (create periodic gc task).
         collect_lua_garbage = nil,
         -- Timeout after which a ping is considered to be
@@ -96,6 +97,8 @@ local function bucket_set(router, bucket_id, rs_uuid)
     if old_replicaset ~= replicaset then
         if old_replicaset then
             old_replicaset.bucket_count = old_replicaset.bucket_count - 1
+        else
+            router.known_bucket_count = router.known_bucket_count + 1
         end
         replicaset.bucket_count = replicaset.bucket_count + 1
     end
@@ -108,12 +111,14 @@ local function bucket_reset(router, bucket_id)
     local replicaset = router.route_map[bucket_id]
     if replicaset then
         replicaset.bucket_count = replicaset.bucket_count - 1
+        router.known_bucket_count = router.known_bucket_count - 1
     end
     router.route_map[bucket_id] = nil
 end
 
 local function route_map_clear(router)
     router.route_map = {}
+    router.known_bucket_count = 0
     for _, rs in pairs(router.replicasets) do
         rs.bucket_count = 0
     end
@@ -217,6 +222,8 @@ local function discovery_handle_buckets(router, replicaset, buckets)
                     affected[old_rs] = bc
                 end
                 old_rs.bucket_count = bc - 1
+            else
+                router.known_bucket_count = router.known_bucket_count + 1
             end
             router.route_map[bucket_id] = replicaset
         end
@@ -939,7 +946,6 @@ local function router_info(router)
         status = consts.STATUS.GREEN,
     }
     local bucket_info = state.bucket
-    local known_bucket_count = 0
     for rs_uuid, replicaset in pairs(router.replicasets) do
         -- Replicaset info parameters:
         -- * master instance info;
@@ -1007,7 +1013,6 @@ local function router_info(router)
         --                available for any requests;
         -- * unknown: how many buckets are unknown - a router
         --            doesn't know their replicasets.
-        known_bucket_count = known_bucket_count + replicaset.bucket_count
         if rs_info.master.status ~= 'available' then
             if rs_info.replica.status ~= 'available' then
                 rs_info.bucket.unreachable = replicaset.bucket_count
@@ -1028,7 +1033,7 @@ local function router_info(router)
         -- If a bucket is unreachable, then replicaset is
         -- unreachable too and color already is red.
     end
-    bucket_info.unknown = router.total_bucket_count - known_bucket_count
+    bucket_info.unknown = router.total_bucket_count - router.known_bucket_count
     if bucket_info.unknown > 0 then
         state.status = math.max(state.status, consts.STATUS.YELLOW)
         table.insert(state.alerts, lerror.alert(lerror.code.UNKNOWN_BUCKETS,
