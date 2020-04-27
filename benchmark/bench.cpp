@@ -54,7 +54,7 @@ struct __attribute__((packed)) MagicRecvSizeMark
 	size_t get() { return __builtin_bswap32(m_TotalSize); }
 };
 
-struct __attribute__((packed)) MagicCallCore
+struct __attribute__((packed)) MagicCallVshardRouterCore
 {
 	uint8_t m_HeaderMap = 0x82;
 	uint8_t m_HeaderCodeKey = 0x00; // IPROTO_REQUEST_TYPE
@@ -65,7 +65,6 @@ struct __attribute__((packed)) MagicCallCore
 	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
 	uint8_t m_BodyFuncValueTag = 0xa0 + 20;
 	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','.','r','o','u','t','e','r','.','c','a','l','l','r','w'};
-	//char m_BodyFuncValue[20] = {'v','s','h','a','r','d','_','r','o','u','t','e','r','_','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
 	uint8_t m_BucketTag = 0xd1;
@@ -76,14 +75,14 @@ struct __attribute__((packed)) MagicCallCore
 };
 //call('vshard.router.callrw', {1, 'bench_call_echo', {{1, 2, 3}}});
 
-struct __attribute__((packed)) MagicCall
+struct __attribute__((packed)) MagicCallVshardRouter
 {
 	MagicSizeMark m_SizeMark;
-	MagicCallCore m_Core;
+	MagicCallVshardRouterCore m_Core;
 	char m_Args[MAX_ARGS_SIZE];
 };
 
-struct __attribute__((packed)) MagicCallTail
+struct __attribute__((packed)) MagicCallVshardRouterTail
 {
 	uint8_t m_OptionsMap = 0x81;
 	uint8_t m_TimeoutKeyTag = 0xa0 + 7;
@@ -91,7 +90,7 @@ struct __attribute__((packed)) MagicCallTail
 	uint8_t m_TimeoutValue = 30;
 };
 
-struct __attribute__((packed)) MagicCall2Core
+struct __attribute__((packed)) MagicCallNetboxRouterCore
 {
 	uint8_t m_HeaderMap = 0x82;
 	uint8_t m_HeaderCodeKey = 0x00; // IPROTO_REQUEST_TYPE
@@ -100,22 +99,34 @@ struct __attribute__((packed)) MagicCall2Core
 	uint8_t m_HeaderSyncValue = 0;
 	uint8_t m_BodyMap = 0x82;
 	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
-	uint8_t m_BodyFuncValueTag = 0xa0 + 15;
-	char m_BodyFuncValue[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
+	uint8_t m_BodyFuncValueTag = 0xa0 + 20;
+	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','_','r','o','u','t','e','r','_','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
-	uint8_t m_BodyTupleValueTag = 0x91;
+	uint8_t m_BodyTupleValueTag = 0x94;
+	uint8_t m_BucketTag = 0xd1;
+	uint16_t m_Bucket = 0;
+	uint8_t m_StoreFuncTag = 0xa0 + 15;
+	char m_StoreFunc[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
 	uint8_t m_ArgsTag = 0x91;
 };
-//call('bench_call_echo', {{1, 2, 3}})
+//call('vshard_router_callrw', {1, 'bench_call_echo', {{1, 2, 3}}});
 
-struct __attribute__((packed)) MagicCall2
+struct __attribute__((packed)) MagicCallNetboxRouter
 {
 	MagicSizeMark m_SizeMark;
-	MagicCall2Core m_Core;
+	MagicCallNetboxRouterCore m_Core;
 	char m_Args[MAX_ARGS_SIZE];
 };
 
-struct __attribute__((packed)) MagicCall3Core
+struct __attribute__((packed)) MagicCallRouterTail
+{
+	uint8_t m_OptionsMap = 0x81;
+	uint8_t m_TimeoutKeyTag = 0xa0 + 7;
+	char m_TimeoutKey[7] = {'t','i','m','e','o','u','t'};
+	uint8_t m_TimeoutValue = 30;
+};
+
+struct __attribute__((packed)) MagicCallVshardStorageCore
 {
 	uint8_t m_HeaderMap = 0x82;
 	uint8_t m_HeaderCodeKey = 0x00; // IPROTO_REQUEST_TYPE
@@ -138,10 +149,34 @@ struct __attribute__((packed)) MagicCall3Core
 };
 //call('vshard.storage.call', {1, 'read', 'bench_call_echo', {{1, 2, 3}}})
 
-struct __attribute__((packed)) MagicCall3
+struct __attribute__((packed)) MagicCallVshardStorage
 {
 	MagicSizeMark m_SizeMark;
-	MagicCall3Core m_Core;
+	MagicCallVshardStorageCore m_Core;
+	char m_Args[MAX_ARGS_SIZE];
+};
+
+struct __attribute__((packed)) MagicCallSimpleStorageCore
+{
+	uint8_t m_HeaderMap = 0x82;
+	uint8_t m_HeaderCodeKey = 0x00; // IPROTO_REQUEST_TYPE
+	uint8_t m_HeaderCodeValue = 0x0a; //  IPROTO_CALL
+	uint8_t m_HeaderSyncKey = 0x01; // IPROTO_SYNC
+	uint8_t m_HeaderSyncValue = 0;
+	uint8_t m_BodyMap = 0x82;
+	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
+	uint8_t m_BodyFuncValueTag = 0xa0 + 15;
+	char m_BodyFuncValue[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
+	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
+	uint8_t m_BodyTupleValueTag = 0x91;
+	uint8_t m_ArgsTag = 0x91;
+};
+//call('bench_call_echo', {{1, 2, 3}})
+
+struct __attribute__((packed)) MagicCallSimpleStorage
+{
+	MagicSizeMark m_SizeMark;
+	MagicCallSimpleStorageCore m_Core;
 	char m_Args[MAX_ARGS_SIZE];
 };
 
@@ -216,16 +251,16 @@ size_t generateArgs(char* data, size_t count)
 	return data - data_begin;
 }
 
-const char* generateRequest(size_t arg_count, size_t& size)
+const char* generateRequestVshardRouter(size_t arg_count, size_t& size)
 {
-	thread_local MagicCall call;
+	thread_local MagicCallVshardRouter call;
 
 	uint16_t vbucket = 1 + rand() % MAX_VBUCKET;
 	call.m_Core.m_Bucket = __builtin_bswap16(vbucket);
 
 	size = generateArgs(call.m_Args, arg_count);
 
-	MagicCallTail tail;
+	MagicCallRouterTail tail;
 	memcpy(call.m_Args + size, &tail, sizeof(tail));
 	size += sizeof(tail);
 	check(size <= MAX_ARGS_SIZE, "magic buff is too small");
@@ -237,23 +272,30 @@ const char* generateRequest(size_t arg_count, size_t& size)
 	return reinterpret_cast<char*>(&call);
 }
 
-const char* generateRequest2(size_t arg_count, size_t& size)
+const char* generateRequestNetboxRouter(size_t arg_count, size_t& size)
 {
-	thread_local MagicCall2 call;
+	thread_local MagicCallNetboxRouter call;
+
+	uint16_t vbucket = 1 + rand() % MAX_VBUCKET;
+	call.m_Core.m_Bucket = __builtin_bswap16(vbucket);
 
 	size = generateArgs(call.m_Args, arg_count);
-	assert(size < MAX_ARGS_SIZE);
-	size += sizeof(call.m_Core);
 
+	MagicCallRouterTail tail;
+	memcpy(call.m_Args + size, &tail, sizeof(tail));
+	size += sizeof(tail);
+	check(size <= MAX_ARGS_SIZE, "magic buff is too small");
+
+	size += sizeof(call.m_Core);
 	call.m_SizeMark.m_TotalSize = __builtin_bswap16(size);
 	size += sizeof(call.m_SizeMark);
 
 	return reinterpret_cast<char*>(&call);
 }
 
-const char* generateRequest3(size_t arg_count, size_t& size)
+const char* generateRequestVshardStorage(size_t arg_count, size_t& size)
 {
-	thread_local MagicCall3 call;
+	thread_local MagicCallVshardStorage call;
 //	uint16_t vbucket = 1 + rand() % MAX_VBUCKET;
 //	call.m_Core.m_Bucket = __builtin_bswap16(vbucket);
 
@@ -265,6 +307,30 @@ const char* generateRequest3(size_t arg_count, size_t& size)
 	size += sizeof(call.m_SizeMark);
 
 	return reinterpret_cast<char*>(&call);
+}
+
+const char* generateRequestSimpleStorage(size_t arg_count, size_t& size)
+{
+	thread_local MagicCallSimpleStorage call;
+
+	size = generateArgs(call.m_Args, arg_count);
+	assert(size < MAX_ARGS_SIZE);
+	size += sizeof(call.m_Core);
+
+	call.m_SizeMark.m_TotalSize = __builtin_bswap16(size);
+	size += sizeof(call.m_SizeMark);
+
+	return reinterpret_cast<char*>(&call);
+}
+
+enum srv_type { VSHARD_ROUTER, NETBOX_ROUTER, VSHARD_STORAGE, SIMPLE_STORAGE };
+
+const char* generateRequest(size_t arg_count, size_t& size, srv_type type)
+{
+	typedef const char* (*f_t)(size_t arg_count, size_t& size);
+	static f_t list[4] = {generateRequestVshardRouter, generateRequestNetboxRouter,
+	                      generateRequestVshardStorage, generateRequestSimpleStorage};
+	return list[type](arg_count, size);
 }
 
 class AddrInfo
@@ -309,7 +375,6 @@ public:
 private:
 	struct addrinfo* m_Info;
 };
-
 
 struct CycleBuf
 {
@@ -429,8 +494,6 @@ struct CycleBuf
 	}
 };
 
-enum srv_type { STORAGE, ROUTER };
-
 struct Conn
 {
 	int fd = -1;
@@ -443,9 +506,7 @@ struct Conn
 	void add_req(size_t tuple_size, srv_type type)
 	{
 		size_t buf_size;
-		const char* buf = type == ROUTER ?
-		                  generateRequest(tuple_size, buf_size) :
-		                  generateRequest2(tuple_size, buf_size);
+		const char* buf = generateRequest(tuple_size, buf_size, type);
 		obuf.append(buf, buf_size);
 	}
 	void init(const char* addr, const char* port, size_t num_req, size_t tuple_size, srv_type type)
@@ -478,8 +539,9 @@ static unsigned long long now()
 
 void test_f(size_t num_srv, size_t from_srv, size_t num_conns, size_t req_per_conn, size_t tuple_size, srv_type type, double* krps)
 {
-	const char *addr = type == STORAGE ? SADDR : RADDR;
-	const char *const*ports = type == STORAGE ? SPORTS : RPORTS;
+	bool is_storage = type == VSHARD_STORAGE || type == SIMPLE_STORAGE;
+	const char *addr = is_storage ? SADDR : RADDR;
+	const char *const*ports = is_storage ? SPORTS : RPORTS;
 	std::vector<Conn> conns(num_conns);
 	for (size_t i = 0; i < num_conns; i++)
 		conns[i].init(addr, ports[(i + from_srv) % num_srv], req_per_conn, tuple_size, type);
@@ -615,26 +677,50 @@ int main()
 	printf("note: 'connections' - total per test; each router receives 'connections' / 'routers'.\n");
 
 	printf("\n");
+	printf("Simple echo storage call\n");
 	printf("|  storages  |connections |batch factor| tuple size |    krps    |\n");
 	printf("|------------|------------|------------|------------|------------|\n");
 	for (size_t i = 1; i <= 1024; i *= 2)
-		test(1, 1024 / i, i, 0, STORAGE);
+		test(1, 1024 / i, i, 0, SIMPLE_STORAGE);
 	for (size_t i = 1; i <= NUM_STORAGES; i *= 2)
-		test(i, 32, 32, 0, STORAGE);
+		test(i, 32, 32, 0, SIMPLE_STORAGE);
 	for (size_t i = 0; i <= 50; i += 10)
-		test(1, 32, 32, i, STORAGE);
+		test(1, 32, 32, i, SIMPLE_STORAGE);
 	for (size_t i = 0; i <= 50; i += 10)
-		test(NUM_STORAGES, 32, 32, i, STORAGE);
+		test(NUM_STORAGES, 32, 32, i, SIMPLE_STORAGE);
 
 	printf("\n");
+	printf("Vshard storage call\n");
+	printf("|  storages  |connections |batch factor| tuple size |    krps    |\n");
+	printf("|------------|------------|------------|------------|------------|\n");
+	for (size_t i = 1; i <= 1024; i *= 2)
+		test(1, 1024 / i, i, 0, VSHARD_STORAGE);
+	for (size_t i = 0; i <= 50; i += 10)
+		test(1, 32, 32, i, VSHARD_STORAGE);
+
+	printf("\n");
+	printf("Netbox router call\n");
 	printf("|  routers   |connections |batch factor| tuple size |    krps    |\n");
 	printf("|------------|------------|------------|------------|------------|\n");
 	for (size_t i = 1; i <= 1024; i *= 2)
-		test(1, 1024 / i, i, 0, ROUTER);
+		test(1, 1024 / i, i, 0, NETBOX_ROUTER);
 	for (size_t i = 1; i <= NUM_ROUTERS; i *= 2)
-		test(i, 32, 32, 0, ROUTER);
+		test(i, 32, 32, 0, NETBOX_ROUTER);
 	for (size_t i = 0; i <= 50; i += 10)
-		test(1, 32, 32, i, ROUTER);
+		test(1, 32, 32, i, NETBOX_ROUTER);
 	for (size_t i = 0; i <= 50; i += 10)
-		test(NUM_ROUTERS, 32, 32, i, ROUTER);
+		test(NUM_ROUTERS, 32, 32, i, NETBOX_ROUTER);
+
+	printf("\n");
+	printf("Vshard router call\n");
+	printf("|  routers   |connections |batch factor| tuple size |    krps    |\n");
+	printf("|------------|------------|------------|------------|------------|\n");
+	for (size_t i = 1; i <= 1024; i *= 2)
+		test(1, 1024 / i, i, 0, VSHARD_ROUTER);
+	for (size_t i = 1; i <= NUM_ROUTERS; i *= 2)
+		test(i, 32, 32, 0, VSHARD_ROUTER);
+	for (size_t i = 0; i <= 50; i += 10)
+		test(1, 32, 32, i, VSHARD_ROUTER);
+	for (size_t i = 0; i <= 50; i += 10)
+		test(NUM_ROUTERS, 32, 32, i, VSHARD_ROUTER);
 }
