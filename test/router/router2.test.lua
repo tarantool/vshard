@@ -41,7 +41,12 @@ vshard.router.discovery_set('on')
 f6 = vshard.router.static.discovery_fiber
 vshard.router.static.discovery_fiber:status()
 
-f1:status(), f2, f3:status(), f4:status(), f5, f6:status()
+cfg.discovery_mode = 'once'
+vshard.router.cfg(cfg)
+f7 = vshard.router.static.discovery_fiber
+vshard.router.static.discovery_fiber:status()
+
+f1:status(), f2, f3:status(), f4:status(), f5, f6:status(), f7:status()
 
 -- Errored discovery continued successfully after errors are gone.
 vshard.router.bootstrap()
@@ -70,6 +75,25 @@ _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_DISCOVERY
 _ = test_run:switch('storage_2_a')
 vshard.storage.internal.errinj.ERRINJ_DISCOVERY
+
+-- With 'on' discovery works infinitely.
+_ = test_run:switch('router_1')
+vshard.router._route_map_clear()
+vshard.router.discovery_set('on')
+test_run:wait_cond(continue_discovery)
+vshard.router.info().bucket.unknown
+vshard.router.static.discovery_fiber:status()
+
+-- With 'once' discovery mode the discovery fiber deletes self
+-- after full discovery.
+vshard.router._route_map_clear()
+vshard.router.discovery_set('once')
+test_run:wait_cond(continue_discovery)
+vshard.router.info().bucket.unknown
+vshard.router.static.discovery_fiber
+-- Second set won't do anything.
+vshard.router.discovery_set('once')
+vshard.router.static.discovery_fiber
 
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")

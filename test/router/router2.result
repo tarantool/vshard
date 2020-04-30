@@ -113,13 +113,28 @@ vshard.router.static.discovery_fiber:status()
  | - suspended
  | ...
 
-f1:status(), f2, f3:status(), f4:status(), f5, f6:status()
+cfg.discovery_mode = 'once'
+ | ---
+ | ...
+vshard.router.cfg(cfg)
+ | ---
+ | ...
+f7 = vshard.router.static.discovery_fiber
+ | ---
+ | ...
+vshard.router.static.discovery_fiber:status()
+ | ---
+ | - suspended
+ | ...
+
+f1:status(), f2, f3:status(), f4:status(), f5, f6:status(), f7:status()
  | ---
  | - dead
  | - null
  | - dead
  | - dead
  | - null
+ | - dead
  | - suspended
  | ...
 
@@ -181,6 +196,58 @@ _ = test_run:switch('storage_2_a')
 vshard.storage.internal.errinj.ERRINJ_DISCOVERY
  | ---
  | - 0
+ | ...
+
+-- With 'on' discovery works infinitely.
+_ = test_run:switch('router_1')
+ | ---
+ | ...
+vshard.router._route_map_clear()
+ | ---
+ | ...
+vshard.router.discovery_set('on')
+ | ---
+ | ...
+test_run:wait_cond(continue_discovery)
+ | ---
+ | - true
+ | ...
+vshard.router.info().bucket.unknown
+ | ---
+ | - 0
+ | ...
+vshard.router.static.discovery_fiber:status()
+ | ---
+ | - suspended
+ | ...
+
+-- With 'once' discovery mode the discovery fiber deletes self
+-- after full discovery.
+vshard.router._route_map_clear()
+ | ---
+ | ...
+vshard.router.discovery_set('once')
+ | ---
+ | ...
+test_run:wait_cond(continue_discovery)
+ | ---
+ | - true
+ | ...
+vshard.router.info().bucket.unknown
+ | ---
+ | - 0
+ | ...
+vshard.router.static.discovery_fiber
+ | ---
+ | - null
+ | ...
+-- Second set won't do anything.
+vshard.router.discovery_set('once')
+ | ---
+ | ...
+vshard.router.static.discovery_fiber
+ | ---
+ | - null
  | ...
 
 _ = test_run:switch("default")

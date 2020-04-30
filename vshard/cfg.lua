@@ -152,8 +152,8 @@ local function cfg_check_weights(weights)
 end
 
 local function check_discovery_mode(value)
-    if value ~= 'on' and value ~= 'off' then
-        error("Expected 'on' or 'off' for discovery_mode")
+    if value ~= 'on' and value ~= 'off' and value ~= 'once' then
+        error("Expected 'on', 'off', or 'once' for discovery_mode")
     end
 end
 
@@ -262,7 +262,7 @@ local cfg_template = {
         is_optional = true, default = consts.DEFAULT_FAILOVER_PING_TIMEOUT
     },
     discovery_mode = {
-        type = 'string', name = 'Discovery mode: on, off',
+        type = 'string', name = 'Discovery mode: on, off, once',
         is_optional = true, default = 'on', check = check_discovery_mode
     },
 }

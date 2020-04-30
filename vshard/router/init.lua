@@ -249,7 +249,7 @@ if util.version_is_at_least(1, 10, 0) then
 --
 discovery_f = function(router)
     local module_version = M.module_version
-    assert(router.discovery_mode == 'on')
+    assert(router.discovery_mode == 'on' or router.discovery_mode == 'once')
     local iterators = {}
     local opts = {is_async = true}
     local mode
@@ -342,6 +342,13 @@ discovery_f = function(router)
             unknown_bucket_count =
                 router.total_bucket_count - router.known_bucket_count
             if unknown_bucket_count == 0 then
+                if router.discovery_mode == 'once' then
+                    log.info("Discovery mode is 'once', and all is "..
+                             "discovered - shut down the discovery process")
+                    router.discovery_fiber = nil
+                    lfiber.self():cancel()
+                    return
+                end
                 if mode ~= 'idle' then
                     log.info('Discovery enters idle mode, all buckets are '..
                              'known. Discovery works with %s seconds '..
@@ -438,6 +445,12 @@ local function discovery_set(router, new_mode)
         router.discovery_fiber = nil
     end
     if new_mode == 'off' then
+        return
+    end
+    if new_mode == 'once' and
+       router.total_bucket_count == router.known_bucket_count then
+        -- 'Once' discovery is supposed to stop working when all
+        -- is found. But it is the case already. So nothing to do.
         return
     end
     router.discovery_fiber = util.reloadable_fiber_create(
