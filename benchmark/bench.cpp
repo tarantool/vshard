@@ -67,7 +67,7 @@ struct __attribute__((packed)) MagicCallVshardRouterCore
 	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','.','r','o','u','t','e','r','.','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
-	uint8_t m_BucketTag = 0xd1;
+	uint8_t m_BucketTag = 0xcd;
 	uint16_t m_Bucket = 0;
 	uint8_t m_StoreFuncTag = 0xa0 + 15;
 	char m_StoreFunc[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
@@ -103,7 +103,7 @@ struct __attribute__((packed)) MagicCallNetboxRouterCore
 	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','_','r','o','u','t','e','r','_','c','a','l','l','r','w'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
-	uint8_t m_BucketTag = 0xd1;
+	uint8_t m_BucketTag = 0xcd;
 	uint16_t m_Bucket = 0;
 	uint8_t m_StoreFuncTag = 0xa0 + 15;
 	char m_StoreFunc[15] = {'b','e','n','c','h','_','c','a','l','l','_','e','c','h','o'};
@@ -139,7 +139,7 @@ struct __attribute__((packed)) MagicCallVshardStorageCore
 	char m_BodyFuncValue[19] = {'v','s','h','a','r','d','.','s','t','o','r','a','g','e','.','c','a','l','l'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
-	uint8_t m_BucketTag = 0xd1;
+	uint8_t m_BucketTag = 0xcd;
 	uint16_t m_Bucket = 1;
 	uint8_t m_ModeTag = 0xa0 + 4;
 	char m_Mode[4] = {'r','e','a','d'};
