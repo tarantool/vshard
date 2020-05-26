@@ -135,8 +135,10 @@ struct __attribute__((packed)) MagicCallVshardStorageCore
 	uint8_t m_HeaderSyncValue = 0;
 	uint8_t m_BodyMap = 0x82;
 	uint8_t m_BodyFuncKey = 0x22; // IPROTO_FUNCTION_NAME
-	uint8_t m_BodyFuncValueTag = 0xa0 + 19;
-	char m_BodyFuncValue[19] = {'v','s','h','a','r','d','.','s','t','o','r','a','g','e','.','c','a','l','l'};
+	//uint8_t m_BodyFuncValueTag = 0xa0 + 19;
+	//char m_BodyFuncValue[19] = {'v','s','h','a','r','d','.','s','t','o','r','a','g','e','.','c','a','l','l'};
+	uint8_t m_BodyFuncValueTag = 0xa0 + 20;
+	char m_BodyFuncValue[20] = {'v','s','h','a','r','d','.','s','t','o','r','a','g','e','c','.','c','a','l','l'};
 	uint8_t m_BodyTupleKey = 0x21; // IPROTO_TUPLE
 	uint8_t m_BodyTupleValueTag = 0x94;
 	uint8_t m_BucketTag = 0xcd;

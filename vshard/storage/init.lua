@@ -315,7 +315,7 @@ local function schema_init_0_1_15_0(username, password)
 
     local storage_api = {
         'vshard.storage.sync',
-        'vshard.storage.call',
+        --'vshard.storage.call',
         'vshard.storage.bucket_force_create',
         'vshard.storage.bucket_force_drop',
         'vshard.storage.bucket_collect',
@@ -2380,6 +2380,9 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
             end
             error(err)
         end
+        box.schema.func.create('vshard.storagec.call', {language='C', if_not_exists=true})
+        pcall(box.schema.user.grant, 'guest', 'execute', 'function', 'vshard.storagec.call')
+
         log.info("Box has been configured")
     end
 
@@ -2713,7 +2716,7 @@ return {
     is_locked = is_this_replicaset_locked,
     rebalancing_is_in_progress = rebalancing_is_in_progress,
     recovery_wakeup = recovery_wakeup,
-    call = storage_call,
+    call_default = storage_call,
     _call = service_call,
     cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     info = storage_info,

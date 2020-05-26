@@ -1,4 +1,7 @@
-start_storage:
+./vshard/storagec.so: ./so/so.c ./so/msgpuck.c ./so/hints.c
+	gcc -std=c99 -O2 -DNDEBUG ./so/so.c ./so/msgpuck.c ./so/hints.c -I./so --shared -fPIC -o ./vshard/storagec.so
+
+start_storage: ./vshard/storagec.so
 	tarantoolctl start storage_1_1
 	tarantoolctl start storage_2_1
 	tarantoolctl start storage_3_1

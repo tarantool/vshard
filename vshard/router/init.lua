@@ -432,8 +432,8 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
 ::replicaset_is_found::
             opts.timeout = tend - lfiber.time()
             local storage_call_status, call_status, call_error =
-                replicaset[call](replicaset, 'vshard.storage.call',
-                                 {bucket_id, mode, func, args}, opts)
+                unpack(unpack(replicaset[call](replicaset, 'vshard.storagec.call',
+                                 {bucket_id, mode, func, args}, opts)))
             if storage_call_status then
                 if call_status == nil and call_error ~= nil then
                     return call_status, call_error
