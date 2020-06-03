@@ -70,6 +70,12 @@ local function netbox_on_connect(conn)
         log.info('Mismatch server UUID on replica %s: expected "%s", but got '..
                  '"%s"', replica, replica.uuid, conn.peer_uuid)
         conn:close()
+        fiber.new(function()
+            -- Workaround for https://github.com/tarantool/vshard/issues/241
+            -- Keep reconnection attempts even if uuid mismatch
+            fiber.sleep(consts.RECONNECT_TIMEOUT)
+            rs:connect_replica(replica)
+        end)
         return
     end
     if replica == rs.replica and replica == rs.priority_list[1] then
