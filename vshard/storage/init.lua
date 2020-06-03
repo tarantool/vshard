@@ -2435,8 +2435,22 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local uri = luri.parse(this_replica.uri)
     schema_upgrade(is_master, uri.login, uri.password)
 
-    local old_trigger = box.space._bucket:on_replace()[1]
-    box.space._bucket:on_replace(bucket_generation_increment, old_trigger)
+    if box.space._bucket ~= nil then
+        local old_trigger = box.space._bucket:on_replace()[1]
+        box.space._bucket:on_replace(bucket_generation_increment, old_trigger)
+    else
+        -- https://www.tarantool.io/en/doc/2.3/book/replication/repl_problem_solving/
+        local function set_on_replace_trigger(_, new_space)
+            if new_space.name == '_bucket' then
+                box.on_commit(function()
+                    box.space._bucket:on_replace(bucket_generation_increment)
+                    -- Don't forget to cleanup
+                    box.space._space:on_replace(nil, set_on_replace_trigger)
+                end)
+            end
+        end
+        box.space._space:on_replace(set_on_replace_trigger)
+    end
 
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
