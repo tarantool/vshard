@@ -51,6 +51,7 @@ local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local fiber = require('fiber')
 local luri = require('uri')
+local luuid = require('uuid')
 local ffi = require('ffi')
 local util = require('vshard.util')
 local gsc = util.generate_self_checker
@@ -59,6 +60,12 @@ local gsc = util.generate_self_checker
 -- on_connect() trigger for net.box
 --
 local function netbox_on_connect(conn)
+    -- Workaround for https://github.com/tarantool/vshard/issues/241
+    -- Ignore connections to cartridge.remote-control server
+    if conn.peer_uuid == luuid.NULL:str() then
+        return
+    end
+
     log.info("connected to %s:%s", conn.host, conn.port)
     local rs = conn.replicaset
     local replica = conn.replica
