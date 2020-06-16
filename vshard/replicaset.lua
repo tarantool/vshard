@@ -51,6 +51,7 @@ local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local fiber = require('fiber')
 local luri = require('uri')
+local luuid = require('uuid')
 local ffi = require('ffi')
 local util = require('vshard.util')
 local gsc = util.generate_self_checker
@@ -66,7 +67,17 @@ local function netbox_on_connect(conn)
     -- If a replica's connection has revived, then unset
     -- replica.down_ts - it is not down anymore.
     replica.down_ts = nil
-    if conn.peer_uuid ~= replica.uuid then
+    if conn.peer_uuid ~= replica.uuid and
+        -- XXX: Zero UUID means not a real Tarantool instance. It
+        -- is likely to be a cartridge.remote-control server,
+        -- which is started before the actual storage. Let it
+        -- work, anyway it will be shut down, and reconnect to the
+        -- real storage will happen. Otherwise the connection will
+        -- be left broken in 'closed' state until a request will
+        -- come specifically for this instance, or reconfiguration
+        -- will happen. That would prevent reconnect to the real
+        -- storage.
+       conn.peer_uuid ~= luuid.NULL:str() then
         log.info('Mismatch server UUID on replica %s: expected "%s", but got '..
                  '"%s"', replica, replica.uuid, conn.peer_uuid)
         conn:close()
