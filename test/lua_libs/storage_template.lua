@@ -1,5 +1,7 @@
 #!/usr/bin/env tarantool
 
+local luri = require('uri')
+
 NAME = require('fio').basename(arg[0], '.lua')
 fiber = require('fiber')
 test_run = require('test_run').new()
@@ -10,12 +12,63 @@ log = require('log')
 if not cfg.shard_index then
     cfg.shard_index = 'bucket_id'
 end
+instance_uuid = util.name_to_uuid[NAME]
+
+--
+-- Bootstrap the instance exactly like vshard does. But don't
+-- initialize any vshard-specific code.
+--
+local function boot_like_vshard()
+    assert(type(box.cfg) == 'function')
+    for rs_uuid, rs in pairs(cfg.sharding) do
+        for replica_uuid, replica in pairs(rs.replicas) do
+            if replica_uuid == instance_uuid then
+                local box_cfg = {replication = {}}
+                box_cfg.instance_uuid = replica_uuid
+                box_cfg.replicaset_uuid = rs_uuid
+                box_cfg.listen = replica.uri
+                box_cfg.read_only = not replica.master
+                box_cfg.replication_connect_quorum = 0
+                box_cfg.replication_timeout = 0.1
+                for _, replica in pairs(rs.replicas) do
+                    table.insert(box_cfg.replication, replica.uri)
+                end
+                box.cfg(box_cfg)
+                if not replica.master then
+                    return
+                end
+                local uri = luri.parse(replica.uri)
+                box.schema.user.create(uri.login, {
+                    password = uri.password, if_not_exists = true,
+                })
+                box.schema.user.grant(uri.login, 'super')
+                return
+            end
+        end
+    end
+    assert(false)
+end
+
+local omit_cfg = false
+local i = 1
+while arg[i] ~= nil do
+    local key = arg[i]
+    i = i + 1
+    if key == 'boot_before_cfg' then
+        boot_like_vshard()
+        omit_cfg = true
+    end
+end
 
 vshard = require('vshard')
 echo_count = 0
 cfg.replication_connect_timeout = 3
 cfg.replication_timeout = 0.1
-vshard.storage.cfg(cfg, util.name_to_uuid[NAME])
+
+if not omit_cfg then
+    vshard.storage.cfg(cfg, instance_uuid)
+end
+
 function bootstrap_storage(engine)
     box.once("testapp:schema:1", function()
         if rawget(_G, 'CHANGE_SPACE_IDS') then

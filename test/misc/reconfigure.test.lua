@@ -111,6 +111,8 @@ for k,v in pairs(info.replicasets) do table.insert(uris, v.master.uri) end
 table.sort(uris)
 uris
 box.cfg.replication
+box.cfg.read_only
+#box.space._bucket:on_replace()
 
 _ = test_run:switch('storage_2_a')
 info = vshard.storage.info()
@@ -119,6 +121,9 @@ for k,v in pairs(info.replicasets) do table.insert(uris, v.master.uri) end
 table.sort(uris)
 uris
 box.cfg.replication
+box.cfg.read_only
+-- Should be zero on the slave node. Even though earlier the node was a master.
+#box.space._bucket:on_replace()
 
 _ = test_run:switch('storage_2_b')
 info = vshard.storage.info()
@@ -127,6 +132,8 @@ for k,v in pairs(info.replicasets) do table.insert(uris, v.master.uri) end
 table.sort(uris)
 uris
 box.cfg.replication
+box.cfg.read_only
+#box.space._bucket:on_replace()
 
 _ = test_run:switch('storage_3_a')
 info = vshard.storage.info()
@@ -135,6 +142,8 @@ for k,v in pairs(info.replicasets) do table.insert(uris, v.master.uri) end
 table.sort(uris)
 uris
 box.cfg.replication
+box.cfg.read_only
+#box.space._bucket:on_replace()
 
 _ = test_run:switch('router_1')
 info = vshard.router.info()

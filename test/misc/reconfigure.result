@@ -277,6 +277,14 @@ box.cfg.replication
 ---
 - - storage:storage@127.0.0.1:3301
 ...
+box.cfg.read_only
+---
+- false
+...
+#box.space._bucket:on_replace()
+---
+- 1
+...
 _ = test_run:switch('storage_2_a')
 ---
 ...
@@ -302,6 +310,15 @@ box.cfg.replication
 ---
 - - storage:storage@127.0.0.1:3303
   - storage:storage@127.0.0.1:3304
+...
+box.cfg.read_only
+---
+- true
+...
+-- Should be zero on the slave node. Even though earlier the node was a master.
+#box.space._bucket:on_replace()
+---
+- 0
 ...
 _ = test_run:switch('storage_2_b')
 ---
@@ -329,6 +346,14 @@ box.cfg.replication
 - - storage:storage@127.0.0.1:3303
   - storage:storage@127.0.0.1:3304
 ...
+box.cfg.read_only
+---
+- false
+...
+#box.space._bucket:on_replace()
+---
+- 1
+...
 _ = test_run:switch('storage_3_a')
 ---
 ...
@@ -353,6 +378,14 @@ uris
 box.cfg.replication
 ---
 - - storage:storage@127.0.0.1:3306
+...
+box.cfg.read_only
+---
+- false
+...
+#box.space._bucket:on_replace()
+---
+- 1
 ...
 _ = test_run:switch('router_1')
 ---

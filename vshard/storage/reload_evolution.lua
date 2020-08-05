@@ -17,6 +17,14 @@ migrations[#migrations + 1] = function(M)
     -- Code to update Lua objects.
 end
 
+migrations[#migrations + 1] = function(M)
+    local bucket = box.space._bucket
+    if bucket then
+        assert(M.bucket_on_replace == nil)
+        M.bucket_on_replace = bucket:on_replace()[1]
+    end
+end
+
 --
 -- Perform an update based on a version stored in `M` (internals).
 -- @param M Old module internals which should be updated.

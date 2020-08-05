@@ -94,6 +94,17 @@ if not M then
         -- detect that _bucket was not changed between yields.
         --
         bucket_generation = 0,
+        --
+        -- Reference to the function used as on_replace trigger on
+        -- _bucket space. It is used to replace the trigger with
+        -- a new function when reload happens. It is kept
+        -- explicitly because the old function is deleted on
+        -- reload from the global namespace. On the other hand, it
+        -- is still stored in _bucket:on_replace() somewhere, but
+        -- it is not known where. The only 100% way to be able to
+        -- replace the old function is to keep its reference.
+        --
+        bucket_on_replace = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -2435,8 +2446,14 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local uri = luri.parse(this_replica.uri)
     schema_upgrade(is_master, uri.login, uri.password)
 
-    local old_trigger = box.space._bucket:on_replace()[1]
-    box.space._bucket:on_replace(bucket_generation_increment, old_trigger)
+    if M.bucket_on_replace then
+        box.space._bucket:on_replace(nil, M.bucket_on_replace)
+        M.bucket_on_replace = nil
+    end
+    if is_master then
+        box.space._bucket:on_replace(bucket_generation_increment)
+        M.bucket_on_replace = bucket_generation_increment
+    end
 
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)

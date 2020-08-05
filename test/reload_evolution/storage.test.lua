@@ -35,12 +35,16 @@ box.space.test:insert({42, bucket_id_to_move})
 package.path = original_package_path
 package.loaded['vshard.storage'] = nil
 vshard.storage = require("vshard.storage")
--- Should be nil. Because there was a bug that reload always reapplied the last
--- migration callback. When it was fixed, the last callback wasn't called twice.
--- But since the callback was only one, now nothing is called, and nothing is
--- logged.
-test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') == nil
+test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') ~= nil
 vshard.storage.internal.reload_version
+--
+-- gh-237: should be only one trigger. During gh-237 the trigger installation
+-- became conditional and therefore required to remember the current trigger
+-- somewhere. When reloaded from the old version, the trigger needed to be
+-- fetched from _bucket:on_replace().
+--
+#box.space._bucket:on_replace()
+
 -- Make sure storage operates well.
 vshard.storage.bucket_force_drop(2000)
 vshard.storage.bucket_force_create(2000)
