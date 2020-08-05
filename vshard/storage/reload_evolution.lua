@@ -33,7 +33,7 @@ local function upgrade(M)
         log.error(err_msg)
         error(err_msg)
     end
-    for i = start_version, #migrations  do
+    for i = start_version + 1, #migrations do
         local ok, err = pcall(migrations[i], M)
         if ok then
             log.info('vshard.storage.reload_evolution: upgraded to %d version',

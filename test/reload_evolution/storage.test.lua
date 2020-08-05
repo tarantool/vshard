@@ -35,7 +35,11 @@ box.space.test:insert({42, bucket_id_to_move})
 package.path = original_package_path
 package.loaded['vshard.storage'] = nil
 vshard.storage = require("vshard.storage")
-test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') ~= nil
+-- Should be nil. Because there was a bug that reload always reapplied the last
+-- migration callback. When it was fixed, the last callback wasn't called twice.
+-- But since the callback was only one, now nothing is called, and nothing is
+-- logged.
+test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') == nil
 vshard.storage.internal.reload_version
 -- Make sure storage operates well.
 vshard.storage.bucket_force_drop(2000)
