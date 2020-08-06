@@ -31,7 +31,7 @@ env:
       - OS=ubuntu DIST=trusty
       - OS=ubuntu DIST=xenial
       - OS=ubuntu DIST=bionic
-      - OS=ubuntu DIST=disco
+      - OS=ubuntu DIST=focal
       - OS=debian DIST=jessie
       - OS=debian DIST=stretch
       - OS=debian DIST=buster
