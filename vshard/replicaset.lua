@@ -56,6 +56,8 @@ local ffi = require('ffi')
 local util = require('vshard.util')
 local gsc = util.generate_self_checker
 
+local global_error = {log = {}}
+
 --
 -- on_connect() trigger for net.box
 --
@@ -123,6 +125,7 @@ local function replicaset_connect_to_replica(replicaset, replica)
         conn:on_disconnect(netbox_on_disconnect)
         replica.conn = conn
     end
+    assert(conn ~= nil)
     return conn
 end
 
@@ -132,6 +135,7 @@ end
 local function replicaset_connect_master(replicaset)
     local master = replicaset.master
     if master == nil then
+        table.insert(global_error.log, 'no master')
         return nil, lerror.vshard(lerror.code.MISSING_MASTER,
                                   replicaset.uuid)
     end
@@ -256,6 +260,7 @@ local function replica_call(replica, func, args, opts)
         end
         log.error("Exception during calling '%s' on '%s': %s", func, replica,
                   storage_status)
+        table.insert(global_error.log, 'exception in replica_call')
         return false, nil, lerror.make(storage_status)
     else
         replica_on_success_request(replica)
@@ -264,6 +269,8 @@ local function replica_call(replica, func, args, opts)
         -- Workaround for `not msgpack.NULL` magic.
         storage_status = nil
     end
+    table.insert(global_error.log, 'no exception in replica_call')
+    table.insert(global_error.log, {storage_status, retval, error_object})
     return true, storage_status, retval, error_object
 end
 
@@ -305,8 +312,10 @@ local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
+    global_error.log = {}
     local conn, err = replicaset_connect_master(replicaset)
     if not conn then
+        table.insert(global_error.log, 'connect master failed')
         return nil, err
     end
     if not opts then
@@ -762,4 +771,5 @@ return {
     wait_masters_connect = wait_masters_connect,
     rebind_replicasets = rebind_replicasets,
     outdate_replicasets = outdate_replicasets,
+    global_error = global_error,
 }

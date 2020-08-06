@@ -1,6 +1,7 @@
 local log = require('log')
 local lfiber = require('fiber')
 local table_new = require('table.new')
+local json = require('json')
 
 local MODULE_INTERNALS = '__module_vshard_router'
 -- Reload requirements, in case this module is reloaded manually.
@@ -569,6 +570,14 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 end
             end
             err = lerror.make(call_status)
+            if err == nil then
+                local message = 'scs = %s, cs = %s, ce = %s, e = %s, opts = %s, global_err = %s'
+                message = string.format(message, storage_call_status,
+                                        call_status, call_error, err,
+                                        json.encode(opts),
+                                        json.encode(lreplicaset.global_error))
+                assert(false, message)
+            end
             if err.code == lerror.code.WRONG_BUCKET or
                err.code == lerror.code.BUCKET_IS_LOCKED then
                 bucket_reset(router, bucket_id)

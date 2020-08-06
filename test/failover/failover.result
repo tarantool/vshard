@@ -466,7 +466,13 @@ while rs.master ~= rs.replica do fiber.sleep(0.01) end
 future = nil
 ---
 ...
+jit.off()
+---
+...
 while not future do fiber.sleep(0.01) future = vshard.router.callrw(31, 'echo', {t}, {is_async = true}) end
+---
+...
+jit.on()
 ---
 ...
 vshard.router.static.failover_fiber:wakeup()
