@@ -908,14 +908,17 @@ local function router_cfg(router, cfg, is_reload)
     router.failover_ping_timeout = vshard_cfg.failover_ping_timeout
     router.sync_timeout = vshard_cfg.sync_timeout
     local old_route_map = router.route_map
+    local known_bucket_count = 0
     router.route_map = table_new(router.total_bucket_count, 0)
     for bucket, rs in pairs(old_route_map) do
         local new_rs = router.replicasets[rs.uuid]
         if new_rs then
             router.route_map[bucket] = new_rs
             new_rs.bucket_count = new_rs.bucket_count + 1
+            known_bucket_count = known_bucket_count + 1
         end
     end
+    router.known_bucket_count = known_bucket_count
     if router.failover_fiber == nil then
         router.failover_fiber = util.reloadable_fiber_create(
             'vshard.failover.' .. router.name, M, 'failover_f', router)

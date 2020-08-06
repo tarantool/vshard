@@ -95,6 +95,30 @@ vshard.router.static.discovery_fiber
 vshard.router.discovery_set('once')
 vshard.router.static.discovery_fiber
 
+--
+-- Known bucket count should be updated properly when replicaset
+-- is removed from the config.
+--
+vshard.router.info().bucket
+rs1_uuid = util.replicasets[1]
+rs1 = cfg.sharding[rs1_uuid]
+cfg.sharding[rs1_uuid] = nil
+vshard.router.cfg(cfg)
+vshard.router.info().bucket
+cfg.sharding[rs1_uuid] = rs1
+vshard.router.cfg(cfg)
+vshard.router.discovery_set('on')
+function wait_all_rw()                                                          \
+    local total = vshard.router.bucket_count()                                  \
+    local res = vshard.router.info().bucket.available_rw == total               \
+    if not res then                                                             \
+        vshard.router.discovery_wakeup()                                        \
+    end                                                                         \
+    return res                                                                  \
+end
+test_run:wait_cond(wait_all_rw)
+vshard.router.info().bucket
+
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")
 _ = test_run:cmd("cleanup server router_1")
