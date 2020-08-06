@@ -456,7 +456,7 @@ local function rebind_replicasets(replicasets, old_replicasets)
         for replica_uuid, replica in pairs(replicaset.replicas) do
             local old_replica = old_replicaset and
                                 old_replicaset.replicas[replica_uuid]
-            if old_replica then
+            if old_replica and old_replica.uri == replica.uri then
                 local conn = old_replica.conn
                 replica.conn = conn
                 replica.down_ts = old_replica.down_ts

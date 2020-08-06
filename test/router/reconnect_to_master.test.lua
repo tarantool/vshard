@@ -70,6 +70,32 @@ while is_disconnected() and i < max_iters do i = i + 1 fiber.sleep(0.1) end
 -- Master connection is active again.
 is_disconnected()
 
+--
+-- gh-245: dynamic uri reconfiguration didn't work - even if URI was changed in
+-- the config for any instance, it used old connection, because reconfiguration
+-- compared connections by UUID instead of URI.
+--
+util = require('util')
+-- Firstly, clean router from storage_1_a connection.
+rs1_uuid = util.replicasets[1]
+rs1_cfg = cfg.sharding[rs1_uuid]
+cfg.sharding[rs1_uuid] = nil
+vshard.router.cfg(cfg)
+-- Now break the URI in the config.
+old_uri = rs1_cfg.replicas[util.name_to_uuid.storage_1_a].uri
+rs1_cfg.replicas[util.name_to_uuid.storage_1_a].uri = 'https://bad_uri.com:123'
+-- Apply the bad config.
+cfg.sharding[rs1_uuid] = rs1_cfg
+vshard.router.cfg(cfg)
+-- Should fail - master is not available because of the bad URI.
+res, err = vshard.router.callrw(1, 'echo', {1})
+res == nil and err ~= nil
+-- Repair the config.
+rs1_cfg.replicas[util.name_to_uuid.storage_1_a].uri = old_uri
+vshard.router.cfg(cfg)
+-- Should drop the old connection object and connect fine.
+vshard.router.callrw(1, 'echo', {1})
+
 _ = test_run:switch("default")
 _ = test_run:cmd('stop server router_1')
 _ = test_run:cmd('cleanup server router_1')
