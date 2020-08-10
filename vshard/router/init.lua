@@ -396,7 +396,7 @@ discovery_f = function(router)
     local module_version = M.module_version
     while module_version == M.module_version do
         while not next(router.replicasets) do
-            lfiber.sleep(consts.DISCOVERY_INTERVAL)
+            lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
         end
         local old_replicasets = router.replicasets
         for rs_uuid, replicaset in pairs(router.replicasets) do
@@ -417,7 +417,7 @@ discovery_f = function(router)
             else
                 discovery_handle_buckets(router, replicaset, active_buckets)
             end
-            lfiber.sleep(consts.DISCOVERY_INTERVAL)
+            lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
         end
     end
 end
