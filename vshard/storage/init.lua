@@ -13,12 +13,13 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution',
-        'vshard.lua_gc',
+        'vshard.lua_gc', 'vshard.rlist'
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
     end
 end
+local rlist = require('vshard.rlist')
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
@@ -1787,54 +1788,6 @@ local function rebalancer_build_routes(replicasets)
 end
 
 --
--- A subset of rlist methods from the main repository. Rlist is a
--- doubly linked list, and is used here to implement a queue of
--- routes in the parallel rebalancer.
---
-local function rlist_new()
-    return {count = 0}
-end
-
-local function rlist_add_tail(rlist, object)
-    local last = rlist.last
-    if last then
-        last.next = object
-        object.prev = last
-    else
-        rlist.first = object
-    end
-    rlist.last = object
-    rlist.count = rlist.count + 1
-end
-
-local function rlist_remove(rlist, object)
-    local prev = object.prev
-    local next = object.next
-    local belongs_to_list = false
-    if prev then
-        belongs_to_list = true
-        prev.next = next
-    end
-    if next then
-        belongs_to_list = true
-        next.prev = prev
-    end
-    object.prev = nil
-    object.next = nil
-    if rlist.last == object then
-        belongs_to_list = true
-        rlist.last = prev
-    end
-    if rlist.first == object then
-        belongs_to_list = true
-        rlist.first = next
-    end
-    if belongs_to_list then
-        rlist.count = rlist.count - 1
-    end
-end
-
---
 -- Dispenser is a container of routes received from the
 -- rebalancer. Its task is to hand out the routes to worker fibers
 -- in a round-robin manner so as any two sequential results are
@@ -1842,7 +1795,7 @@ end
 -- receiver nodes.
 --
 local function route_dispenser_create(routes)
-    local rlist = rlist_new()
+    local rlist = rlist.new()
     local map = {}
     for uuid, bucket_count in pairs(routes) do
         local new = {
@@ -1873,7 +1826,7 @@ local function route_dispenser_create(routes)
         --    the main applier fiber does some analysis on the
         --    destinations.
         map[uuid] = new
-        rlist_add_tail(rlist, new)
+        rlist:add_tail(new)
     end
     return {
         rlist = rlist,
@@ -1892,7 +1845,7 @@ local function route_dispenser_put(dispenser, uuid)
         local bucket_count = dst.bucket_count + 1
         dst.bucket_count = bucket_count
         if bucket_count == 1 then
-            rlist_add_tail(dispenser.rlist, dst)
+            dispenser.rlist:add_tail(dst)
         end
     end
 end
@@ -1909,7 +1862,7 @@ local function route_dispenser_skip(dispenser, uuid)
     local dst = map[uuid]
     if dst then
         map[uuid] = nil
-        rlist_remove(dispenser.rlist, dst)
+        dispenser.rlist:remove(dst)
     end
 end
 
@@ -1952,9 +1905,9 @@ local function route_dispenser_pop(dispenser)
     if dst then
         local bucket_count = dst.bucket_count - 1
         dst.bucket_count = bucket_count
-        rlist_remove(rlist, dst)
+        rlist:remove(dst)
         if bucket_count > 0 then
-            rlist_add_tail(rlist, dst)
+            rlist:add_tail(dst)
         end
         return dst.uuid
     end
@@ -2741,11 +2694,6 @@ M.route_dispenser = {
     skip = route_dispenser_skip,
     pop = route_dispenser_pop,
     sent = route_dispenser_sent,
-}
-M.rlist = {
-    new = rlist_new,
-    add_tail = rlist_add_tail,
-    remove = rlist_remove,
 }
 M.schema_latest_version = schema_latest_version
 M.schema_current_version = schema_current_version
