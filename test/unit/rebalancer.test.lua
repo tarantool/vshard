@@ -246,33 +246,6 @@ build_routes(replicasets)
 -- the latter is a dispenser. It is a structure which hands out
 -- destination UUIDs in a round-robin manner to worker fibers.
 --
-list = rlist.new()
-list
-
-obj1 = {i = 1}
-rlist.remove(list, obj1)
-list
-
-rlist.add_tail(list, obj1)
-list
-
-rlist.remove(list, obj1)
-list
-obj1
-
-rlist.add_tail(list, obj1)
-obj2 = {i = 2}
-rlist.add_tail(list, obj2)
-list
-obj3 = {i = 3}
-rlist.add_tail(list, obj3)
-list
-
-rlist.remove(list, obj2)
-list
-rlist.remove(list, obj1)
-list
-
 d = dispenser.create({uuid = 15})
 dispenser.pop(d)
 for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end

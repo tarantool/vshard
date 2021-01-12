@@ -1,0 +1,114 @@
+-- test-run result file version 2
+--
+-- gh-161: parallel rebalancer. One of the most important part of the latter is
+-- a dispenser. It is a structure which hands out destination UUIDs in a
+-- round-robin manner to worker fibers. It uses rlist data structure.
+--
+rlist = require('vshard.rlist')
+ | ---
+ | ...
+
+list = rlist.new()
+ | ---
+ | ...
+list
+ | ---
+ | - count: 0
+ | ...
+
+obj1 = {i = 1}
+ | ---
+ | ...
+list:remove(obj1)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 0
+ | ...
+
+list:add_tail(obj1)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 1
+ |   last: &0
+ |     i: 1
+ |   first: *0
+ | ...
+
+list:remove(obj1)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 0
+ | ...
+obj1
+ | ---
+ | - i: 1
+ | ...
+
+list:add_tail(obj1)
+ | ---
+ | ...
+obj2 = {i = 2}
+ | ---
+ | ...
+list:add_tail(obj2)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 2
+ |   last: &0
+ |     i: 2
+ |     prev: &1
+ |       i: 1
+ |       next: *0
+ |   first: *1
+ | ...
+obj3 = {i = 3}
+ | ---
+ | ...
+list:add_tail(obj3)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 3
+ |   last: &0
+ |     i: 3
+ |     prev: &1
+ |       i: 2
+ |       next: *0
+ |       prev: &2
+ |         i: 1
+ |         next: *1
+ |   first: *2
+ | ...
+
+list:remove(obj2)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 2
+ |   last: &0
+ |     i: 3
+ |     prev: &1
+ |       i: 1
+ |       next: *0
+ |   first: *1
+ | ...
+list:remove(obj1)
+ | ---
+ | ...
+list
+ | ---
+ | - count: 1
+ |   last: &0
+ |     i: 3
+ |   first: *0
+ | ...
