@@ -130,6 +130,25 @@ local error_message_template = {
         name = 'TOO_MANY_RECEIVING',
         msg = 'Too many receiving buckets at once, please, throttle'
     },
+    [26] = {
+        name = 'STORAGE_IS_REFERENCED',
+        msg = 'Storage is referenced'
+    },
+    [27] = {
+        name = 'STORAGE_REF_ADD',
+        msg = 'Can not add a storage ref: %s',
+        args = {'reason'},
+    },
+    [28] = {
+        name = 'STORAGE_REF_USE',
+        msg = 'Can not use a storage ref: %s',
+        args = {'reason'},
+    },
+    [29] = {
+        name = 'STORAGE_REF_DEL',
+        msg = 'Can not delete a storage ref: %s',
+        args = {'reason'},
+    },
 }
 
 --

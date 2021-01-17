@@ -14,7 +14,8 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution',
-        'vshard.lua_gc', 'vshard.rlist'
+        'vshard.lua_gc', 'vshard.rlist', 'vshard.storage.ref',
+        'vshard.registry',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -27,6 +28,8 @@ local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
+local lregistry = require('vshard.registry')
+local lref = require('vshard.storage.ref')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local bucket_ref_new
 
@@ -177,6 +180,24 @@ end
 local function bucket_generation_increment()
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
+end
+
+local function bucket_generation_wait_xc(timeout)
+    if timeout < 0 then
+        local ok, err = pcall(box.error, box.error.TIMEOUT)
+        error(lerror.make(err))
+    end
+    if not M.bucket_generation_cond:wait(timeout) then
+        error(lerror.make(box.error.last()))
+    end
+end
+
+local function bucket_generation_wait(timeout)
+    local ok, err = pcall(bucket_generation_wait_xc, timeout)
+    if not ok then
+        return nil, err
+    end
+    return true
 end
 
 --
@@ -760,6 +781,23 @@ end
 -- Buckets
 --------------------------------------------------------------------------------
 
+local function bucket_is_all_rw()
+    local status_index = box.space._bucket.index.status
+    if status_index:min(consts.BUCKET.SENDING) then
+        return false
+    end
+    if status_index:min(consts.BUCKET.SENT) then
+        return false
+    end
+    if status_index:min(consts.BUCKET.RECEIVING) then
+        return false
+    end
+    if status_index:min(consts.BUCKET.GARBAGE) then
+        return false
+    end
+    return true
+end
+
 --
 -- Check that an action of a specified mode can be applied to a
 -- bucket.
@@ -1045,6 +1083,9 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
                         'exist anymore'
             return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
                                       from)
+        end
+        if lref.count > 0 then
+            return nil, lerror.vshard(lerror.code.STORAGE_IS_REFERENCED)
         end
         if is_this_replicaset_locked() then
             return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
@@ -1346,6 +1387,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
 
     local _bucket = box.space._bucket
     local bucket = _bucket:get({bucket_id})
+    if lref.count > 0 then
+        return nil, lerror.vshard(lerror.code.STORAGE_IS_REFERENCED)
+    end
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -2432,6 +2476,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         box.space._bucket:on_replace(nil, M.bucket_on_replace)
         M.bucket_on_replace = nil
     end
+    lref.cfg()
     if is_master then
         box.space._bucket:on_replace(bucket_generation_increment)
         M.bucket_on_replace = bucket_generation_increment
@@ -2731,6 +2776,10 @@ M.schema_upgrade_master = schema_upgrade_master
 M.schema_upgrade_handlers = schema_upgrade_handlers
 M.schema_version_make = schema_version_make
 M.schema_bootstrap = schema_init_0_1_15_0
+
+M.bucket_is_all_rw = bucket_is_all_rw
+M.bucket_generation_wait = bucket_generation_wait
+lregistry.storage = M
 
 return {
     sync = sync,
