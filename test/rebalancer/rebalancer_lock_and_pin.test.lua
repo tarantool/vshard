@@ -69,6 +69,10 @@ info.lock
 -- explicitly.
 --
 vshard.storage.bucket_send(1, util.replicasets[2])
+test_run:switch('box_2_a')
+-- Does not allow to receive either. Send from a non-locked replicaset to a
+-- locked one fails.
+vshard.storage.bucket_send(101, util.replicasets[1])
 
 --
 -- Vshard ensures that if a replicaset is locked, then it will not

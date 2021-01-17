@@ -995,6 +995,9 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
                                       from)
         end
+        if is_this_replicaset_locked() then
+            return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
+        end
         if not bucket_receiving_quota_add(-1) then
             return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
         end
