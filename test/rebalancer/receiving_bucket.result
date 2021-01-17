@@ -374,7 +374,7 @@ vshard.storage.buckets_info(1)
     destination: <replicaset_1>
     id: 1
 ...
-while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+wait_bucket_is_collected(1)
 ---
 ...
 vshard.storage.buckets_info(1)

@@ -137,7 +137,7 @@ box.space.test3:select{100}
 _ = test_run:switch('box_2_a')
 vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3})
 vshard.storage.buckets_info(1)
-while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+wait_bucket_is_collected(1)
 vshard.storage.buckets_info(1)
 _ = test_run:switch('box_1_a')
 box.space._bucket:get{1}

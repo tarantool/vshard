@@ -73,7 +73,7 @@ vshard.storage.bucket_refro(1)
 finish_refs = true
 while f1:status() ~= 'dead' do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
-while box.space._bucket:get{1} do vshard.storage.garbage_collector_wakeup() fiber.sleep(0.01) end
+wait_bucket_is_collected(1)
 _ = test_run:switch('box_2_a')
 vshard.storage.buckets_info(1)
 vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = false
@@ -89,8 +89,7 @@ while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 fiber.sleep(0.2)
 vshard.storage.buckets_info(1)
 finish_refs = true
-while vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
-while box.space._bucket:get{1} do fiber.sleep(0.01) end
+wait_bucket_is_collected(1)
 _ = test_run:switch('box_1_a')
 vshard.storage.buckets_info(1)
 
