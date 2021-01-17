@@ -156,6 +156,20 @@ vshard.storage.bucket_send(1, util.replicasets[2])
   message: Replicaset is locked
   code: 19
 ...
+test_run:switch('box_2_a')
+---
+- true
+...
+-- Does not allow to receive either. Send from a non-locked replicaset to a
+-- locked one fails.
+vshard.storage.bucket_send(101, util.replicasets[1])
+---
+- null
+- type: ShardingError
+  code: 19
+  name: REPLICASET_IS_LOCKED
+  message: Replicaset is locked
+...
 --
 -- Vshard ensures that if a replicaset is locked, then it will not
 -- allow to change its bucket set even if a rebalancer does not
