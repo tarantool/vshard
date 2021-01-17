@@ -334,10 +334,7 @@ vshard.storage.rebalancer_wakeup()
 -- Now rebalancer makes a bucket SENT. After it the garbage
 -- collector cleans it and deletes after a timeout.
 --
-while _bucket:get{91}.status ~= vshard.consts.BUCKET.SENT do fiber.sleep(0.01) end
----
-...
-while _bucket:get{91} ~= nil do fiber.sleep(0.1) end
+wait_bucket_is_collected(91)
 ---
 ...
 wait_rebalancer_state("The cluster is balanced ok", test_run)

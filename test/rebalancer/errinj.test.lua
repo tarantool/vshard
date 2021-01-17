@@ -107,7 +107,8 @@ _bucket:get{36}
 -- Buckets became 'active' on box_2_a, but still are sending on
 -- box_1_a. Wait until it is marked as garbage on box_1_a by the
 -- recovery fiber.
-while _bucket:get{35} ~= nil or _bucket:get{36} ~= nil do vshard.storage.recovery_wakeup() fiber.sleep(0.001) end
+wait_bucket_is_collected(35)
+wait_bucket_is_collected(36)
 _ = test_run:switch('box_2_a')
 _bucket:get{35}
 _bucket:get{36}
@@ -124,13 +125,11 @@ f1 = fiber.create(function() ret1, err1 = vshard.storage.bucket_send(36, util.re
 _ = test_run:switch('box_2_a')
 while not _bucket:get{36} do fiber.sleep(0.0001) end
 _ = test_run:switch('box_1_a')
-while _bucket:get{36} do vshard.storage.recovery_wakeup() vshard.storage.garbage_collector_wakeup() fiber.sleep(0.001) end
+wait_bucket_is_collected(36)
 _bucket:get{36}
 _ = test_run:switch('box_2_a')
 _bucket:get{36}
 box.error.injection.set('ERRINJ_WAL_DELAY', false)
-_ = test_run:switch('box_1_a')
-while _bucket:get{36} and _bucket:get{36}.status == vshard.consts.BUCKET.ACTIVE do fiber.sleep(0.001) end
 
 test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)

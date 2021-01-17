@@ -51,8 +51,7 @@ vshard.storage.bucket_force_create(2000)
 vshard.storage.buckets_info()[2000]
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[1])
-vshard.storage.garbage_collector_wakeup()
-while box.space._bucket:get({bucket_id_to_move}) do fiber.sleep(0.01) end
+wait_bucket_is_collected(bucket_id_to_move)
 test_run:switch('storage_1_a')
 while box.space._bucket:get{bucket_id_to_move}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2])

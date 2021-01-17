@@ -129,10 +129,7 @@ vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[1])
 ---
 - true
 ...
-vshard.storage.garbage_collector_wakeup()
----
-...
-while box.space._bucket:get({bucket_id_to_move}) do fiber.sleep(0.01) end
+wait_bucket_is_collected(bucket_id_to_move)
 ---
 ...
 test_run:switch('storage_1_a')

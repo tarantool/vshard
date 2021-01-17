@@ -165,3 +165,13 @@ function wait_rebalancer_state(state, test_run)
         vshard.storage.rebalancer_wakeup()
     end
 end
+
+function wait_bucket_is_collected(id)
+    test_run:wait_cond(function()
+        if not box.space._bucket:get{id} then
+            return true
+        end
+        vshard.storage.recovery_wakeup()
+        vshard.storage.garbage_collector_wakeup()
+    end)
+end
