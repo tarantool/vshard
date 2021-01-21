@@ -114,19 +114,28 @@ replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
 replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
 
 _ = test_run:switch('storage_2_a')
+-- Pause recovery. It is too aggressive, and the test needs to see buckets in
+-- their intermediate states.
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
 box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, util.replicasets[1]})
+
 _ = test_run:switch('storage_1_a')
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
 box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]})
+
 _ = test_run:switch('router_1')
 -- Ok to read sending bucket.
 vshard.router.call(1, 'read', 'echo', {123})
 -- Not ok to write sending bucket.
 util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 
-_ = test_run:switch('storage_2_a')
-box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
 _ = test_run:switch('storage_1_a')
 box.space._bucket:delete({1})
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+
+_ = test_run:switch('storage_2_a')
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+
 _ = test_run:switch('router_1')
 
 -- Check unavailability of master of a replicaset.
