@@ -634,13 +634,16 @@ end
 -- Infinite function to resolve status of buckets, whose 'sending'
 -- has failed due to tarantool or network problems. Restarts on
 -- reload.
--- @param module_version Module version, on which the current
---        function had been started. If the actual module version
---        appears to be changed, then stop recovery. It is
---        restarted in reloadable_fiber.
 --
 local function recovery_f()
     local module_version = M.module_version
+    -- Changes of _bucket increments bucket generation. Recovery has its own
+    -- bucket generation which is <= actual. Recovery is finished, when its
+    -- generation == bucket generation. In such a case the fiber
+    -- does nothing until next _bucket change.
+    local bucket_generation_recovered = -1
+    local bucket_generation_current = M.bucket_generation
+    local ok, sleep_time, is_all_recovered, total, recovered
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
@@ -648,22 +651,53 @@ local function recovery_f()
             lfiber.yield()
             goto continue
         end
-        local ok, total, recovered = pcall(recovery_step_by_type,
-                                           consts.BUCKET.SENDING)
-        if not ok then
-            log.error('Error during sending buckets recovery: %s', total)
+        is_all_recovered = true
+        if bucket_generation_recovered == bucket_generation_current then
+            goto sleep
         end
+
+        ok, total, recovered = pcall(recovery_step_by_type,
+                                     consts.BUCKET.SENDING)
+        if not ok then
+            is_all_recovered = false
+            log.error('Error during sending buckets recovery: %s', total)
+        elseif total ~= recovered then
+            is_all_recovered = false
+        end
+
         ok, total, recovered = pcall(recovery_step_by_type,
                                      consts.BUCKET.RECEIVING)
         if not ok then
+            is_all_recovered = false
             log.error('Error during receiving buckets recovery: %s', total)
         elseif total == 0 then
             bucket_receiving_quota_reset()
         else
             bucket_receiving_quota_add(recovered)
+            if total ~= recovered then
+                is_all_recovered = false
+            end
         end
-        lfiber.sleep(consts.RECOVERY_INTERVAL)
-        ::continue::
+
+    ::sleep::
+        if not is_all_recovered then
+            bucket_generation_recovered = -1
+        else
+            bucket_generation_recovered = bucket_generation_current
+        end
+        bucket_generation_current = M.bucket_generation
+
+        if not is_all_recovered then
+            sleep_time = consts.RECOVERY_BACKOFF_INTERVAL
+        elseif bucket_generation_recovered ~= bucket_generation_current then
+            sleep_time = 0
+        else
+            sleep_time = consts.TIMEOUT_INFINITY
+        end
+        if module_version == M.module_version then
+            M.bucket_generation_cond:wait(sleep_time)
+        end
+    ::continue::
     end
 end
 
