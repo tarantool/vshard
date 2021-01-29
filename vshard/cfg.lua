@@ -274,6 +274,14 @@ local cfg_template = {
         type = 'string', name = 'Discovery mode: on, off, once',
         is_optional = true, default = 'on', check = check_discovery_mode
     },
+    sched_ref_quota = {
+        name = 'Scheduler storage ref quota', type = 'non-negative number',
+        is_optional = true, default = consts.DEFAULT_SCHED_REF_QUOTA
+    },
+    sched_move_quota = {
+        name = 'Scheduler bucket move quota', type = 'non-negative number',
+        is_optional = true, default = consts.DEFAULT_SCHED_MOVE_QUOTA
+    },
 }
 
 --

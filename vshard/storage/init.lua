@@ -17,7 +17,7 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution',
         'vshard.lua_gc', 'vshard.rlist', 'vshard.registry',
-        'vshard.heap', 'vshard.storage.ref',
+        'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -32,6 +32,7 @@ local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
 local lregistry = require('vshard.registry')
 local lref = require('vshard.storage.ref')
+local lsched = require('vshard.storage.sched')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local fiber_cond_wait = util.fiber_cond_wait
 local bucket_ref_new
@@ -1142,16 +1143,33 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
                                       from)
         end
-        if lref.count > 0 then
-            return nil, lerror.vshard(lerror.code.STORAGE_IS_REFERENCED)
-        end
         if is_this_replicaset_locked() then
             return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
         end
         if not bucket_receiving_quota_add(-1) then
             return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
         end
-        _bucket:insert({bucket_id, recvg, from})
+        local timeout = opts and opts.timeout or
+                        consts.DEFAULT_BUCKET_SEND_TIMEOUT
+        local ok, err = lsched.move_start(timeout)
+        if not ok then
+            return nil, err
+        end
+        assert(lref.count == 0)
+        -- Move schedule is done only for the time of _bucket update.
+        -- The reason is that one bucket_send() calls bucket_recv() on the
+        -- remote storage multiple times. If the latter would schedule new moves
+        -- on each call, it could happen that the scheduler would block it in
+        -- favor of refs right in the middle of bucket_send().
+        -- It would lead to a deadlock, because refs won't be able to start -
+        -- the bucket won't be writable.
+        -- This way still provides fair scheduling, but does not have the
+        -- described issue.
+        ok, err = pcall(_bucket.insert, _bucket, {bucket_id, recvg, from})
+        lsched.move_end(1)
+        if not ok then
+            return nil, lerror.make(err)
+        end
     elseif b.status ~= recvg then
         local msg = string.format("bucket state is changed: was receiving, "..
                                   "became %s", b.status)
@@ -1434,7 +1452,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     ref.rw_lock = true
     exception_guard.ref = ref
     exception_guard.drop_rw_lock = true
-    local timeout = opts and opts.timeout or 10
+    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
     local deadline = fiber_clock() + timeout
     while ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
@@ -1446,9 +1464,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
 
     local _bucket = box.space._bucket
     local bucket = _bucket:get({bucket_id})
-    if lref.count > 0 then
-        return nil, lerror.vshard(lerror.code.STORAGE_IS_REFERENCED)
-    end
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -1468,7 +1483,25 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local idx = M.shard_index
     local bucket_generation = M.bucket_generation
     local sendg = consts.BUCKET.SENDING
-    _bucket:replace({bucket_id, sendg, destination})
+
+    local ok, err = lsched.move_start(timeout)
+    if not ok then
+        return nil, err
+    end
+    assert(lref.count == 0)
+    -- Move is scheduled only for the time of _bucket update because:
+    --
+    -- * it is consistent with bucket_recv() (see its comments);
+    --
+    -- * gives the same effect as if move was in the scheduler for the whole
+    --   bucket_send() time, because refs won't be able to start anyway - the
+    --   bucket is not writable.
+    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
+    lsched.move_end(1)
+    if not ok then
+        return nil, lerror.make(err)
+    end
+
     -- From this moment the bucket is SENDING. Such a status is
     -- even stronger than the lock.
     ref.rw_lock = false
@@ -2542,6 +2575,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         M.bucket_on_replace = bucket_generation_increment
     end
 
+    lsched.cfg(vshard_cfg)
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets

@@ -258,7 +258,7 @@ ok, err = vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2],    
 ...
 assert(not ok and err.message)
 ---
-- Storage is referenced
+- Timeout exceeded
 ...
 lref.del(0, 0)
 ---

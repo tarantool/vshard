@@ -4,6 +4,7 @@ local tap = require('tap')
 local fiber = require('fiber')
 local lregistry = require('vshard.registry')
 local lref = require('vshard.storage.ref')
+require('vshard.storage.sched')
 
 local big_timeout = 1000000
 local small_timeout = 0.000001
@@ -18,8 +19,9 @@ local sid3 = 2
 --
 
 --
--- Refs use storage API to get bucket space state and wait on its changes. But
--- not important for these unit tests.
+-- Refs use storage API to get bucket space state and wait on its changes. And
+-- scheduler API to sync with bucket moves. But not important for these unit
+-- tests.
 --
 local function bucket_are_all_rw()
     return true

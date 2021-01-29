@@ -81,18 +81,22 @@ big_timeout = 1000000
 small_timeout = 0.001
  | ---
  | ...
+
+timeout = 0.01
+ | ---
+ | ...
 lref.add(rid, sid, big_timeout)
  | ---
  | - true
  | ...
 -- Send fails.
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
  | ---
  | ...
 assert(not ok and err.message)
  | ---
- | - Storage is referenced
+ | - Timeout exceeded
  | ...
 lref.use(rid, sid)
  | ---
@@ -100,12 +104,12 @@ lref.use(rid, sid)
  | ...
 -- Still fails - use only makes ref undead until it is deleted explicitly.
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
  | ---
  | ...
 assert(not ok and err.message)
  | ---
- | - Storage is referenced
+ | - Timeout exceeded
  | ...
 
 _ = test_run:switch('storage_2_a')
@@ -115,13 +119,16 @@ _ = test_run:switch('storage_2_a')
 big_timeout = 1000000
  | ---
  | ...
+timeout = 0.01
+ | ---
+ | ...
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
  | ---
  | ...
 assert(not ok and err.message)
  | ---
- | - Storage is referenced
+ | - Timeout exceeded
  | ...
 
 --

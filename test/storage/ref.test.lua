@@ -34,22 +34,25 @@ sid = 0
 rid = 0
 big_timeout = 1000000
 small_timeout = 0.001
+
+timeout = 0.01
 lref.add(rid, sid, big_timeout)
 -- Send fails.
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
 assert(not ok and err.message)
 lref.use(rid, sid)
 -- Still fails - use only makes ref undead until it is deleted explicitly.
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
 assert(not ok and err.message)
 
 _ = test_run:switch('storage_2_a')
 -- Receive (from another replicaset) also fails.
 big_timeout = 1000000
+timeout = 0.01
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \
-                                     {timeout = big_timeout})
+                                     {timeout = timeout})
 assert(not ok and err.message)
 
 --

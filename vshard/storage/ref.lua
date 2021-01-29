@@ -95,6 +95,7 @@ local function ref_session_new(sid)
     -- Cache global session storages as upvalues to save on M indexing.
     local global_heap = M.session_heap
     local global_map = M.session_map
+    local sched = lregistry.storage_sched
 
     local function ref_session_discount(self, del_count)
         local new_count = M.count - del_count
@@ -104,6 +105,8 @@ local function ref_session_new(sid)
         new_count = ref_count_total - del_count
         assert(new_count >= 0)
         ref_count_total = new_count
+
+        sched.ref_end(del_count)
     end
 
     local function ref_session_delete_if_not_used(self)
@@ -333,10 +336,17 @@ local function ref_add(rid, sid, timeout)
     local deadline = now + timeout
     local ok, err, session
     local storage = lregistry.storage
+    local sched = lregistry.storage_sched
+
+    timeout, err = sched.ref_start(timeout)
+    if not timeout then
+        return nil, err
+    end
+
     while not storage.bucket_are_all_rw() do
         ok, err = storage.bucket_generation_wait(timeout)
         if not ok then
-            return nil, err
+            goto fail_sched
         end
         now = fiber_clock()
         timeout = deadline - now
@@ -345,7 +355,13 @@ local function ref_add(rid, sid, timeout)
     if not session then
         session = ref_session_new(sid)
     end
-    return session:add(rid, deadline, now)
+    ok, err = session:add(rid, deadline, now)
+    if ok then
+        return true
+    end
+::fail_sched::
+    sched.ref_end(1)
+    return nil, err
 end
 
 local function ref_use(rid, sid)
@@ -362,6 +378,11 @@ local function ref_del(rid, sid)
         return nil, lerror.vshard(lerror.code.STORAGE_REF_DEL, 'no session')
     end
     return session:del(rid)
+end
+
+local function ref_next_deadline()
+    local session = M.session_heap:top()
+    return session and session.deadline or DEADLINE_INFINITY
 end
 
 local function ref_kill_session(sid)
@@ -389,6 +410,7 @@ M.add = ref_add
 M.use = ref_use
 M.cfg = ref_cfg
 M.kill = ref_kill_session
+M.next_deadline = ref_next_deadline
 lregistry.storage_ref = M
 
 return M

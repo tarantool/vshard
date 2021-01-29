@@ -241,3 +241,26 @@ cfg.rebalancer_max_sending = nil
 --
 cfg.collect_bucket_garbage_interval = 100
 _ = lcfg.check(cfg)
+
+--
+-- gh-147: router map-reduce. It adds scheduler options on the storage.
+--
+cfg.sched_ref_quota = 100
+_ = lcfg.check(cfg)
+cfg.sched_ref_quota = 1
+_ = lcfg.check(cfg)
+cfg.sched_ref_quota = 0
+_ = lcfg.check(cfg)
+cfg.sched_ref_quota = -1
+util.check_error(lcfg.check, cfg)
+cfg.sched_ref_quota = nil
+
+cfg.sched_move_quota = 100
+_ = lcfg.check(cfg)
+cfg.sched_move_quota = 1
+_ = lcfg.check(cfg)
+cfg.sched_move_quota = 0
+_ = lcfg.check(cfg)
+cfg.sched_move_quota = -1
+util.check_error(lcfg.check, cfg)
+cfg.sched_move_quota = nil
