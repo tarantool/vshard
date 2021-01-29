@@ -46,6 +46,8 @@ local function ref_session_del(session, count)
     new_count = session.count - count
     assert(new_count >= 0)
     session.count = new_count
+
+    lregistry.storage_sched.ref_end(count)
 end
 
 local function ref_session_gc_two(session, now)
@@ -140,15 +142,23 @@ local function ref_add(rid, sid, timeout)
     local deadline = now + timeout
     local session_heap, session_map, session, map, heap, ref, ok, err
     local storage = lregistry.storage
+    local sched = lregistry.storage_sched
+
+    timeout, err = sched.ref_start(timeout)
+    if not timeout then
+        return nil, err
+    end
+
     while M.count == 0 and not storage.bucket_is_all_rw() do
         ok, err = storage.bucket_generation_wait(timeout)
         if not ok then
-            return nil, err
+            goto fail_sched
         end
         now = clock()
         timeout = deadline - now
         if timeout < 0 then
-            return nil, lerror.make(box.error.new(box.error.TIMEOUT))
+            err = lerror.make(box.error.new(box.error.TIMEOUT))
+            goto fail_sched
         end
     end
 
@@ -167,7 +177,8 @@ local function ref_add(rid, sid, timeout)
     end
     map = session.ref_map
     if map[rid] then
-        return nil, lerror.vshard(lerror.code.STORAGE_REF_ADD, 'duplicate ref')
+        err = lerror.vshard(lerror.code.STORAGE_REF_ADD, 'duplicate ref')
+        goto fail_sched
     end
     heap = session.ref_heap
     ref = setmetatable({
@@ -184,7 +195,11 @@ local function ref_add(rid, sid, timeout)
     end
     session.count = session.count + 1
     M.count = M.count + 1
-    return true
+    do return true end
+
+::fail_sched::
+    sched.ref_end(1)
+    return nil, err
 end
 
 local function ref_use(rid, sid)
@@ -221,6 +236,14 @@ local function ref_del(rid, sid)
     return true
 end
 
+local function ref_next_deadline()
+    local session = M.session_heap:top()
+    if not session then
+        return clock() + lconsts.TIMEOUT_INFINITY
+    end
+    return session.deadline
+end
+
 local function ref_kill_session(sid)
     local session = M.session_map[sid]
     if not session then
@@ -252,6 +275,7 @@ M.gc = ref_gc
 M.add = ref_add
 M.use = ref_use
 M.cfg = ref_cfg
+M.next_deadline = ref_next_deadline
 lregistry.storage_ref = M
 
 return M

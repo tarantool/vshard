@@ -93,17 +93,18 @@ lref.count
 --
 util = require('util')
 rid = 0
+norm_timeout = 0.01
 lref.add(rid, sid, big_timeout)
 -- Send fails.
-vshard.storage.bucket_send(1, util.replicasets[2], {timeout = big_timeout})
+vshard.storage.bucket_send(1, util.replicasets[2], {timeout = norm_timeout})
 lref.use(rid, sid)
 -- Still fails - use only makes ref undead until it is deleted explicitly.
-vshard.storage.bucket_send(1, util.replicasets[2], {timeout = big_timeout})
+vshard.storage.bucket_send(1, util.replicasets[2], {timeout = norm_timeout})
 
 _ = test_run:switch('storage_2_a')
 -- Receive (from another replicaset) also fails.
-big_timeout = 1000000
-vshard.storage.bucket_send(1501, util.replicasets[1], {timeout = big_timeout})
+norm_timeout = 0.01
+vshard.storage.bucket_send(1501, util.replicasets[1], {timeout = norm_timeout})
 
 --
 -- After unref all the bucket moves are allowed again.
@@ -115,6 +116,7 @@ vshard.storage.bucket_send(1, util.replicasets[2], {timeout = big_timeout})
 wait_bucket_is_collected(1)
 
 _ = test_run:switch('storage_2_a')
+big_timeout = 1000000
 vshard.storage.bucket_send(1, util.replicasets[1], {timeout = big_timeout})
 wait_bucket_is_collected(1)
 

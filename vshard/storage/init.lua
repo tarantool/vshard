@@ -15,7 +15,7 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution',
         'vshard.lua_gc', 'vshard.rlist', 'vshard.storage.ref',
-        'vshard.registry',
+        'vshard.registry', 'vshard.storage.sched',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -30,6 +30,7 @@ local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
 local lregistry = require('vshard.registry')
 local lref = require('vshard.storage.ref')
+local lsched = require('vshard.storage.sched')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local bucket_ref_new
 
@@ -164,7 +165,6 @@ if not M then
         -- Condition variable fired each time a bucket locked for
         -- RW refs reaches 0 of the latter.
         bucket_rw_lock_is_ready_cond = lfiber.cond(),
-
         ------------------------- Reload -------------------------
         -- Version of the loaded module. This number is used on
         -- reload to determine which upgrade scripts to run.
@@ -1151,9 +1151,18 @@ local function bucket_recv(bucket_id, from, data, opts)
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         lfiber.sleep(0.01)
     end
+    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    local status, ret, err
+
+    timeout, err = lsched.move_start(timeout)
+    if not timeout then
+        return nil, err
+    end
     M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
+    status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
     M.rebalancer_transfering_buckets[bucket_id] = nil
+    lsched.move_end()
+
     if status then
         if ret then
             return ret
@@ -1376,7 +1385,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     ref.rw_lock = true
     exception_guard.ref = ref
     exception_guard.drop_rw_lock = true
-    local deadline = clock() + (opts and opts.timeout or 10)
+    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    local deadline = clock() + timeout
     while ref.rw ~= 0 do
         if not M.bucket_rw_lock_is_ready_cond:wait(deadline - clock()) then
             status, err = pcall(box.error, box.error.TIMEOUT)
@@ -1463,14 +1473,23 @@ local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
+    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    local status, ret, err
+
+    timeout, err = lsched.move_start(timeout)
+    if not timeout then
+        return nil, err
+    end
     M.rebalancer_transfering_buckets[bucket_id] = true
     local exception_guard = {}
-    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
-                                   exception_guard)
+    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
+                             exception_guard)
     if exception_guard.drop_rw_lock then
         exception_guard.ref.rw_lock = false
     end
     M.rebalancer_transfering_buckets[bucket_id] = nil
+    lsched.move_end()
+
     if status then
         if ret then
             return ret
