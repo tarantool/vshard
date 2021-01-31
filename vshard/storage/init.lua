@@ -5,6 +5,7 @@ local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local yaml_encode = require('yaml').encode
+local clock = lfiber.clock
 
 local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
@@ -695,7 +696,7 @@ local function sync(timeout)
     log.debug("Synchronizing replicaset...")
     timeout = timeout or M.sync_timeout
     local vclock = box.info.vclock
-    local tstart = lfiber.time()
+    local tstart = clock()
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
@@ -711,7 +712,7 @@ local function sync(timeout)
             return true
         end
         lfiber.sleep(0.001)
-    until not (lfiber.time() <= tstart + timeout)
+    until not (clock() <= tstart + timeout)
     log.warn("Timed out during synchronizing replicaset")
     local ok, err = pcall(box.error, box.error.TIMEOUT)
     return nil, lerror.make(err)
@@ -1280,10 +1281,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     ref.rw_lock = true
     exception_guard.ref = ref
     exception_guard.drop_rw_lock = true
-    local deadline = lfiber.clock() + (opts and opts.timeout or 10)
+    local deadline = clock() + (opts and opts.timeout or 10)
     while ref.rw ~= 0 do
-        if not M.bucket_rw_lock_is_ready_cond:wait(deadline -
-                                                   lfiber.clock()) then
+        if not M.bucket_rw_lock_is_ready_cond:wait(deadline - clock()) then
             status, err = pcall(box.error, box.error.TIMEOUT)
             return nil, lerror.make(err)
         end
@@ -1579,7 +1579,7 @@ function gc_bucket_f()
     -- specified time interval the buckets are deleted both from
     -- this array and from _bucket space.
     local buckets_for_redirect = {}
-    local buckets_for_redirect_ts = lfiber.time()
+    local buckets_for_redirect_ts = clock()
     -- Empty sent buckets, updated after each step, and when
     -- buckets_for_redirect is deleted, it gets empty_sent_buckets
     -- for next deletion.
@@ -1614,7 +1614,7 @@ function gc_bucket_f()
             end
         end
 
-        if lfiber.time() - buckets_for_redirect_ts >=
+        if clock() - buckets_for_redirect_ts >=
            consts.BUCKET_SENT_GARBAGE_DELAY then
             status, err = gc_bucket_drop(buckets_for_redirect,
                                          consts.BUCKET.SENT)
@@ -1629,7 +1629,7 @@ function gc_bucket_f()
             else
                 buckets_for_redirect = empty_sent_buckets or {}
                 empty_sent_buckets = nil
-                buckets_for_redirect_ts = lfiber.time()
+                buckets_for_redirect_ts = clock()
             end
         end
 ::continue::

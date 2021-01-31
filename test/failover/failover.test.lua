@@ -109,9 +109,9 @@ test_run:switch('router_1')
 -- Revive the best replica. A router must reconnect to it in
 -- FAILOVER_UP_TIMEOUT seconds.
 test_run:cmd('start server box_1_d')
-ts1 = fiber.time()
+ts1 = fiber.clock()
 while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
-ts2 = fiber.time()
+ts2 = fiber.clock()
 ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 test_run:grep_log('router_1', 'New replica box_1_d%(storage%@')
 

@@ -1,6 +1,7 @@
 local log = require('log')
 local lfiber = require('fiber')
 local table_new = require('table.new')
+local clock = lfiber.clock
 
 local MODULE_INTERNALS = '__module_vshard_router'
 -- Reload requirements, in case this module is reloaded manually.
@@ -527,7 +528,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
     end
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
-    local tend = lfiber.time() + timeout
+    local tend = clock() + timeout
     if bucket_id > router.total_bucket_count or bucket_id <= 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
@@ -551,7 +552,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
         replicaset, err = bucket_resolve(router, bucket_id)
         if replicaset then
 ::replicaset_is_found::
-            opts.timeout = tend - lfiber.time()
+            opts.timeout = tend - clock()
             local storage_call_status, call_status, call_error =
                 replicaset[call](replicaset, 'vshard.storage.call',
                                  {bucket_id, mode, func, args}, opts)
@@ -583,7 +584,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                         -- if reconfiguration had been started,
                         -- and while is not executed on router,
                         -- but already is executed on storages.
-                        while lfiber.time() <= tend do
+                        while clock() <= tend do
                             lfiber.sleep(0.05)
                             replicaset = router.replicasets[err.destination]
                             if replicaset then
@@ -598,7 +599,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                         -- case of broken cluster, when a bucket
                         -- is sent on two replicasets to each
                         -- other.
-                        if replicaset and lfiber.time() <= tend then
+                        if replicaset and clock() <= tend then
                             goto replicaset_is_found
                         end
                     end
@@ -623,7 +624,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
             end
         end
         lfiber.yield()
-    until lfiber.time() > tend
+    until clock() > tend
     if err then
         return nil, err
     else
@@ -749,7 +750,7 @@ end
 -- connections must be updated.
 --
 local function failover_collect_to_update(router)
-    local ts = lfiber.time()
+    local ts = clock()
     local uuid_to_update = {}
     for uuid, rs in pairs(router.replicasets) do
         if failover_need_down_priority(rs, ts) or
@@ -772,7 +773,7 @@ local function failover_step(router)
     if #uuid_to_update == 0 then
         return false
     end
-    local curr_ts = lfiber.time()
+    local curr_ts = clock()
     local replica_is_changed = false
     for _, uuid in pairs(uuid_to_update) do
         local rs = router.replicasets[uuid]
@@ -1230,7 +1231,6 @@ local function router_sync(router, timeout)
         timeout = router.sync_timeout
     end
     local arg = {timeout}
-    local clock = lfiber.clock
     local deadline = timeout and (clock() + timeout)
     local opts = {timeout = timeout}
     for rs_uuid, replicaset in pairs(router.replicasets) do
