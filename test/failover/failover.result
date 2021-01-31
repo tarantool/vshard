@@ -261,13 +261,13 @@ test_run:cmd('start server box_1_d')
 ---
 - true
 ...
-ts1 = fiber.time()
+ts1 = fiber.clock()
 ---
 ...
 while rs1.replica.name ~= 'box_1_d' do fiber.sleep(0.1) end
 ---
 ...
-ts2 = fiber.time()
+ts2 = fiber.clock()
 ---
 ...
 ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT

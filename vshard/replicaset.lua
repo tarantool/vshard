@@ -54,6 +54,7 @@ local luri = require('uri')
 local luuid = require('uuid')
 local ffi = require('ffi')
 local util = require('vshard.util')
+local fiber_clock = fiber.clock
 local gsc = util.generate_self_checker
 
 --
@@ -88,7 +89,7 @@ local function netbox_on_connect(conn)
         -- biggest priority. Really, it is not neccessary to
         -- increase replica connection priority, if the current
         -- one already has the biggest priority. (See failover_f).
-        rs.replica_up_ts = fiber.time()
+        rs.replica_up_ts = fiber_clock()
     end
 end
 
@@ -100,7 +101,7 @@ local function netbox_on_disconnect(conn)
     assert(conn.replica)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
-    conn.replica.down_ts = fiber.time()
+    conn.replica.down_ts = fiber_clock()
 end
 
 --
@@ -174,7 +175,7 @@ local function replicaset_up_replica_priority(replicaset)
     local old_replica = replicaset.replica
     if old_replica == replicaset.priority_list[1] and
        old_replica:is_connected() then
-        replicaset.replica_up_ts = fiber.time()
+        replicaset.replica_up_ts = fiber_clock()
         return
     end
     for _, replica in pairs(replicaset.priority_list) do
@@ -403,7 +404,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             net_status, err = pcall(box.error, box.error.TIMEOUT)
             return nil, lerror.make(err)
         end
-        local end_time = fiber.time() + timeout
+        local end_time = fiber_clock() + timeout
         while not net_status and timeout > 0 do
             replica, err = pick_next_replica(replicaset)
             if not replica then
@@ -412,7 +413,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             opts.timeout = timeout
             net_status, storage_status, retval, err =
                 replica_call(replica, func, args, opts)
-            timeout = end_time - fiber.time()
+            timeout = end_time - fiber_clock()
             if not net_status and not storage_status and
                not can_retry_after_error(retval) then
                 -- There is no sense to retry LuaJit errors, such as
@@ -680,7 +681,7 @@ local function buildall(sharding_cfg)
     else
         zone_weights = {}
     end
-    local curr_ts = fiber.time()
+    local curr_ts = fiber_clock()
     for replicaset_uuid, replicaset in pairs(sharding_cfg.sharding) do
         local new_replicaset = setmetatable({
             replicas = {},
