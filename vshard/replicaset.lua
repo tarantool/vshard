@@ -56,6 +56,7 @@ local ffi = require('ffi')
 local util = require('vshard.util')
 local clock = fiber.clock
 local gsc = util.generate_self_checker
+local clock = fiber.clock
 
 --
 -- on_connect() trigger for net.box
@@ -137,6 +138,24 @@ local function replicaset_connect_master(replicaset)
                                   replicaset.uuid)
     end
     return replicaset_connect_to_replica(replicaset, master)
+end
+
+local function replicaset_wait_connected(replicaset, timeout)
+    local deadline = clock() + timeout
+    local ok, err
+    repeat
+        local conn = replicaset_connect_master(replicaset)
+        if conn.state == 'active' then
+            return timeout
+        end
+        if timeout < 0 then
+            ok, err = pcall(box.error, box.error.TIMEOUT)
+            return nil, lerror.make(err)
+        end
+        ok, err = pcall(conn.wait_connected, conn, timeout)
+        timeout = deadline - clock()
+    until not ok
+    return nil, lerror.make(err)
 end
 
 --
@@ -484,6 +503,7 @@ local replicaset_mt = {
         connect_replica = replicaset_connect_to_replica;
         down_replica_priority = replicaset_down_replica_priority;
         up_replica_priority = replicaset_up_replica_priority;
+        wait_connected = replicaset_wait_connected,
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);

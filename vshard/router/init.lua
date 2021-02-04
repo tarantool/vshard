@@ -44,6 +44,8 @@ if not M then
         module_version = 0,
         -- Number of router which require collecting lua garbage.
         collect_lua_garbage_cnt = 0,
+        ----------------------- Map-Reduce -----------------------
+        ref_id = 0,
     }
 end
 
@@ -675,6 +677,85 @@ local function router_call(router, bucket_id, opts, ...)
                             ...)
 end
 
+local function router_map_callrw(router, func, args, opts)
+    local replicasets = router.replicasets
+    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
+    local deadline = clock() + timeout
+    local err, err_uuid, res1, res2, res3, ok
+    local map = {}
+    local futures = {}
+    local bucket_count = 0
+    local opts_async = {is_async = true}
+    local rid = M.ref_id
+    M.ref_id = rid + 1
+
+    for uuid, rs in pairs(replicasets) do
+        timeout, err = rs:wait_connected(timeout)
+        if not timeout then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        res1, err = rs:callrw('vshard.storage._call',
+                              {'storage_ref', rid, timeout}, opts_async)
+        if not res1 then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        futures[uuid] = res1
+    end
+    for uuid, future in pairs(futures) do
+        res1, err = future:wait_result(timeout)
+        if not res1 then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        res1, err = unpack(res1)
+        if not res1 then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        bucket_count = bucket_count + res1
+        timeout = deadline - clock()
+    end
+    if bucket_count ~= router.total_bucket_count then
+        return nil, lerror.vshard(lerror.code.UNKNOWN_BUCKETS,
+                                  router.total_bucket_count - bucket_count)
+    end
+
+    futures = {}
+    args = {'storage_map', rid, 'write', func, args}
+    for uuid, rs in pairs(replicasets) do
+        res1, err = rs:callrw('vshard.storage._call', args, opts_async)
+        if not res1 then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        futures[uuid] = res1
+    end
+    for uuid, f in pairs(futures) do
+        res1, err = f:wait_result(timeout)
+        if not res1 then
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        ok, res1, res2, res3 = unpack(res1)
+        if not ok then
+            err = res1
+            err_uuid = uuid
+            goto discard_and_error
+        end
+        map[uuid] = {res1, res2, res3}
+        timeout = deadline - clock()
+    end
+    do return map end
+
+::discard_and_error::
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, err, err_uuid
+end
+
 --
 -- Get replicaset object by bucket identifier.
 -- @param bucket_id Bucket identifier.
@@ -1270,6 +1351,7 @@ local router_mt = {
         callrw = router_callrw;
         callre = router_callre;
         callbre = router_callbre;
+        map_callrw = router_map_callrw,
         route = router_route;
         routeall = router_routeall;
         bucket_id = router_bucket_id,
@@ -1367,6 +1449,9 @@ end
 if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
+    if not M.ref_id then
+        M.ref_id = 0
+    end
     for _, router in pairs(M.routers) do
         router_cfg(router, router.current_cfg, true)
         setmetatable(router, router_mt)

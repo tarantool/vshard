@@ -2341,6 +2341,33 @@ local function storage_call(bucket_id, mode, name, args)
     return ok, ret1, ret2, ret3
 end
 
+local function storage_ref(rid, timeout)
+    local ok, err = lref.add(rid, box.session.id(), timeout)
+    if not ok then
+        return nil, err
+    end
+    return box.space._bucket:count()
+end
+
+local function storage_map(rid, mode, name, args)
+    local ok, err, ret1, ret2, ret3
+    local sid = box.session.id()
+    ok, err = lref.use(rid, sid)
+    if not ok then
+        return nil, err
+    end
+    ok, ret1, ret2, ret3 = pcall(netbox.self.call, netbox.self, name, args)
+    if not ok then
+        lref.del(rid, sid)
+        return nil, lerror.make(ret1)
+    end
+    ok, err = lref.del(rid, sid)
+    if not ok then
+        return nil, err
+    end
+    return true, ret1, ret2, ret3
+end
+
 local service_call_api
 
 local function service_call_test_api(...)
@@ -2351,6 +2378,8 @@ service_call_api = setmetatable({
     bucket_recv = bucket_recv,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
+    storage_ref = storage_ref,
+    storage_map = storage_map,
     test_api = service_call_test_api,
 }, {__serialize = function(api)
     local res = {}
