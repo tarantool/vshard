@@ -44,6 +44,11 @@ if not M then
         module_version = 0,
         -- Number of router which require collecting lua garbage.
         collect_lua_garbage_cnt = 0,
+
+        ----------------------- Map-Reduce -----------------------
+        -- Storage Ref ID. It must be unique for each ref request
+        -- and therefore is global and monotonically growing.
+        ref_id = 0,
     }
 end
 
@@ -674,6 +679,177 @@ local function router_call(router, bucket_id, opts, ...)
                             ...)
 end
 
+local router_map_callrw
+
+if util.version_is_at_least(1, 10, 0) then
+--
+-- Consistent Map-Reduce. The given function is called on all masters in the
+-- cluster with a guarantee that in case of success it was executed with all
+-- buckets being accessible for reads and writes.
+--
+-- Consistency in scope of map-reduce means all the data was accessible, and
+-- didn't move during map requests execution. To preserve the consistency there
+-- is a third stage - Ref. So the algorithm is actually Ref-Map-Reduce.
+--
+-- Refs are broadcast before Map stage to pin the buckets to their storages, and
+-- ensure they won't move until maps are done.
+--
+-- Map requests are broadcast in case all refs are done successfully. They
+-- execute the user function + delete the refs to enable rebalancing again.
+--
+-- On the storages there are additional means to ensure map-reduces don't block
+-- rebalancing forever and vice versa.
+--
+-- The function is not as slow as it may seem - it uses netbox's feature
+-- is_async to send refs and maps in parallel. So cost of the function is about
+-- 2 network exchanges to the most far storage in terms of time.
+--
+-- @param router Router instance to use.
+-- @param func Name of the function to call.
+-- @param args Function arguments passed in netbox style (as an array).
+-- @param opts Can only contain 'timeout' as a number of seconds. Note that the
+--     refs may end up being kept on the storages during this entire timeout if
+--     something goes wrong. For instance, network issues appear. This means
+--     better not use a value bigger than necessary. A stuck infinite ref can
+--     only be dropped by this router restart/reconnect or the storage restart.
+--
+-- @return In case of success - a map with replicaset UUID keys and values being
+--     what the function returned from the replicaset.
+--
+-- @return In case of an error - nil, error object, optional UUID of the
+--     replicaset where the error happened. UUID may be not present if it wasn't
+--     about concrete replicaset. For example, not all buckets were found even
+--     though all replicasets were scanned.
+--
+router_map_callrw = function(router, func, args, opts)
+    local replicasets = router.replicasets
+    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
+    local deadline = fiber_clock() + timeout
+    local err, err_uuid, res, ok, map
+    local futures = {}
+    local bucket_count = 0
+    local opts_async = {is_async = true}
+    local rs_count = 0
+    local rid = M.ref_id
+    M.ref_id = rid + 1
+    -- Nil checks are done explicitly here (== nil instead of 'not'), because
+    -- netbox requests return box.NULL instead of nils.
+
+    --
+    -- Ref stage: send.
+    --
+    for uuid, rs in pairs(replicasets) do
+        -- Netbox async requests work only with active connections. Need to wait
+        -- for the connection explicitly.
+        timeout, err = rs:wait_connected(timeout)
+        if timeout == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        res, err = rs:callrw('vshard.storage._call',
+                              {'storage_ref', rid, timeout}, opts_async)
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        futures[uuid] = res
+        rs_count = rs_count + 1
+    end
+    map = table_new(0, rs_count)
+    --
+    -- Ref stage: collect.
+    --
+    for uuid, future in pairs(futures) do
+        res, err = future:wait_result(timeout)
+        -- Handle netbox error first.
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        -- Ref returns nil,err or bucket count.
+        res, err = res[1], res[2]
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        bucket_count = bucket_count + res
+        timeout = deadline - fiber_clock()
+    end
+    -- All refs are done but not all buckets are covered. This is odd and can
+    -- mean many things. The most possible ones: 1) outdated configuration on
+    -- the router and it does not see another replicaset with more buckets,
+    -- 2) some buckets are simply lost or duplicated - could happen as a bug, or
+    -- if the user does a maintenance of some kind by creating/deleting buckets.
+    -- In both cases can't guarantee all the data would be covered by Map calls.
+    if bucket_count ~= router.total_bucket_count then
+        err = lerror.vshard(lerror.code.UNKNOWN_BUCKETS,
+                            router.total_bucket_count - bucket_count)
+        goto fail
+    end
+    --
+    -- Map stage: send.
+    --
+    args = {'storage_map', rid, func, args}
+    for uuid, rs in pairs(replicasets) do
+        res, err = rs:callrw('vshard.storage._call', args, opts_async)
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        futures[uuid] = res
+    end
+    --
+    -- Ref stage: collect.
+    --
+    for uuid, f in pairs(futures) do
+        res, err = f:wait_result(timeout)
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        -- Map returns true,res or nil,err.
+        ok, res = res[1], res[2]
+        if ok == nil then
+            err = res
+            err_uuid = uuid
+            goto fail
+        end
+        if res ~= nil then
+            -- Store as a table so in future it could be extended for
+            -- multireturn.
+            map[uuid] = {res}
+        end
+        timeout = deadline - fiber_clock()
+    end
+    do return map end
+
+::fail::
+    for uuid, f in pairs(futures) do
+        f:discard()
+        -- Best effort to remove the created refs before exiting. Can help if
+        -- the timeout was big and the error happened early.
+        f = replicasets[uuid]:callrw('vshard.storage._call',
+                                     {'storage_unref', rid}, opts_async)
+        if f ~= nil then
+            -- Don't care waiting for a result - no time for this. But it won't
+            -- affect the request sending if the connection is still alive.
+            f:discard()
+        end
+    end
+    err = lerror.make(err)
+    return nil, err, err_uuid
+end
+
+-- Version >= 1.10.
+else
+-- Version < 1.10.
+
+router_map_callrw = function()
+    error('Supported for Tarantool >= 1.10')
+end
+
+end
+
 --
 -- Get replicaset object by bucket identifier.
 -- @param bucket_id Bucket identifier.
@@ -1268,6 +1444,7 @@ local router_mt = {
         callrw = router_callrw;
         callre = router_callre;
         callbre = router_callbre;
+        map_callrw = router_map_callrw,
         route = router_route;
         routeall = router_routeall;
         bucket_id = router_bucket_id,
@@ -1365,6 +1542,9 @@ end
 if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
+    if not M.ref_id then
+        M.ref_id = 0
+    end
     for _, router in pairs(M.routers) do
         router_cfg(router, router.current_cfg, true)
         setmetatable(router, router_mt)

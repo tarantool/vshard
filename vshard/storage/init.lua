@@ -2415,6 +2415,50 @@ local function storage_call(bucket_id, mode, name, args)
     return ok, ret1, ret2, ret3
 end
 
+--
+-- Bind a new storage ref to the current box session. Is used as a part of
+-- Map-Reduce API.
+--
+local function storage_ref(rid, timeout)
+    local ok, err = lref.add(rid, box.session.id(), timeout)
+    if not ok then
+        return nil, err
+    end
+    return bucket_count()
+end
+
+--
+-- Drop a storage ref from the current box session. Is used as a part of
+-- Map-Reduce API.
+--
+local function storage_unref(rid)
+    return lref.del(rid, box.session.id())
+end
+
+--
+-- Execute a user's function under an infinite storage ref protecting from
+-- bucket moves. The ref should exist before, and is deleted after, regardless
+-- of the function result. Is used as a part of Map-Reduce API.
+--
+local function storage_map(rid, name, args)
+    local ok, err, res
+    local sid = box.session.id()
+    ok, err = lref.use(rid, sid)
+    if not ok then
+        return nil, err
+    end
+    ok, res = local_call(name, args)
+    if not ok then
+        lref.del(rid, sid)
+        return nil, lerror.make(res)
+    end
+    ok, err = lref.del(rid, sid)
+    if not ok then
+        return nil, err
+    end
+    return true, res
+end
+
 local service_call_api
 
 local function service_call_test_api(...)
@@ -2425,6 +2469,9 @@ service_call_api = setmetatable({
     bucket_recv = bucket_recv,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
+    storage_ref = storage_ref,
+    storage_unref = storage_unref,
+    storage_map = storage_map,
     test_api = service_call_test_api,
 }, {__serialize = function(api)
     local res = {}

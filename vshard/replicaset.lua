@@ -140,6 +140,39 @@ local function replicaset_connect_master(replicaset)
 end
 
 --
+-- Wait until the master instance is connected. This is necessary at least for
+-- async requests because they fail immediately if the connection is not
+-- established.
+-- Returns the remaining timeout because is expected to be used to connect to
+-- many replicasets in a loop, where such return saves one clock get in the
+-- caller code and is just cleaner code.
+--
+local function replicaset_wait_connected(replicaset, timeout)
+    local deadline = fiber_clock() + timeout
+    local ok, res
+    while true do
+        local conn = replicaset_connect_master(replicaset)
+        if conn.state == 'active' then
+            return timeout
+        end
+        -- Netbox uses fiber_cond inside, which throws an irrelevant usage error
+        -- at negative timeout. Need to check the case manually.
+        if timeout < 0 then
+            return nil, lerror.timeout()
+        end
+        ok, res = pcall(conn.wait_connected, conn, timeout)
+        if not ok then
+            return nil, lerror.make(res)
+        end
+        if not res then
+            return nil, lerror.timeout()
+        end
+        timeout = deadline - fiber_clock()
+    end
+    assert(false)
+end
+
+--
 -- Create net.box connections to all replicas and master.
 --
 local function replicaset_connect_all(replicaset)
@@ -483,6 +516,7 @@ local replicaset_mt = {
         connect_replica = replicaset_connect_to_replica;
         down_replica_priority = replicaset_down_replica_priority;
         up_replica_priority = replicaset_up_replica_priority;
+        wait_connected = replicaset_wait_connected,
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);
