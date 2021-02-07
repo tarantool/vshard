@@ -27,3 +27,52 @@ fib = util.reloadable_fiber_create('Worker_name', fake_M, 'reloadable_function')
 while not test_run:grep_log('default', 'module is reloaded, restarting') do fiber.sleep(0.01) end
 test_run:grep_log('default', 'reloadable_function has been started', 1000)
 fib:cancel()
+
+-- Yielding table minus.
+minus_yield = util.table_minus_yield
+minus_yield({}, {}, 1)
+minus_yield({}, {k = 1}, 1)
+minus_yield({}, {k = 1}, 0)
+minus_yield({k = 1}, {k = 1}, 0)
+minus_yield({k1 = 1, k2 = 2}, {k1 = 1, k3 = 3}, 10)
+minus_yield({k1 = 1, k2 = 2}, {k1 = 1, k2 = 2}, 10)
+-- Mismatching values are not deleted.
+minus_yield({k1 = 1}, {k1 = 2}, 10)
+minus_yield({k1 = 1, k2 = 2, k3 = 3}, {k1 = 1, k2 = 222}, 10)
+
+do                                                                              \
+    t = {k1 = 1, k2 = 2, k3 = 3, k4 = 4}                                        \
+    yield_count = 0                                                             \
+    f = fiber.create(function()                                                 \
+        local csw1 = fiber.info()[fiber.id()].csw                               \
+        minus_yield(t, {k2 = 2, k3 = 3, k5 = 5, k4 = 444}, 2)                   \
+        local csw2 = fiber.info()[fiber.id()].csw                               \
+        yield_count = csw2 - csw1                                               \
+    end)                                                                        \
+    test_run:wait_cond(function() return f:status() == 'dead' end)              \
+end
+yield_count
+t
+
+-- Yielding table copy.
+copy_yield = util.table_copy_yield
+copy_yield({}, 1)
+copy_yield({k = 1}, 1)
+copy_yield({k1 = 1, k2 = 2}, 1)
+
+do                                                                              \
+    t = {k1 = 1, k2 = 2, k3 = 3, k4 = 4}                                        \
+    res = nil                                                                   \
+    yield_count = 0                                                             \
+    f = fiber.create(function()                                                 \
+        local csw1 = fiber.info()[fiber.id()].csw                               \
+        res = copy_yield(t, 2)                                                  \
+        local csw2 = fiber.info()[fiber.id()].csw                               \
+        yield_count = csw2 - csw1                                               \
+    end)                                                                        \
+    test_run:wait_cond(function() return f:status() == 'dead' end)              \
+end
+yield_count
+t
+res
+t ~= res
