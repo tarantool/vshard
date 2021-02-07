@@ -92,7 +92,7 @@ test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to')
 ...
 vshard.storage.internal.reload_version
 ---
-- 2
+- 3
 ...
 --
 -- gh-237: should be only one trigger. During gh-237 the trigger installation

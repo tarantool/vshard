@@ -56,7 +56,6 @@ vshard.storage.bucket_unref(1, 'write') -- Error, no refs.
 vshard.storage.bucket_ref(1, 'read')
 vshard.storage.bucket_unref(1, 'read')
 -- Force GC to take an RO lock on the bucket now.
-vshard.storage.garbage_collector_wakeup()
 vshard.storage.buckets_info(1)
 _ = test_run:cmd("setopt delimiter ';'")
 while true do
@@ -64,7 +63,6 @@ while true do
     if i.status == vshard.consts.BUCKET.GARBAGE and i.ro_lock then
         break
     end
-    vshard.storage.garbage_collector_wakeup()
     fiber.sleep(0.01)
 end;
 _ = test_run:cmd("setopt delimiter ''");

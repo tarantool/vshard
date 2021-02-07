@@ -136,7 +136,6 @@ box.space.test3:select{100}
 -- Now the bucket is unreferenced and can be transferred.
 _ = test_run:switch('box_2_a')
 vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3})
-vshard.storage.buckets_info(1)
 wait_bucket_is_collected(1)
 vshard.storage.buckets_info(1)
 _ = test_run:switch('box_1_a')

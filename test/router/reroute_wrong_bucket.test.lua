@@ -11,13 +11,13 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 test_run:cmd('create server router_1 with script="router/router_1.lua"')
 test_run:cmd('start server router_1')
 test_run:switch('storage_1_a')
-cfg.collect_bucket_garbage_interval = 100
+vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 vshard.storage.rebalancer_disable()
 for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
 test_run:switch('storage_2_a')
-cfg.collect_bucket_garbage_interval = 100
+vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
 vshard.storage.rebalancer_disable()
 for i = 101, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end

@@ -25,6 +25,13 @@ migrations[#migrations + 1] = function(M)
     end
 end
 
+migrations[#migrations + 1] = function(M)
+    if not M.route_map then
+        M.bucket_generation_cond = fiber.cond()
+        M.route_map = {}
+    end
+end
+
 --
 -- Perform an update based on a version stored in `M` (internals).
 -- @param M Old module internals which should be updated.
