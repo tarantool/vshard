@@ -366,14 +366,6 @@ vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3})
 ---
 - true
 ...
-vshard.storage.buckets_info(1)
----
-- 1:
-    status: sent
-    ro_lock: true
-    destination: <replicaset_1>
-    id: 1
-...
 wait_bucket_is_collected(1)
 ---
 ...

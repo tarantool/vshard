@@ -226,17 +226,6 @@ ret2, err2
 - true
 - null
 ...
-_bucket:get{35}
----
-- [35, 'sent', '<replicaset_2>']
-...
-_bucket:get{36}
----
-- [36, 'sent', '<replicaset_2>']
-...
--- Buckets became 'active' on box_2_a, but still are sending on
--- box_1_a. Wait until it is marked as garbage on box_1_a by the
--- recovery fiber.
 wait_bucket_is_collected(35)
 ---
 ...

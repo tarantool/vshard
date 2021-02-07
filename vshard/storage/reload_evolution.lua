@@ -4,6 +4,7 @@
 -- in a commit.
 --
 local log = require('log')
+local fiber = require('fiber')
 
 --
 -- Array of upgrade functions.
@@ -22,6 +23,13 @@ migrations[#migrations + 1] = function(M)
     if bucket then
         assert(M.bucket_on_replace == nil)
         M.bucket_on_replace = bucket:on_replace()[1]
+    end
+end
+
+migrations[#migrations + 1] = function(M)
+    if not M.route_map then
+        M.bucket_generation_cond = fiber.cond()
+        M.route_map = {}
     end
 end
 

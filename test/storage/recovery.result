@@ -79,8 +79,7 @@ _bucket = box.space._bucket
 ...
 _bucket:select{}
 ---
-- - [2, 'garbage', '<replicaset_2>']
-  - [3, 'garbage', '<replicaset_2>']
+- []
 ...
 _ = test_run:switch('storage_2_a')
 ---

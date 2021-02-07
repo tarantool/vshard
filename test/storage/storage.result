@@ -547,6 +547,9 @@ vshard.storage.bucket_send(1, util.replicasets[2])
 ---
 - true
 ...
+wait_bucket_is_collected(1)
+---
+...
 _ = test_run:switch("storage_2_a")
 ---
 ...
@@ -567,12 +570,7 @@ _ = test_run:switch("storage_1_a")
 ...
 vshard.storage.buckets_info()
 ---
-- 1:
-    status: sent
-    ro_lock: true
-    destination: <replicaset_2>
-    id: 1
-  2:
+- 2:
     status: active
     id: 2
 ...

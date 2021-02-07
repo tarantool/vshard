@@ -83,9 +83,6 @@ cfg.collect_lua_garbage = true
 cfg.rebalancer_max_receiving = 1000
 ---
 ...
-cfg.collect_bucket_garbage_interval = 100
----
-...
 cfg.invalid_option = 'kek'
 ---
 ...
@@ -105,10 +102,6 @@ vshard.storage.internal.rebalancer_max_receiving ~= 1000
 ---
 - true
 ...
-vshard.storage.internal.collect_bucket_garbage_interval ~= 100
----
-- true
-...
 cfg.sync_timeout = nil
 ---
 ...
@@ -116,9 +109,6 @@ cfg.collect_lua_garbage = nil
 ---
 ...
 cfg.rebalancer_max_receiving = nil
----
-...
-cfg.collect_bucket_garbage_interval = nil
 ---
 ...
 cfg.invalid_option = nil

@@ -172,6 +172,5 @@ function wait_bucket_is_collected(id)
             return true
         end
         vshard.storage.recovery_wakeup()
-        vshard.storage.garbage_collector_wakeup()
     end)
 end

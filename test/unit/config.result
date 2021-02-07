@@ -428,33 +428,6 @@ _ = lcfg.check(cfg)
 --
 -- gh-77: garbage collection options.
 --
-cfg.collect_bucket_garbage_interval = 'str'
----
-...
-check(cfg)
----
-- Garbage bucket collect interval must be positive number
-...
-cfg.collect_bucket_garbage_interval = 0
----
-...
-check(cfg)
----
-- Garbage bucket collect interval must be positive number
-...
-cfg.collect_bucket_garbage_interval = -1
----
-...
-check(cfg)
----
-- Garbage bucket collect interval must be positive number
-...
-cfg.collect_bucket_garbage_interval = 100.5
----
-...
-_ = lcfg.check(cfg)
----
-...
 cfg.collect_lua_garbage = 100
 ---
 ...
@@ -615,6 +588,12 @@ lcfg.check(cfg).rebalancer_max_sending
 cfg.rebalancer_max_sending = nil
 ---
 ...
-cfg.sharding = nil
+--
+-- Deprecated option does not break anything.
+--
+cfg.collect_bucket_garbage_interval = 100
+---
+...
+_ = lcfg.check(cfg)
 ---
 ...

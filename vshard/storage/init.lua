@@ -69,7 +69,6 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
-            ERRINJ_BUCKET_FIND_GARBAGE_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
             ERRINJ_LONG_RECEIVE = false,
@@ -96,6 +95,8 @@ if not M then
         -- detect that _bucket was not changed between yields.
         --
         bucket_generation = 0,
+        -- Condition variable fired on generation update.
+        bucket_generation_cond = lfiber.cond(),
         --
         -- Reference to the function used as on_replace trigger on
         -- _bucket space. It is used to replace the trigger with
@@ -107,12 +108,14 @@ if not M then
         -- replace the old function is to keep its reference.
         --
         bucket_on_replace = nil,
+        -- Redirects for recently sent buckets. They are kept for a while to
+        -- help routers find a new location for sent and deleted buckets without
+        -- whole cluster scan.
+        route_map = {},
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
         collect_bucket_garbage_fiber = nil,
-        -- Do buckets garbage collection once per this time.
-        collect_bucket_garbage_interval = nil,
         -- Boolean lua_gc state (create periodic gc task).
         collect_lua_garbage = nil,
 
@@ -173,6 +176,7 @@ end
 --
 local function bucket_generation_increment()
     M.bucket_generation = M.bucket_generation + 1
+    M.bucket_generation_cond:broadcast()
 end
 
 --
@@ -758,8 +762,9 @@ local function bucket_check_state(bucket_id, mode)
     else
         return bucket
     end
+    local dst = bucket and bucket.destination or M.route_map[bucket_id]
     return bucket, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, reason,
-                                 bucket and bucket.destination)
+                                 dst)
 end
 
 --
@@ -804,11 +809,23 @@ end
 --
 local function bucket_unrefro(bucket_id)
     local ref = M.bucket_refs[bucket_id]
-    if not ref or ref.ro == 0 then
+    local count = ref and ref.ro or 0
+    if count == 0 then
         return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
                                   "no refs", nil)
     end
-    ref.ro = ref.ro - 1
+    if count == 1 then
+        ref.ro = 0
+        if ref.ro_lock then
+            -- Garbage collector is waiting for the bucket if RO
+            -- is locked. Let it know it has one more bucket to
+            -- collect. It relies on generation, so its increment
+            -- is enough.
+            bucket_generation_increment()
+        end
+        return true
+    end
+    ref.ro = count - 1
     return true
 end
 
@@ -1481,79 +1498,44 @@ local function gc_bucket_in_space(space, bucket_id, status)
 end
 
 --
--- Remove tuples from buckets of a specified type.
--- @param type Type of buckets to gc.
--- @retval List of ids of empty buckets of the type.
+-- Drop buckets with the given status along with their data in all spaces.
+-- @param status Status of target buckets.
+-- @param route_map Destinations of deleted buckets are saved into this table.
 --
-local function gc_bucket_step_by_type(type)
-    local sharded_spaces = find_sharded_spaces()
-    local empty_buckets = {}
+local function gc_bucket_drop_xc(status, route_map)
     local limit = consts.BUCKET_CHUNK_SIZE
-    local is_all_collected = true
-    for _, bucket in box.space._bucket.index.status:pairs(type) do
-        local bucket_id = bucket.id
-        local ref = M.bucket_refs[bucket_id]
+    local _bucket = box.space._bucket
+    local sharded_spaces = find_sharded_spaces()
+    for _, b in _bucket.index.status:pairs(status) do
+        local id = b.id
+        local ref = M.bucket_refs[id]
         if ref then
             assert(ref.rw == 0)
             if ref.ro ~= 0 then
                 ref.ro_lock = true
-                is_all_collected = false
                 goto continue
             end
-            M.bucket_refs[bucket_id] = nil
+            M.bucket_refs[id] = nil
         end
         for _, space in pairs(sharded_spaces) do
-            gc_bucket_in_space_xc(space, bucket_id, type)
+            gc_bucket_in_space_xc(space, id, status)
             limit = limit - 1
             if limit == 0 then
                 lfiber.sleep(0)
                 limit = consts.BUCKET_CHUNK_SIZE
             end
         end
-        table.insert(empty_buckets, bucket.id)
-::continue::
+        route_map[id] = b.destination
+        _bucket:delete{id}
+    ::continue::
     end
-    return empty_buckets, is_all_collected
-end
-
---
--- Drop buckets with ids in the list.
--- @param bucket_ids Bucket ids to drop.
--- @param status Expected bucket status.
---
-local function gc_bucket_drop_xc(bucket_ids, status)
-    if #bucket_ids == 0 then
-        return
-    end
-    local limit = consts.BUCKET_CHUNK_SIZE
-    box.begin()
-    local _bucket = box.space._bucket
-    for _, id in pairs(bucket_ids) do
-        local bucket_exists = _bucket:get{id} ~= nil
-        local b = _bucket:get{id}
-        if b then
-            if b.status ~= status then
-                return error(string.format('Bucket %d status is changed. Was '..
-                                           '%s, became %s', id, status,
-                                           b.status))
-            end
-            _bucket:delete{id}
-        end
-        limit = limit - 1
-        if limit == 0 then
-            box.commit()
-            box.begin()
-            limit = consts.BUCKET_CHUNK_SIZE
-        end
-    end
-    box.commit()
 end
 
 --
 -- Exception safe version of gc_bucket_drop_xc.
 --
-local function gc_bucket_drop(bucket_ids, status)
-    local status, err = pcall(gc_bucket_drop_xc, bucket_ids, status)
+local function gc_bucket_drop(status, route_map)
+    local status, err = pcall(gc_bucket_drop_xc, status, route_map)
     if not status then
         box.rollback()
     end
@@ -1561,14 +1543,16 @@ local function gc_bucket_drop(bucket_ids, status)
 end
 
 --
--- Garbage collector. Works on masters. The garbage collector
--- wakes up once per specified time.
+-- Garbage collector. Works on masters. The garbage collector wakes up when
+-- state of any bucket changes.
 -- After wakeup it follows the plan:
--- 1) Check if _bucket has changed. If not, then sleep again;
--- 2) Scan user spaces for sent and garbage buckets, delete
---    garbage data in batches of limited size;
--- 3) Delete GARBAGE buckets from _bucket immediately, and
---    schedule SENT buckets for deletion after a timeout;
+-- 1) Check if state of any bucket has really changed. If not, then sleep again;
+-- 2) Delete all GARBAGE and SENT buckets along with their data in chunks of
+--    limited size.
+-- 3) Bucket destinations are saved into a global route_map to reroute incoming
+--    requests from routers in case they didn't notice the buckets being moved.
+--    The saved routes are scheduled for deletion after a timeout, which is
+--    checked on each iteration of this loop.
 -- 4) Sleep, go to (1).
 -- For each step details see comments in the code.
 --
@@ -1580,65 +1564,75 @@ function gc_bucket_f()
     -- generation == bucket generation. In such a case the fiber
     -- does nothing until next _bucket change.
     local bucket_generation_collected = -1
-    -- Empty sent buckets are collected into an array. After a
-    -- specified time interval the buckets are deleted both from
-    -- this array and from _bucket space.
-    local buckets_for_redirect = {}
-    local buckets_for_redirect_ts = fiber_clock()
-    -- Empty sent buckets, updated after each step, and when
-    -- buckets_for_redirect is deleted, it gets empty_sent_buckets
-    -- for next deletion.
-    local empty_garbage_buckets, empty_sent_buckets, status, err
+    local bucket_generation_current = M.bucket_generation
+    -- Deleted buckets are saved into a route map to redirect routers if they
+    -- didn't discover new location of the buckets yet. However route map does
+    -- not grow infinitely. Otherwise it would end up storing redirects for all
+    -- buckets in the cluster. Which could also be outdated.
+    -- Garbage collector periodically drops old routes from the map. For that it
+    -- remembers state of route map in one moment, and after a while clears the
+    -- remembered routes from the global route map.
+    local route_map = M.route_map
+    local route_map_old = {}
+    local route_map_deadline = 0
+    local status, err
     while M.module_version == module_version do
-        -- Check if no changes in buckets configuration.
-        if bucket_generation_collected ~= M.bucket_generation then
-            local bucket_generation = M.bucket_generation
-            local is_sent_collected, is_garbage_collected
-            status, empty_garbage_buckets, is_garbage_collected =
-                pcall(gc_bucket_step_by_type, consts.BUCKET.GARBAGE)
-            if not status then
-                err = empty_garbage_buckets
-                goto check_error
+        if bucket_generation_collected ~= bucket_generation_current then
+            status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
+            if status then
+                status, err = gc_bucket_drop(consts.BUCKET.SENT, route_map)
             end
-            status, empty_sent_buckets, is_sent_collected =
-                pcall(gc_bucket_step_by_type, consts.BUCKET.SENT)
-            if not status then
-                err = empty_sent_buckets
-                goto check_error
-            end
-            status, err = gc_bucket_drop(empty_garbage_buckets,
-                                         consts.BUCKET.GARBAGE)
-::check_error::
             if not status then
                 box.rollback()
                 log.error('Error during garbage collection step: %s', err)
-                goto continue
+            else
+                -- Don't use global generation. During the collection it could
+                -- already change. Instead, remember the generation known before
+                -- the collection has started.
+                -- Since the collection also changes the generation, it makes
+                -- the GC happen always at least twice. But typically on the
+                -- second iteration it should not find any buckets to collect,
+                -- and then the collected generation matches the global one.
+                bucket_generation_collected = bucket_generation_current
             end
-            if is_sent_collected and is_garbage_collected then
-                bucket_generation_collected = bucket_generation
+        else
+            status = true
+        end
+
+        local sleep_time = route_map_deadline - fiber_clock()
+        if sleep_time <= 0 then
+            local chunk = consts.LUA_CHUNK_SIZE
+            util.table_minus_yield(route_map, route_map_old, chunk)
+            route_map_old = util.table_copy_yield(route_map, chunk)
+            if next(route_map_old) then
+                sleep_time = consts.BUCKET_SENT_GARBAGE_DELAY
+            else
+                sleep_time = consts.TIMEOUT_INFINITY
+            end
+            route_map_deadline = fiber_clock() + sleep_time
+        end
+        bucket_generation_current = M.bucket_generation
+
+        if bucket_generation_current ~= bucket_generation_collected then
+            -- Generation was changed during collection. Or *by* collection.
+            if status then
+                -- Retry immediately. If the generation was changed by the
+                -- collection itself, it will notice it next iteration, and go
+                -- to proper sleep.
+                sleep_time = 0
+            else
+                -- An error happened during the collection. Does not make sense
+                -- to retry on each iteration of the event loop. The most likely
+                -- errors are either a WAL error or a transaction abort - both
+                -- look like an issue in the user's code and can't be fixed
+                -- quickly anyway. Backoff.
+                sleep_time = consts.GC_BACKOFF_INTERVAL
             end
         end
 
-        if fiber_clock() - buckets_for_redirect_ts >=
-           consts.BUCKET_SENT_GARBAGE_DELAY then
-            status, err = gc_bucket_drop(buckets_for_redirect,
-                                         consts.BUCKET.SENT)
-            if not status then
-                buckets_for_redirect = {}
-                empty_sent_buckets = {}
-                bucket_generation_collected = -1
-                log.error('Error during deletion of empty sent buckets: %s',
-                          err)
-            elseif M.module_version ~= module_version then
-                return
-            else
-                buckets_for_redirect = empty_sent_buckets or {}
-                empty_sent_buckets = nil
-                buckets_for_redirect_ts = fiber_clock()
-            end
+        if M.module_version == module_version then
+            M.bucket_generation_cond:wait(sleep_time)
         end
-::continue::
-        lfiber.sleep(M.collect_bucket_garbage_interval)
     end
 end
 
@@ -2423,8 +2417,6 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         vshard_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = vshard_cfg.rebalancer_max_receiving
     M.shard_index = vshard_cfg.shard_index
-    M.collect_bucket_garbage_interval =
-        vshard_cfg.collect_bucket_garbage_interval
     M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     M.rebalancer_worker_count = vshard_cfg.rebalancer_max_sending
     M.current_cfg = cfg
@@ -2678,6 +2670,9 @@ else
         storage_cfg(M.current_cfg, M.this_replica.uuid, true)
     end
     M.module_version = M.module_version + 1
+    -- Background fibers could sleep waiting for bucket changes.
+    -- Let them know it is time to reload.
+    bucket_generation_increment()
 end
 
 M.recovery_f = recovery_f
@@ -2688,7 +2683,7 @@ M.gc_bucket_f = gc_bucket_f
 -- These functions are saved in M not for atomic reload, but for
 -- unit testing.
 --
-M.gc_bucket_step_by_type = gc_bucket_step_by_type
+M.gc_bucket_drop = gc_bucket_drop
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
 M.cached_find_sharded_spaces = find_sharded_spaces

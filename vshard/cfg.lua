@@ -251,9 +251,8 @@ local cfg_template = {
         max = consts.REBALANCER_MAX_SENDING_MAX
     },
     collect_bucket_garbage_interval = {
-        type = 'positive number', name = 'Garbage bucket collect interval',
-        is_optional = true,
-        default = consts.DEFAULT_COLLECT_BUCKET_GARBAGE_INTERVAL
+        name = 'Garbage bucket collect interval', is_deprecated = true,
+        reason = 'Has no effect anymore'
     },
     collect_lua_garbage = {
         type = 'boolean', name = 'Garbage Lua collect necessity',

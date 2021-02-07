@@ -184,9 +184,6 @@ vshard.storage.bucket_unref(1, 'read')
 - true
 ...
 -- Force GC to take an RO lock on the bucket now.
-vshard.storage.garbage_collector_wakeup()
----
-...
 vshard.storage.buckets_info(1)
 ---
 - 1:
@@ -203,7 +200,6 @@ while true do
     if i.status == vshard.consts.BUCKET.GARBAGE and i.ro_lock then
         break
     end
-    vshard.storage.garbage_collector_wakeup()
     fiber.sleep(0.01)
 end;
 ---
@@ -234,14 +230,6 @@ finish_refs = true
 ...
 while f1:status() ~= 'dead' do fiber.sleep(0.01) end
 ---
-...
-vshard.storage.buckets_info(1)
----
-- 1:
-    status: garbage
-    ro_lock: true
-    destination: <replicaset_2>
-    id: 1
 ...
 wait_bucket_is_collected(1)
 ---

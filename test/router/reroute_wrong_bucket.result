@@ -37,7 +37,7 @@ test_run:switch('storage_1_a')
 ---
 - true
 ...
-cfg.collect_bucket_garbage_interval = 100
+vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 ---
 ...
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
@@ -53,7 +53,7 @@ test_run:switch('storage_2_a')
 ---
 - true
 ...
-cfg.collect_bucket_garbage_interval = 100
+vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 ---
 ...
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
@@ -202,12 +202,12 @@ test_run:grep_log('router_1', 'please update configuration')
 err
 ---
 - bucket_id: 100
-  reason: write is prohibited
+  reason: Not found
   code: 1
   destination: ac522f65-aa94-4134-9f64-51ee384f1a54
   type: ShardingError
   name: WRONG_BUCKET
-  message: 'Cannot perform action with bucket 100, reason: write is prohibited'
+  message: 'Cannot perform action with bucket 100, reason: Not found'
 ...
 --
 -- Now try again, but update configuration during call(). It must

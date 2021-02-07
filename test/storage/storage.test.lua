@@ -136,6 +136,7 @@ vshard.storage.bucket_send(1, util.replicasets[1])
 
 -- Successful transfer.
 vshard.storage.bucket_send(1, util.replicasets[2])
+wait_bucket_is_collected(1)
 _ = test_run:switch("storage_2_a")
 vshard.storage.buckets_info()
 _ = test_run:switch("storage_1_a")
