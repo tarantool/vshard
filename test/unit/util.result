@@ -71,3 +71,112 @@ test_run:grep_log('default', 'reloadable_function has been started', 1000)
 fib:cancel()
 ---
 ...
+-- Yielding table minus.
+minus_yield = util.table_minus_yield
+---
+...
+minus_yield({}, {}, 1)
+---
+- []
+...
+minus_yield({}, {k = 1}, 1)
+---
+- []
+...
+minus_yield({}, {k = 1}, 0)
+---
+- []
+...
+minus_yield({k = 1}, {k = 1}, 0)
+---
+- []
+...
+minus_yield({k1 = 1, k2 = 2}, {k1 = 1, k3 = 3}, 10)
+---
+- k2: 2
+...
+minus_yield({k1 = 1, k2 = 2}, {k1 = 1, k2 = 2}, 10)
+---
+- []
+...
+-- Mismatching values are not deleted.
+minus_yield({k1 = 1}, {k1 = 2}, 10)
+---
+- k1: 1
+...
+minus_yield({k1 = 1, k2 = 2, k3 = 3}, {k1 = 1, k2 = 222}, 10)
+---
+- k3: 3
+  k2: 2
+...
+do                                                                              \
+    t = {k1 = 1, k2 = 2, k3 = 3, k4 = 4}                                        \
+    f = fiber.create(function()                                                 \
+        minus_yield(t, {k2 = 2, k3 = 3, k5 = 5, k4 = 444}, 2)                   \
+    end)                                                                        \
+    yield_count = 0                                                             \
+    while f:status() ~= 'dead' do                                               \
+        yield_count = yield_count + 1                                           \
+        fiber.yield()                                                           \
+    end                                                                         \
+end
+---
+...
+yield_count
+---
+- 2
+...
+t
+---
+- k4: 4
+  k1: 1
+...
+-- Yielding table copy.
+copy_yield = util.table_copy_yield
+---
+...
+copy_yield({}, 1)
+---
+- []
+...
+copy_yield({k = 1}, 1)
+---
+- k: 1
+...
+copy_yield({k1 = 1, k2 = 2}, 1)
+---
+- k1: 1
+  k2: 2
+...
+do                                                                              \
+    t = {k1 = 1, k2 = 2, k3 = 3, k4 = 4}                                        \
+    res = nil                                                                   \
+    f = fiber.create(function()                                                 \
+        res = copy_yield(t, 2)                                                  \
+    end)                                                                        \
+    yield_count = 0                                                             \
+    while f:status() ~= 'dead' do                                               \
+        yield_count = yield_count + 1                                           \
+        fiber.yield()                                                           \
+    end                                                                         \
+end
+---
+...
+yield_count
+---
+- 2
+...
+t
+---
+- k3: 3
+  k4: 4
+  k1: 1
+  k2: 2
+...
+res
+---
+- k3: 3
+  k4: 4
+  k1: 1
+  k2: 2
+...

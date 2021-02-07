@@ -153,6 +153,44 @@ local function version_is_at_least(major_need, middle_need, minor_need)
     return minor >= minor_need
 end
 
+--
+-- Copy @a src table. Fiber yields every @a interval keys copied.
+--
+local function table_copy_yield(src, interval)
+    local res = {}
+    -- Time-To-Yield.
+    local tty = interval
+    for k, v in pairs(src) do
+        res[k] = v
+        tty = tty - 1
+        if tty <= 0 then
+            fiber.yield()
+            tty = interval
+        end
+    end
+    return res
+end
+
+--
+-- Remove @a src keys from @a dst if their values match. Fiber yields every
+-- @a interval iterations.
+--
+local function table_minus_yield(dst, src, interval)
+    -- Time-To-Yield.
+    local tty = interval
+    for k, srcv in pairs(src) do
+        if dst[k] == srcv then
+            dst[k] = nil
+        end
+        tty = tty - 1
+        if tty <= 0 then
+            fiber.yield()
+            tty = interval
+        end
+    end
+    return dst
+end
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
@@ -160,4 +198,6 @@ return {
     async_task = async_task,
     internal = M,
     version_is_at_least = version_is_at_least,
+    table_copy_yield = table_copy_yield,
+    table_minus_yield = table_minus_yield,
 }
