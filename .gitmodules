@@ -1,3 +1,6 @@
 [submodule "test/test-run"]
 	path = test-run
 	url = https://github.com/tarantool/test-run.git
+[submodule "router-c/tntcxx"]
+	path = router-c/tntcxx
+	url = https://github.com/tarantool/tntcxx.git
