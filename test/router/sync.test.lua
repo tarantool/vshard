@@ -15,7 +15,8 @@ util = require('util')
 
 vshard.router.bootstrap()
 
-vshard.router.sync(-1)
+res, err = vshard.router.sync(-1)
+util.portable_error(err)
 res, err = vshard.router.sync(0)
 util.portable_error(err)
 

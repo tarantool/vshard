@@ -97,3 +97,25 @@ util.portable_error(err)
   code: 32
   message: '[string "function raise_lua_err() assert(false) end "]:1: assertion failed!'
 ...
+--
+-- lerror.timeout() - portable alternative to box.error.new(box.error.TIMEOUT).
+--
+err = lerror.timeout()
+---
+...
+type(err)
+---
+- table
+...
+assert(err.code == box.error.TIMEOUT)
+---
+- true
+...
+err.type
+---
+- ClientError
+...
+err.message
+---
+- Timeout exceeded
+...

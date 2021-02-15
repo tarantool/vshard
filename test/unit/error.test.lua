@@ -36,3 +36,12 @@ function raise_lua_err() assert(false) end
 ok, err = pcall(raise_lua_err)
 err = lerror.make(err)
 util.portable_error(err)
+
+--
+-- lerror.timeout() - portable alternative to box.error.new(box.error.TIMEOUT).
+--
+err = lerror.timeout()
+type(err)
+assert(err.code == box.error.TIMEOUT)
+err.type
+err.message

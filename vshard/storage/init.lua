@@ -756,8 +756,7 @@ local function sync(timeout)
         lfiber.sleep(0.001)
     until fiber_clock() > tstart + timeout
     log.warn("Timed out during synchronizing replicaset")
-    local ok, err = pcall(box.error, box.error.TIMEOUT)
-    return nil, lerror.make(err)
+    return nil, lerror.timeout()
 end
 
 --------------------------------------------------------------------------------
@@ -1344,8 +1343,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     while ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
         if not M.bucket_rw_lock_is_ready_cond:wait(timeout) then
-            status, err = pcall(box.error, box.error.TIMEOUT)
-            return nil, lerror.make(err)
+            return nil, lerror.timeout()
         end
         lfiber.testcancel()
     end

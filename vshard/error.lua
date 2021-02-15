@@ -212,10 +212,20 @@ local function make_alert(code, ...)
     return setmetatable(r, { __serialize = 'seq' })
 end
 
+--
+-- Create a timeout error object. Box.error.new() can't be used because is
+-- present only since 1.10.
+--
+local function make_timeout()
+    local _, err = pcall(box.error, box.error.TIMEOUT)
+    return make_error(err)
+end
+
 return {
     code = error_code,
     box = box_error,
     vshard = vshard_error,
     make = make_error,
     alert = make_alert,
+    timeout = make_timeout,
 }

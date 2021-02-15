@@ -45,10 +45,14 @@ vshard.router.bootstrap()
 ---
 - true
 ...
-vshard.router.sync(-1)
+res, err = vshard.router.sync(-1)
 ---
-- null
-- Timeout exceeded
+...
+util.portable_error(err)
+---
+- type: ClientError
+  code: 78
+  message: Timeout exceeded
 ...
 res, err = vshard.router.sync(0)
 ---

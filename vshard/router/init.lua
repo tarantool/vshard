@@ -628,8 +628,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
     if err then
         return nil, err
     else
-        local _, boxerror = pcall(box.error, box.error.TIMEOUT)
-        return nil, lerror.box(boxerror)
+        return nil, lerror.timeout()
     end
 end
 
@@ -1235,8 +1234,7 @@ local function router_sync(router, timeout)
     local opts = {timeout = timeout}
     for rs_uuid, replicaset in pairs(router.replicasets) do
         if timeout < 0 then
-            local ok, err = pcall(box.error, box.error.TIMEOUT)
-            return nil, err
+            return nil, lerror.timeout()
         end
         local status, err = replicaset:callrw('vshard.storage.sync', arg, opts)
         if not status then
