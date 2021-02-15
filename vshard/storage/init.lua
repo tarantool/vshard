@@ -6,6 +6,8 @@ local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
+local netbox_self = netbox.self
+local netbox_self_call = netbox_self.call
 
 local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
@@ -169,6 +171,16 @@ if not M then
     }
 else
     bucket_ref_new = ffi.typeof("struct bucket_ref")
+end
+
+--
+-- Invoke a function on this instance. Arguments are unpacked into the function
+-- as arguments.
+-- The function returns pcall() as is, because is used from places where
+-- exceptions are not allowed.
+--
+local function local_call(func_name, args)
+    return pcall(netbox_self_call, netbox_self, func_name, args)
 end
 
 --
@@ -2275,7 +2287,7 @@ local function storage_call(bucket_id, mode, name, args)
     if not ok then
         return ok, err
     end
-    ok, ret1, ret2, ret3 = pcall(netbox.self.call, netbox.self, name, args)
+    ok, ret1, ret2, ret3 = local_call(name, args)
     _, err = bucket_unref(bucket_id, mode)
     assert(not err)
     if not ok then
