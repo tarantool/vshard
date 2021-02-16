@@ -722,6 +722,92 @@ assert(vshard.storage.buckets_count() == 10)
 ---
 - true
 ...
+--
+-- Bucket_generation_wait() registry function.
+--
+lstorage = require('vshard.registry').storage
+---
+...
+ok, err = lstorage.bucket_generation_wait(-1)
+---
+...
+assert(not ok and err.message)
+---
+- Timeout exceeded
+...
+ok, err = lstorage.bucket_generation_wait(0)
+---
+...
+assert(not ok and err.message)
+---
+- Timeout exceeded
+...
+small_timeout = 0.000001
+---
+...
+ok, err = lstorage.bucket_generation_wait(small_timeout)
+---
+...
+assert(not ok and err.message)
+---
+- Timeout exceeded
+...
+ok, err = nil
+---
+...
+big_timeout = 1000000
+---
+...
+_ = fiber.create(function()                                                     \
+    ok, err = lstorage.bucket_generation_wait(big_timeout)                      \
+end)
+---
+...
+fiber.sleep(small_timeout)
+---
+...
+assert(not ok and not err)
+---
+- true
+...
+vshard.storage.bucket_force_drop(10)
+---
+- true
+...
+test_run:wait_cond(function() return ok or err end)
+---
+- true
+...
+assert(ok)
+---
+- true
+...
+-- Cancel should interrupt the waiting.
+ok, err = nil
+---
+...
+f = fiber.create(function()                                                     \
+    ok, err = lstorage.bucket_generation_wait(big_timeout)                      \
+end)
+---
+...
+fiber.sleep(small_timeout)
+---
+...
+assert(not ok and not err)
+---
+- true
+...
+f:cancel()
+---
+...
+_ = test_run:wait_cond(function() return ok or err end)
+---
+...
+assert(not ok and err.message)
+---
+- fiber is cancelled
+...
 _ = test_run:switch("default")
 ---
 ...

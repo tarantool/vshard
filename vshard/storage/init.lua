@@ -31,6 +31,7 @@ local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
 local lregistry = require('vshard.registry')
 local reload_evolution = require('vshard.storage.reload_evolution')
+local fiber_cond_wait = util.fiber_cond_wait
 local bucket_ref_new
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -227,6 +228,10 @@ local function bucket_generation_increment()
     M.bucket_count_cache = nil
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
+end
+
+local function bucket_generation_wait(timeout)
+    return fiber_cond_wait(M.bucket_generation_cond, timeout)
 end
 
 --
@@ -2783,6 +2788,7 @@ M.schema_upgrade_handlers = schema_upgrade_handlers
 M.schema_version_make = schema_version_make
 M.schema_bootstrap = schema_init_0_1_15_0
 
+M.bucket_generation_wait = bucket_generation_wait
 lregistry.storage = M
 
 return {

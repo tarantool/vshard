@@ -205,6 +205,42 @@ assert(vshard.storage.buckets_count() == 5)
 vshard.storage.bucket_force_create(6, 5)
 assert(vshard.storage.buckets_count() == 10)
 
+--
+-- Bucket_generation_wait() registry function.
+--
+lstorage = require('vshard.registry').storage
+ok, err = lstorage.bucket_generation_wait(-1)
+assert(not ok and err.message)
+
+ok, err = lstorage.bucket_generation_wait(0)
+assert(not ok and err.message)
+
+small_timeout = 0.000001
+ok, err = lstorage.bucket_generation_wait(small_timeout)
+assert(not ok and err.message)
+
+ok, err = nil
+big_timeout = 1000000
+_ = fiber.create(function()                                                     \
+    ok, err = lstorage.bucket_generation_wait(big_timeout)                      \
+end)
+fiber.sleep(small_timeout)
+assert(not ok and not err)
+vshard.storage.bucket_force_drop(10)
+test_run:wait_cond(function() return ok or err end)
+assert(ok)
+
+-- Cancel should interrupt the waiting.
+ok, err = nil
+f = fiber.create(function()                                                     \
+    ok, err = lstorage.bucket_generation_wait(big_timeout)                      \
+end)
+fiber.sleep(small_timeout)
+assert(not ok and not err)
+f:cancel()
+_ = test_run:wait_cond(function() return ok or err end)
+assert(not ok and err.message)
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
