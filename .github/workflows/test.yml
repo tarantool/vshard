@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [ubuntu-20.04]
+        tarantool: ['1.10', '2.6', '2.7']
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+      - uses: tarantool/setup-tarantool@v1
+        with:
+          tarantool-version: ${{ matrix.tarantool }}
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '2.x'
+
+      - run: tarantoolctl rocks make
+      - name: Install python deps
+        run: |
+          pip2 install -r test-run/requirements.txt
+          pip2 install tarantool
+      - name: Run tests
+        run: |
+          cmake .
+          make test
