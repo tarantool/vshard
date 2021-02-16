@@ -16,7 +16,7 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution',
-        'vshard.lua_gc', 'vshard.rlist'
+        'vshard.lua_gc', 'vshard.rlist', 'vshard.registry',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -29,6 +29,7 @@ local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lua_gc = require('vshard.lua_gc')
+local lregistry = require('vshard.registry')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local bucket_ref_new
 
@@ -2781,6 +2782,8 @@ M.schema_upgrade_master = schema_upgrade_master
 M.schema_upgrade_handlers = schema_upgrade_handlers
 M.schema_version_make = schema_version_make
 M.schema_bootstrap = schema_init_0_1_15_0
+
+lregistry.storage = M
 
 return {
     sync = sync,
