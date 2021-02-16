@@ -115,6 +115,10 @@ if not M then
         -- Fast alternative to box.space._bucket:count(). But may be nil. Reset
         -- on each generation change.
         bucket_count_cache = nil,
+        -- Fast alternative to checking multiple keys presence in
+        -- box.space._bucket status index. But may be nil. Reset on each
+        -- generation change.
+        bucket_are_all_rw_cache = nil,
         -- Redirects for recently sent buckets. They are kept for a while to
         -- help routers find a new location for sent and deleted buckets without
         -- whole cluster scan.
@@ -221,11 +225,43 @@ local function bucket_count_public()
 end
 
 --
+-- Check if all buckets on the storage are writable. The idea is the same as
+-- with bucket count - the value changes very rare, and is cached most of the
+-- time. Only that its non-cached calculation is more expensive than with count.
+--
+local bucket_are_all_rw
+
+local function bucket_are_all_rw_cache()
+    return M.bucket_are_all_rw_cache
+end
+
+local function bucket_are_all_rw_not_cache()
+    local status_index = box.space._bucket.index.status
+    local status = consts.BUCKET
+    local res = not status_index:min(status.SENDING) and
+       not status_index:min(status.SENT) and
+       not status_index:min(status.RECEIVING) and
+       not status_index:min(status.GARBAGE)
+
+    M.bucket_are_all_rw_cache = res
+    bucket_are_all_rw = bucket_are_all_rw_cache
+    return res
+end
+
+bucket_are_all_rw = bucket_are_all_rw_not_cache
+
+local function bucket_are_all_rw_public()
+    return bucket_are_all_rw()
+end
+
+--
 -- Trigger for on replace into _bucket to update its generation.
 --
 local function bucket_generation_increment()
     bucket_count = bucket_count_not_cache
+    bucket_are_all_rw = bucket_are_all_rw_not_cache
     M.bucket_count_cache = nil
+    M.bucket_are_all_rw_cache = nil
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
 end
@@ -2788,6 +2824,7 @@ M.schema_upgrade_handlers = schema_upgrade_handlers
 M.schema_version_make = schema_version_make
 M.schema_bootstrap = schema_init_0_1_15_0
 
+M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
 lregistry.storage = M
 

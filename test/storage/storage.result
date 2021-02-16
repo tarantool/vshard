@@ -808,6 +808,43 @@ assert(not ok and err.message)
 ---
 - fiber is cancelled
 ...
+--
+-- Bucket_are_all_rw() registry function.
+--
+assert(lstorage.bucket_are_all_rw())
+---
+- true
+...
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+---
+...
+-- Let it stuck in the errinj.
+vshard.storage.recovery_wakeup()
+---
+...
+vshard.storage.bucket_force_create(10)
+---
+- true
+...
+box.space._bucket:update(10, {{'=', 2, vshard.consts.BUCKET.SENDING}})
+---
+- [10, 'sending']
+...
+assert(not lstorage.bucket_are_all_rw())
+---
+- true
+...
+box.space._bucket:update(10, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
+---
+- [10, 'active']
+...
+assert(lstorage.bucket_are_all_rw())
+---
+- true
+...
+vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+---
+...
 _ = test_run:switch("default")
 ---
 ...
