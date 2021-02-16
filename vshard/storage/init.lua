@@ -110,6 +110,9 @@ if not M then
         -- replace the old function is to keep its reference.
         --
         bucket_on_replace = nil,
+        -- Fast alternative to box.space._bucket:count(). But may be nil. Reset
+        -- on each generation change.
+        bucket_count_cache = nil,
         -- Redirects for recently sent buckets. They are kept for a while to
         -- help routers find a new location for sent and deleted buckets without
         -- whole cluster scan.
@@ -184,9 +187,43 @@ local function local_call(func_name, args)
 end
 
 --
+-- Get number of buckets stored on this storage. Regardless of their state.
+--
+-- The idea is that all the code should use one function ref to get the bucket
+-- count. But inside the function never branches. Instead, it points at one of 2
+-- branch-less functions. Cached one simply returns a number which is supposed
+-- to be super fast. Non-cached remembers the count and changes the global
+-- function to the cached one. So on the next call it is cheap. No 'if's at all.
+--
+local bucket_count
+
+local function bucket_count_cache()
+    return M.bucket_count_cache
+end
+
+local function bucket_count_not_cache()
+    local count = box.space._bucket:count()
+    M.bucket_count_cache = count
+    bucket_count = bucket_count_cache
+    return count
+end
+
+bucket_count = bucket_count_not_cache
+
+--
+-- Can't expose bucket_count to the public API as is. Need this proxy-call.
+-- Because the original function changes at runtime.
+--
+local function bucket_count_public()
+    return bucket_count()
+end
+
+--
 -- Trigger for on replace into _bucket to update its generation.
 --
 local function bucket_generation_increment()
+    bucket_count = bucket_count_not_cache
+    M.bucket_count_cache = nil
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
 end
@@ -2240,7 +2277,6 @@ local function rebalancer_request_state()
     if #status_index:select({consts.BUCKET.GARBAGE}, {limit = 1}) > 0 then
         return
     end
-    local bucket_count = _bucket:count()
     return {
         bucket_active_count = status_index:count({consts.BUCKET.ACTIVE}),
         bucket_pinned_count = status_index:count({consts.BUCKET.PINNED}),
@@ -2500,10 +2536,6 @@ end
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
-
-local function storage_buckets_count()
-    return  box.space._bucket.index.pk:count()
-end
 
 local function storage_buckets_info(bucket_id)
     local ibuckets = setmetatable({}, { __serialize = 'mapping' })
@@ -2780,7 +2812,7 @@ return {
     cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     info = storage_info,
     buckets_info = storage_buckets_info,
-    buckets_count = storage_buckets_count,
+    buckets_count = bucket_count_public,
     buckets_discovery = buckets_discovery,
     rebalancer_request_state = rebalancer_request_state,
     internal = M,

@@ -187,6 +187,24 @@ util.has_same_fields(old_internal, vshard.storage.internal)
 _, rs = next(vshard.storage.internal.replicasets)
 rs:callro('echo', {'some_data'})
 
+--
+-- Bucket count is calculated properly.
+--
+-- Cleanup after the previous tests.
+_ = test_run:switch('storage_1_a')
+buckets = vshard.storage.buckets_info()
+for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
+_ = test_run:switch('storage_2_a')
+buckets = vshard.storage.buckets_info()
+for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
+
+_ = test_run:switch('storage_1_a')
+assert(vshard.storage.buckets_count() == 0)
+vshard.storage.bucket_force_create(1, 5)
+assert(vshard.storage.buckets_count() == 5)
+vshard.storage.bucket_force_create(6, 5)
+assert(vshard.storage.buckets_count() == 10)
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
