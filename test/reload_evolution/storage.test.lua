@@ -83,6 +83,34 @@ box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_1_a')
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 
+--
+-- Ensure storage refs are enabled and work from the scratch via reload.
+--
+lref = require('vshard.storage.ref')
+vshard.storage.rebalancer_disable()
+
+big_timeout = 1000000
+timeout = 0.01
+lref.add(0, 0, big_timeout)
+status_index = box.space._bucket.index.status
+bucket_id_to_move = status_index:min({vshard.consts.BUCKET.ACTIVE}).id
+ok, err = vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2],    \
+                                     {timeout = timeout})
+assert(not ok and err.message)
+lref.del(0, 0)
+vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[2],              \
+                           {timeout = big_timeout})
+wait_bucket_is_collected(bucket_id_to_move)
+
+test_run:switch('storage_2_a')
+vshard.storage.rebalancer_disable()
+
+big_timeout = 1000000
+bucket_id_to_move = test_run:eval('storage_1_a', 'return bucket_id_to_move')[1]
+vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[1],              \
+                           {timeout = big_timeout})
+wait_bucket_is_collected(bucket_id_to_move)
+
 test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

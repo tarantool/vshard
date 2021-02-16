@@ -48,4 +48,5 @@ return {
     DISCOVERY_TIMEOUT = 10,
 
     TIMEOUT_INFINITY = 500 * 365 * 86400,
+    DEADLINE_INFINITY = math.huge,
 }
