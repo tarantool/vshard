@@ -1,6 +1,7 @@
 -- vshard.util
 local log = require('log')
 local fiber = require('fiber')
+local lerror = require('vshard.error')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -194,6 +195,39 @@ local function table_minus_yield(dst, src, interval)
     return dst
 end
 
+local function fiber_cond_wait_xc(cond, timeout)
+    -- Handle negative timeout specifically - otherwise wait() will throw an
+    -- ugly usage error.
+    -- Don't trust this check to the caller's code, because often it just calls
+    -- wait many times until it fails or the condition is met. Code looks much
+    -- cleaner when it does not need to check the timeout sign. On the other
+    -- hand, perf is not important here - anyway wait() yields which is slow on
+    -- its own, but also breaks JIT trace recording which makes pcall() in the
+    -- non-xc version of this function inconsiderable.
+    if timeout < 0 or not cond:wait(timeout) then
+        -- Don't use the original error if cond sets it. Because it sets
+        -- TimedOut error. It does not have a proper error code, and may not be
+        -- detected by router as a special timeout case if necessary. Or at
+        -- least would complicate the handling in future. Instead, try to use a
+        -- unified timeout error where possible.
+        error(lerror.timeout())
+    end
+    -- Still possible though that the fiber is canceled and cond:wait() throws.
+    -- This is why the _xc() version of this function throws even the timeout -
+    -- anyway pcall() is inevitable.
+end
+
+--
+-- Exception-safe cond wait with unified errors in vshard format.
+--
+local function fiber_cond_wait(cond, timeout)
+    local ok, err = pcall(fiber_cond_wait_xc, cond, timeout)
+    if ok then
+        return true
+    end
+    return nil, lerror.make(err)
+end
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
@@ -203,4 +237,5 @@ return {
     version_is_at_least = version_is_at_least,
     table_copy_yield = table_copy_yield,
     table_minus_yield = table_minus_yield,
+    fiber_cond_wait = fiber_cond_wait,
 }

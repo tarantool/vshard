@@ -76,3 +76,34 @@ yield_count
 t
 res
 t ~= res
+
+--
+-- Exception-safe cond wait.
+--
+cond_wait = util.fiber_cond_wait
+cond = fiber.cond()
+ok, err = cond_wait(cond, -1)
+assert(not ok and err.message)
+-- Ensure it does not return 'false' like pcall(). It must conform to nil,err
+-- signature.
+assert(type(ok) == 'nil')
+ok, err = cond_wait(cond, 0)
+assert(not ok and err.message)
+ok, err = cond_wait(cond, 0.000001)
+assert(not ok and err.message)
+
+ok, err = nil
+_ = fiber.create(function() ok, err = cond_wait(cond, 1000000) end)
+fiber.yield()
+cond:signal()
+_ = test_run:wait_cond(function() return ok or err end)
+assert(ok and not err)
+
+ok, err = nil
+f = fiber.create(function() ok, err = cond_wait(cond, 1000000) end)
+fiber.yield()
+f:cancel()
+_ = test_run:wait_cond(function() return ok or err end)
+assert(not ok)
+err.message
+assert(type(err) == 'table')
