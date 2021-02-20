@@ -228,6 +228,13 @@ local function fiber_cond_wait(cond, timeout)
     return nil, lerror.make(err)
 end
 
+--
+-- Exception-safe way to check if the current fiber is canceled.
+--
+local function fiber_is_self_canceled()
+    return not pcall(fiber.testcancel)
+end
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
@@ -238,4 +245,5 @@ return {
     table_copy_yield = table_copy_yield,
     table_minus_yield = table_minus_yield,
     fiber_cond_wait = fiber_cond_wait,
+    fiber_is_self_canceled = fiber_is_self_canceled,
 }

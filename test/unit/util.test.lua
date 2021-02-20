@@ -107,3 +107,17 @@ _ = test_run:wait_cond(function() return ok or err end)
 assert(not ok)
 err.message
 assert(type(err) == 'table')
+
+--
+-- Exception-safe fiber cancel check.
+--
+self_is_canceled = util.fiber_is_self_canceled
+assert(not self_is_canceled())
+ok = nil
+_ = fiber.create(function()                                                     \
+    local f = fiber.self()                                                      \
+    pcall(f.cancel, f)                                                          \
+    ok = self_is_canceled()                                                     \
+end)
+test_run:wait_cond(function() return ok ~= nil end)
+assert(ok)
