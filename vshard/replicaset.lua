@@ -286,7 +286,7 @@ end
 
 --
 -- Call a function on remote storage
--- Note: this function uses pcall-style error handling
+-- nOte: this function uses pcall-style error handling
 -- @retval false, err on error
 -- @retval true, ... on success
 --
