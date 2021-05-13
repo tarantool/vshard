@@ -115,6 +115,14 @@ if not M then
         -- replace the old function is to keep its reference.
         --
         bucket_on_replace = nil,
+        --
+        -- Reference to the function used as on_replace trigger on
+        -- _schema space. Saved explicitly by the same reason as
+        -- _bucket on_replace.
+        -- It is used by replicas to wait for schema bootstrap
+        -- because they might be configured earlier than the
+        -- master.
+        schema_on_replace = nil,
         -- Fast alternative to box.space._bucket:count(). But may be nil. Reset
         -- on each generation change.
         bucket_count_cache = nil,
@@ -396,6 +404,62 @@ local schema_version_mt = {
 
 local function schema_version_make(ver)
     return setmetatable(ver, schema_version_mt)
+end
+
+local function schema_install_triggers()
+    local _bucket = box.space._bucket
+    if M.bucket_on_replace then
+        local ok, err = pcall(_bucket.on_replace, _bucket, nil,
+                              M.bucket_on_replace)
+        if not ok then
+            log.warn('Could not drop old trigger from '..
+                     '_bucket: %s', err)
+        end
+    end
+    _bucket:on_replace(bucket_generation_increment)
+    M.bucket_on_replace = bucket_generation_increment
+end
+
+local function schema_install_on_replace(_, new)
+    -- Wait not just for _bucket to appear, but for the entire
+    -- schema. This might be important if the schema will ever
+    -- consist of more than just _bucket.
+    if new == nil or new[1] ~= 'vshard_version' then
+        return
+    end
+    schema_install_triggers()
+
+    local _schema = box.space._schema
+    local ok, err = pcall(_schema.on_replace, _schema, nil, M.schema_on_replace)
+    if not ok then
+        log.warn('Could not drop trigger from _schema inside of the '..
+                 'trigger: %s', err)
+    end
+    M.schema_on_replace = nil
+    -- Drop the caches which might have been created while the
+    -- schema was being replicated.
+    bucket_generation_increment()
+end
+
+--
+-- Install the triggers later when there is an actual schema to install them on.
+-- On replicas it might happen that they are vshard-configured earlier than the
+-- master and therefore don't have the schema right away.
+--
+local function schema_install_triggers_delayed()
+    log.info('Could not find _bucket space to install triggers - delayed '..
+             'until the schema is replicated')
+    assert(not box.space._bucket)
+    local _schema = box.space._schema
+    if M.schema_on_replace then
+        local ok, err = pcall(_schema.on_replace, _schema, nil,
+                              M.schema_on_replace)
+        if not ok then
+            log.warn('Could not drop trigger from _schema: %s', err)
+        end
+    end
+    _schema:on_replace(schema_install_on_replace)
+    M.schema_on_replace = schema_install_on_replace
 end
 
 -- VShard versioning works in 4 numbers: major, minor, patch, and
@@ -2612,17 +2676,18 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local uri = luri.parse(this_replica.uri)
     schema_upgrade(is_master, uri.login, uri.password)
 
-    if M.bucket_on_replace then
-        box.space._bucket:on_replace(nil, M.bucket_on_replace)
-        M.bucket_on_replace = nil
-    end
-    lref.cfg()
-    if is_master then
-        box.space._bucket:on_replace(bucket_generation_increment)
-        M.bucket_on_replace = bucket_generation_increment
+    -- Check for master specifically. On master _bucket space must exist.
+    -- Because it should have done the schema bootstrap. Shall not ever try to
+    -- do anything delayed.
+    if is_master or box.space._bucket then
+        schema_install_triggers()
+    else
+        schema_install_triggers_delayed()
     end
 
+    lref.cfg()
     lsched.cfg(vshard_cfg)
+
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets

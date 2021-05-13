@@ -201,14 +201,33 @@ for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
 
 _ = test_run:switch('storage_1_a')
 assert(vshard.storage.buckets_count() == 0)
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+_ = test_run:switch('storage_1_b')
+--
+-- gh-276: bucket count cache should be properly updated on the replica nodes.
+-- For that the replicas must also install on_replace trigger on _bucket space
+-- to watch for changes.
+--
+assert(vshard.storage.buckets_count() == 0)
+
+_ = test_run:switch('storage_1_a')
 vshard.storage.bucket_force_create(1, 5)
 assert(vshard.storage.buckets_count() == 5)
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+_ = test_run:switch('storage_1_b')
+assert(vshard.storage.buckets_count() == 5)
+
+_ = test_run:switch('storage_1_a')
 vshard.storage.bucket_force_create(6, 5)
+assert(vshard.storage.buckets_count() == 10)
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+_ = test_run:switch('storage_1_b')
 assert(vshard.storage.buckets_count() == 10)
 
 --
 -- Bucket_generation_wait() registry function.
 --
+_ = test_run:switch('storage_1_a')
 lstorage = require('vshard.registry').storage
 ok, err = lstorage.bucket_generation_wait(-1)
 assert(not ok and err.message)

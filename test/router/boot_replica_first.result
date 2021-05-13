@@ -42,6 +42,25 @@ util.check_error(vshard.storage.call, 1, 'read', 'echo', {100})
  | - attempt to index field '_bucket' (a nil value)
  | ...
 
+-- While waiting for the schema, gracefully handle deletions from _schema.
+ro = box.cfg.read_only
+ | ---
+ | ...
+box.cfg{read_only = false}
+ | ---
+ | ...
+box.space._schema:insert({'gh-276'})
+ | ---
+ | - ['gh-276']
+ | ...
+box.space._schema:delete({'gh-276'})
+ | ---
+ | - ['gh-276']
+ | ...
+box.cfg{read_only = ro}
+ | ---
+ | ...
+
 test_run:switch('default')
  | ---
  | - true
@@ -76,10 +95,13 @@ vshard.storage.call(1, 'read', 'echo', {100})
  |   message: 'Cannot perform action with bucket 1, reason: Not found'
  |   name: WRONG_BUCKET
  | ...
--- Should not have triggers.
-#box.space._bucket:on_replace()
+--
+-- gh-276: should have triggers. This is important for proper update of caches
+-- and in future for discarding refs in scope of gh-173.
+--
+assert(#box.space._bucket:on_replace() == 1)
  | ---
- | - 0
+ | - true
  | ...
 
 test_run:switch('router')

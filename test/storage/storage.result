@@ -708,6 +708,24 @@ assert(vshard.storage.buckets_count() == 0)
 ---
 - true
 ...
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+---
+...
+_ = test_run:switch('storage_1_b')
+---
+...
+--
+-- gh-276: bucket count cache should be properly updated on the replica nodes.
+-- For that the replicas must also install on_replace trigger on _bucket space
+-- to watch for changes.
+--
+assert(vshard.storage.buckets_count() == 0)
+---
+- true
+...
+_ = test_run:switch('storage_1_a')
+---
+...
 vshard.storage.bucket_force_create(1, 5)
 ---
 - true
@@ -715,6 +733,19 @@ vshard.storage.bucket_force_create(1, 5)
 assert(vshard.storage.buckets_count() == 5)
 ---
 - true
+...
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+---
+...
+_ = test_run:switch('storage_1_b')
+---
+...
+assert(vshard.storage.buckets_count() == 5)
+---
+- true
+...
+_ = test_run:switch('storage_1_a')
+---
 ...
 vshard.storage.bucket_force_create(6, 5)
 ---
@@ -724,9 +755,22 @@ assert(vshard.storage.buckets_count() == 10)
 ---
 - true
 ...
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+---
+...
+_ = test_run:switch('storage_1_b')
+---
+...
+assert(vshard.storage.buckets_count() == 10)
+---
+- true
+...
 --
 -- Bucket_generation_wait() registry function.
 --
+_ = test_run:switch('storage_1_a')
+---
+...
 lstorage = require('vshard.registry').storage
 ---
 ...

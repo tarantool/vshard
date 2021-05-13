@@ -109,7 +109,7 @@ table.sort(uris)
 uris
 box.cfg.replication
 box.cfg.read_only
-#box.space._bucket:on_replace()
+assert(#box.space._bucket:on_replace() == 1)
 
 _ = test_run:switch('storage_2_a')
 info = vshard.storage.info()
@@ -119,8 +119,11 @@ table.sort(uris)
 uris
 box.cfg.replication
 box.cfg.read_only
--- Should be zero on the slave node. Even though earlier the node was a master.
-#box.space._bucket:on_replace()
+--
+-- gh-276: replica should have triggers. This is important for proper update of
+-- caches and in future for discarding refs in scope of gh-173.
+--
+assert(#box.space._bucket:on_replace() == 1)
 
 _ = test_run:switch('storage_2_b')
 info = vshard.storage.info()
@@ -130,7 +133,7 @@ table.sort(uris)
 uris
 box.cfg.replication
 box.cfg.read_only
-#box.space._bucket:on_replace()
+assert(#box.space._bucket:on_replace() == 1)
 
 _ = test_run:switch('storage_3_a')
 info = vshard.storage.info()
@@ -140,7 +143,7 @@ table.sort(uris)
 uris
 box.cfg.replication
 box.cfg.read_only
-#box.space._bucket:on_replace()
+assert(#box.space._bucket:on_replace() == 1)
 
 _ = test_run:switch('router_1')
 info = vshard.router.info()

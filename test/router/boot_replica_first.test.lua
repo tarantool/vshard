@@ -19,6 +19,13 @@ vshard.storage.cfg(cfg, instance_uuid)
 -- _bucket is not created yet. Will fail.
 util.check_error(vshard.storage.call, 1, 'read', 'echo', {100})
 
+-- While waiting for the schema, gracefully handle deletions from _schema.
+ro = box.cfg.read_only
+box.cfg{read_only = false}
+box.space._schema:insert({'gh-276'})
+box.space._schema:delete({'gh-276'})
+box.cfg{read_only = ro}
+
 test_run:switch('default')
 util.map_evals(test_run, {REPLICASET_1}, 'bootstrap_storage(\'memtx\')')
 
@@ -29,8 +36,11 @@ test_run:switch('box_1_b')
 test_run:wait_lsn('box_1_b', 'box_1_a')
 -- Fails, but gracefully. Because the bucket is not found here.
 vshard.storage.call(1, 'read', 'echo', {100})
--- Should not have triggers.
-#box.space._bucket:on_replace()
+--
+-- gh-276: should have triggers. This is important for proper update of caches
+-- and in future for discarding refs in scope of gh-173.
+--
+assert(#box.space._bucket:on_replace() == 1)
 
 test_run:switch('router')
 vshard.router.bootstrap()
