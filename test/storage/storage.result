@@ -179,10 +179,12 @@ vshard.storage.buckets_info()
     status: active
     id: 1
 ...
-vshard.storage.bucket_force_create(1) -- error
+ok, err = vshard.storage.bucket_force_create(1)
 ---
-- null
-- Duplicate key exists in unique index 'pk' in space '_bucket'
+...
+assert(not ok and err.message:match("Duplicate key exists"))
+---
+- Duplicate key exists
 ...
 vshard.storage.bucket_force_drop(1)
 ---

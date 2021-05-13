@@ -56,7 +56,8 @@ vshard.storage.sync(100500)
 vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1)
 vshard.storage.buckets_info()
-vshard.storage.bucket_force_create(1) -- error
+ok, err = vshard.storage.bucket_force_create(1)
+assert(not ok and err.message:match("Duplicate key exists"))
 vshard.storage.bucket_force_drop(1)
 
 vshard.storage.buckets_info()
