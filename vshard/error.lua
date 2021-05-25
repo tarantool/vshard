@@ -149,6 +149,11 @@ local error_message_template = {
         msg = 'Can not delete a storage ref: %s',
         args = {'reason'},
     },
+    [30] = {
+        name = 'BUCKET_RECV_DATA_ERROR',
+        msg = 'Can not receive the bucket %s data in space "%s" at tuple %s: %s',
+        args = {'bucket_id', 'space', 'tuple', 'reason'},
+    }
 }
 
 --

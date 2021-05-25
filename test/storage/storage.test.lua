@@ -125,6 +125,23 @@ vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
 res, err = vshard.storage.bucket_recv(4, util.replicasets[2], {{1000, {{1}}}})
 util.portable_error(err)
 while box.space._bucket:get{4} do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
+--
+-- gh-275: detailed info when couldn't insert into a space.
+--
+res, err = vshard.storage.bucket_recv(                                          \
+    4, util.replicasets[2], {{box.space.test.id, {{9, 4}, {10, 4}, {1, 4}}}})
+assert(not res)
+assert(err.space == 'test')
+assert(err.bucket_id == 4)
+assert(tostring(err.tuple) == '[1, 4]')
+assert(err.reason:match('Duplicate key exists') ~= nil)
+err = err.message
+assert(err:match('bucket 4 data in space "test" at tuple %[1, 4%]') ~= nil)
+assert(err:match('Duplicate key exists') ~= nil)
+while box.space._bucket:get{4} do                                               \
+    vshard.storage.recovery_wakeup() fiber.sleep(0.01)                          \
+end
+assert(box.space.test:get{9} == nil and box.space.test:get{10} == nil)
 
 --
 -- Bucket transfer

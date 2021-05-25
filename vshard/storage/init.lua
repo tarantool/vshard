@@ -1254,7 +1254,13 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         end
         box.begin()
         for _, tuple in ipairs(space_data) do
-            space:insert(tuple)
+            local ok, err = pcall(space.insert, space, tuple)
+            if not ok then
+                box.rollback()
+                return nil, lerror.vshard(lerror.code.BUCKET_RECV_DATA_ERROR,
+                                          bucket_id, space.name,
+                                          box.tuple.new(tuple), err)
+            end
             limit = limit - 1
             if limit == 0 then
                 box.commit()
