@@ -733,24 +733,28 @@ end
 --
 local function recovery_step_by_type(type)
     local _bucket = box.space._bucket
-    local is_empty = true
+    local is_step_empty = true
     local recovered = 0
     local total = 0
+    local start_format = 'Starting %s buckets recovery step'
     for _, bucket in _bucket.index.status:pairs(type) do
         total = total + 1
         local bucket_id = bucket.id
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
         end
-        if is_empty then
-            log.info('Starting %s buckets recovery step', type)
-        end
-        is_empty = false
         assert(bucket_is_transfer_in_progress(bucket))
-        local destination = M.replicasets[bucket.destination]
+        local peer_uuid = bucket.destination
+        local destination = M.replicasets[peer_uuid]
         if not destination or not destination.master then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
+            if is_step_empty then
+                log.info(start_format, type)
+                log.warn('Can not find for bucket %s its peer %s', bucket_id,
+                         peer_uuid)
+                is_step_empty = false
+            end
             goto continue
         end
         local remote_bucket, err =
@@ -759,6 +763,15 @@ local function recovery_step_by_type(type)
         -- not be used to recovery anything. Try later.
         if not remote_bucket and (not err or err.type ~= 'ShardingError' or
                                   err.code ~= lerror.code.WRONG_BUCKET) then
+            if is_step_empty then
+                if err == nil then
+                    err = 'unknown'
+                end
+                log.info(start_format, type)
+                log.error('Error during recovery of bucket %s on replicaset '..
+                          '%s: %s', bucket_id, peer_uuid, err)
+                is_step_empty = false
+            end
             goto continue
         end
         -- Do nothing until the bucket on both sides stopped
@@ -772,16 +785,23 @@ local function recovery_step_by_type(type)
         if not bucket or not bucket_is_transfer_in_progress(bucket) then
             goto continue
         end
+        if is_step_empty then
+            log.info(start_format, type)
+        end
         if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.GARBAGE}})
             recovered = recovered + 1
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
             recovered = recovered + 1
+        elseif is_step_empty then
+            log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
+                     bucket_id, bucket.status, remote_bucket.status, peer_uuid)
         end
+        is_step_empty = false
 ::continue::
     end
-    if not is_empty then
+    if not is_step_empty then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
