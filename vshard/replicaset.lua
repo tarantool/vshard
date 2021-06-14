@@ -105,6 +105,38 @@ local function netbox_on_disconnect(conn)
 end
 
 --
+-- Wait until the connection is established. This is necessary at least for
+-- async requests because they fail immediately if the connection is not done.
+-- Returns the remaining timeout because is expected to be used to connect to
+-- many instances in a loop, where such return saves one clock get in the caller
+-- code and is just cleaner code.
+--
+local function netbox_wait_connected(conn, timeout)
+    -- Fast path. Usually everything is connected.
+    if conn:is_connected() then
+        return timeout
+    end
+    local deadline = fiber_clock() + timeout
+    -- Loop against spurious wakeups.
+    repeat
+        -- Netbox uses fiber_cond inside, which throws an irrelevant usage error
+        -- at negative timeout. Need to check the case manually.
+        if timeout < 0 then
+            return nil, lerror.timeout()
+        end
+        local ok, res = pcall(conn.wait_connected, conn, timeout)
+        if not ok then
+            return nil, lerror.make(res)
+        end
+        if not res then
+            return nil, lerror.timeout()
+        end
+        timeout = deadline - fiber_clock()
+    until conn:is_connected()
+    return timeout
+end
+
+--
 -- Connect to a specified replica and remember a new connection
 -- in the replica object. Note, that the function does not wait
 -- until a connection is established.
@@ -140,36 +172,10 @@ local function replicaset_connect_master(replicaset)
 end
 
 --
--- Wait until the master instance is connected. This is necessary at least for
--- async requests because they fail immediately if the connection is not
--- established.
--- Returns the remaining timeout because is expected to be used to connect to
--- many replicasets in a loop, where such return saves one clock get in the
--- caller code and is just cleaner code.
+-- Wait until the master instance is connected.
 --
 local function replicaset_wait_connected(replicaset, timeout)
-    local deadline = fiber_clock() + timeout
-    local ok, res
-    while true do
-        local conn = replicaset_connect_master(replicaset)
-        if conn.state == 'active' then
-            return timeout
-        end
-        -- Netbox uses fiber_cond inside, which throws an irrelevant usage error
-        -- at negative timeout. Need to check the case manually.
-        if timeout < 0 then
-            return nil, lerror.timeout()
-        end
-        ok, res = pcall(conn.wait_connected, conn, timeout)
-        if not ok then
-            return nil, lerror.make(res)
-        end
-        if not res then
-            return nil, lerror.timeout()
-        end
-        timeout = deadline - fiber_clock()
-    end
-    assert(false)
+    return netbox_wait_connected(replicaset_connect_master(replicaset), timeout)
 end
 
 --
