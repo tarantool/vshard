@@ -938,6 +938,20 @@ assert(lstorage.bucket_are_all_rw())
 vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
 ---
 ...
+--
+-- Internal info function.
+--
+vshard.storage._call('info')
+---
+- is_master: true
+...
+_ = test_run:switch('storage_1_b')
+---
+...
+vshard.storage._call('info')
+---
+- is_master: false
+...
 _ = test_run:switch("default")
 ---
 ...

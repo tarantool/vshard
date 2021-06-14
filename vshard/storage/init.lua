@@ -2549,6 +2549,12 @@ local function storage_map(rid, name, args)
     return true, res
 end
 
+local function storage_service_info()
+    return {
+        is_master = this_is_master(),
+    }
+end
+
 local service_call_api
 
 local function service_call_test_api(...)
@@ -2562,6 +2568,7 @@ service_call_api = setmetatable({
     storage_ref = storage_ref,
     storage_unref = storage_unref,
     storage_map = storage_map,
+    info = storage_service_info,
     test_api = service_call_test_api,
 }, {__serialize = function(api)
     local res = {}

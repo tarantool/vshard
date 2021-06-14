@@ -292,6 +292,13 @@ box.space._bucket:update(10, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 assert(lstorage.bucket_are_all_rw())
 vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
 
+--
+-- Internal info function.
+--
+vshard.storage._call('info')
+_ = test_run:switch('storage_1_b')
+vshard.storage._call('info')
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)
