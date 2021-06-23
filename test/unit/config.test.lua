@@ -264,3 +264,24 @@ _ = lcfg.check(cfg)
 cfg.sched_move_quota = -1
 util.check_error(lcfg.check, cfg)
 cfg.sched_move_quota = nil
+
+--
+-- gh-75: auto master discovery.
+--
+replicaset = {replicas = {uuid = replica}}
+replicaset.master = 'auto'
+cfg.sharding = {rsid = replicaset}
+_ = lcfg.check(cfg)
+
+replicaset.master = 'non-auto'
+util.check_error(lcfg.check, cfg)
+
+replicaset.master = 123
+util.check_error(lcfg.check, cfg)
+
+replica.master = true
+replicaset.master = 'auto'
+util.check_error(lcfg.check, cfg)
+
+replica.master = false
+util.check_error(lcfg.check, cfg)

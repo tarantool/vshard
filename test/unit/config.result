@@ -656,3 +656,51 @@ util.check_error(lcfg.check, cfg)
 cfg.sched_move_quota = nil
 ---
 ...
+--
+-- gh-75: auto master discovery.
+--
+replicaset = {replicas = {uuid = replica}}
+---
+...
+replicaset.master = 'auto'
+---
+...
+cfg.sharding = {rsid = replicaset}
+---
+...
+_ = lcfg.check(cfg)
+---
+...
+replicaset.master = 'non-auto'
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Only "auto" master is supported
+...
+replicaset.master = 123
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Master search mode must be string
+...
+replica.master = true
+---
+...
+replicaset.master = 'auto'
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Can not specify master nodes when master search is enabled, but found master flag
+  in replica uuid uuid
+...
+replica.master = false
+---
+...
+util.check_error(lcfg.check, cfg)
+---
+- Can not specify master nodes when master search is enabled, but found master flag
+  in replica uuid uuid
+...

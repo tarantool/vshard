@@ -2,6 +2,7 @@
 
 local log = require('log')
 local luri = require('uri')
+local lutil = require('vshard.util')
 local consts = require('vshard.consts')
 
 local function check_uri(uri)
@@ -10,13 +11,23 @@ local function check_uri(uri)
     end
 end
 
-local function check_master(master, ctx)
+local function check_replica_master(master, ctx)
     if master then
         if ctx.master then
             error('Only one master is allowed per replicaset')
         else
             ctx.master = master
         end
+    end
+end
+
+local function check_replicaset_master(master, ctx)
+    -- Limit the version due to extensive usage of netbox is_async feature.
+    if not lutil.version_is_at_least(1, 10, 1) then
+        error('Only versions >= 1.10.1 support master discovery')
+    end
+    if master ~= 'auto' then
+        error('Only "auto" master is supported')
     end
 end
 
@@ -111,8 +122,8 @@ local replica_template = {
     name = {type = 'string', name = "Name", is_optional = true},
     zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},
     master = {
-        type = 'boolean', name = "Master", is_optional = true, default = false,
-        check = check_master
+        type = 'boolean', name = "Master", is_optional = true,
+        check = check_replica_master
     },
 }
 
@@ -130,6 +141,10 @@ local replicaset_template = {
         default = 1,
     },
     lock = {type = 'boolean', name = 'Lock', is_optional = true},
+    master = {
+        type = 'string', name = 'Master search mode', is_optional = true,
+        check = check_replicaset_master
+    },
 }
 
 --
@@ -185,6 +200,7 @@ local function check_sharding(sharding)
             error('Replicaset weight can not be Inf')
         end
         validate_config(replicaset, replicaset_template)
+        local is_auto_master = replicaset.master == 'auto'
         for replica_uuid, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
                 error(string.format('Duplicate uri %s', replica.uri))
@@ -194,6 +210,12 @@ local function check_sharding(sharding)
                 error(string.format('Duplicate uuid %s', replica_uuid))
             end
             uuids[replica_uuid] = true
+            if is_auto_master and replica.master ~= nil then
+                error(string.format('Can not specify master nodes when '..
+                                    'master search is enabled, but found '..
+                                    'master flag in replica uuid %s',
+                                    replica_uuid))
+            end
             -- Log warning in case replica.name duplicate is
             -- found. Message appears once for each unique
             -- duplicate.
