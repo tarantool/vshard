@@ -25,6 +25,10 @@
 --          }
 --      },
 --      master = <master server from the array above>,
+--      master_cond = <condition variable signaled when the replicaset finds or
+--                     changes its master>,
+--      is_auto_master = <true when is configured to find the master on
+--                        its own>,
 --      replica = <nearest available replica object>,
 --      balance_i = <index of a next replica in priority_list to
 --                   use for a load-balanced request>,
@@ -55,6 +59,8 @@ local luuid = require('uuid')
 local ffi = require('ffi')
 local util = require('vshard.util')
 local fiber_clock = fiber.clock
+local fiber_yield = fiber.yield
+local fiber_cond_wait = util.fiber_cond_wait
 local gsc = util.generate_self_checker
 
 --
@@ -159,6 +165,26 @@ local function replicaset_connect_to_replica(replicaset, replica)
     return conn
 end
 
+local function replicaset_wait_master(replicaset, timeout)
+    local master = replicaset.master
+    -- Fast path - master is almost always known.
+    if master then
+        return master, timeout
+    end
+    -- Slow path.
+    local deadline = fiber_clock() + timeout
+    repeat
+        if not replicaset.is_auto_master or
+           not fiber_cond_wait(replicaset.master_cond, timeout) then
+            return nil, lerror.vshard(lerror.code.MISSING_MASTER,
+                                      replicaset.uuid)
+        end
+        timeout = deadline - fiber_clock()
+        master = replicaset.master
+    until master
+    return master, timeout
+end
+
 --
 -- Create net.box connection to master.
 --
@@ -175,7 +201,13 @@ end
 -- Wait until the master instance is connected.
 --
 local function replicaset_wait_connected(replicaset, timeout)
-    return netbox_wait_connected(replicaset_connect_master(replicaset), timeout)
+    local master
+    master, timeout = replicaset_wait_master(replicaset, timeout)
+    if not master then
+        return nil, timeout
+    end
+    local conn = replicaset_connect_to_replica(replicaset, master)
+    return netbox_wait_connected(conn, timeout)
 end
 
 --
@@ -345,18 +377,30 @@ local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
     assert(type(func) == 'string', 'function name')
     assert(args == nil or type(args) == 'table', 'function arguments')
-    local conn, err = replicaset_connect_master(replicaset)
-    if not conn then
-        return nil, err
+    local master = replicaset.master
+    if not master then
+        opts = opts and table.copy(opts) or {}
+        if opts.is_async then
+            return nil, lerror.vshard(lerror.code.MISSING_MASTER,
+                                      replicaset.uuid)
+        end
+        local timeout = opts.timeout or consts.MASTER_SEARCH_TIEMOUT
+        master, timeout = replicaset_wait_master(replicaset, timeout)
+        if not master then
+            return nil, timeout
+        end
+        opts.timeout = master.net_timeout
+    else
+        if not opts then
+            opts = {timeout = master.net_timeout}
+        elseif not opts.timeout then
+            opts = table.copy(opts)
+            opts.timeout = master.net_timeout
+        end
     end
-    if not opts then
-        opts = {timeout = replicaset.master.net_timeout}
-    elseif not opts.timeout then
-        opts = table.copy(opts)
-        opts.timeout = replicaset.master.net_timeout
-    end
+    replicaset_connect_to_replica(replicaset, master)
     local net_status, storage_status, retval, error_object =
-        replica_call(replicaset.master, func, args, opts)
+        replica_call(master, func, args, opts)
     -- Ignore net_status - master does not retry requests.
     return storage_status, retval, error_object
 end
@@ -425,11 +469,6 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 return r
             end
         end
-        local conn, err = replicaset_connect_master(replicaset)
-        if not conn then
-            return nil, err
-        end
-        return master
     end
 
     return function(replicaset, func, args, opts)
@@ -444,9 +483,13 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         end
         local end_time = fiber_clock() + timeout
         while not net_status and timeout > 0 do
-            replica, err = pick_next_replica(replicaset)
+            replica = pick_next_replica(replicaset)
             if not replica then
-                return nil, err
+                replica, timeout = replicaset_wait_master(replicaset, timeout)
+                if not replica then
+                    return nil, timeout
+                end
+                replicaset_connect_to_replica(replicaset, replica)
             end
             opts.timeout = timeout
             net_status, storage_status, retval, err =
@@ -508,7 +551,141 @@ local function rebind_replicasets(replicasets, old_replicasets)
                 end
             end
         end
+        if old_replicaset then
+            -- Take a hint from the old replicaset who is the master now.
+            if replicaset.is_auto_master then
+                local master = old_replicaset.master
+                if master then
+                    replicaset.master = replicaset.replicas[master.uuid]
+                end
+            end
+            -- Stop waiting for master in the old replicaset. Its running
+            -- requests won't find it anyway. Auto search works only for the
+            -- most actual replicaset objects.
+            if old_replicaset.is_auto_master then
+                old_replicaset.is_auto_master = false
+                old_replicaset.master_cond:broadcast()
+            end
+        end
     end
+end
+
+--
+-- Check if the master is still master, and find a new master if there is no a
+-- known one.
+--
+local function replicaset_locate_master(replicaset)
+    local is_done = true
+    local is_nop = true
+    if not replicaset.is_auto_master then
+        return is_done, is_nop
+    end
+    local func = 'vshard.storage._call'
+    local args = {'info'}
+    local const_timeout = consts.MASTER_SEARCH_TIEMOUT
+    local ok, res, err, f
+    local master = replicaset.master
+    if master then
+        local sync_opts = {timeout = const_timeout}
+        ok, res, err = replica_call(master, func, args, sync_opts)
+        if not ok then
+            return is_done, is_nop, err
+        end
+        if res.is_master then
+            return is_done, is_nop
+        end
+        -- Could be changed during the call from the outside. For
+        -- instance, by a failed request with a hint from the old
+        -- master.
+        local cur_master = replicaset.master
+        if cur_master == master then
+            log.info('Master of replicaset %s, node %s, has resigned. Trying '..
+                     'to find a new one', replicaset.uuid, master.uuid)
+            replicaset.master = nil
+        elseif cur_master then
+            -- Another master was already found. But check it via another call
+            -- later to avoid an infinite loop here.
+            return is_done, is_nop
+        end
+    end
+    is_nop = false
+
+    local last_err
+    local futures = {}
+    local timeout = const_timeout
+    local deadline = fiber_clock() + timeout
+    local async_opts = {is_async = true}
+    local replicaset_uuid = replicaset.uuid
+    for replica_uuid, replica in pairs(replicaset.replicas) do
+        local conn = replica.conn
+        timeout, err = netbox_wait_connected(conn, timeout)
+        if not timeout then
+            last_err = err
+            timeout = deadline - fiber_clock()
+        else
+            ok, f = pcall(conn.call, conn, func, args, async_opts)
+            if not ok then
+                last_err = lerror.make(f)
+            else
+                futures[replica_uuid] = f
+            end
+        end
+    end
+    local master_uuid
+    for replica_uuid, f in pairs(futures) do
+        if timeout < 0 then
+            -- Netbox uses cond var inside, whose wait throws an error when gets
+            -- a negative timeout. Avoid that.
+            -- Even if the timeout has expired, still walk though the futures
+            -- hoping for a chance that some of them managed to finish and bring
+            -- a sign of a master.
+            timeout = 0
+        end
+        res, err = f:wait_result(timeout)
+        timeout = deadline - fiber_clock()
+        if not res then
+            f:discard()
+            last_err = err
+            goto next_wait
+        end
+        res = res[1]
+        if not res.is_master then
+            goto next_wait
+        end
+        if not master_uuid then
+            master_uuid = replica_uuid
+            goto next_wait
+        end
+        is_done = false
+        last_err = lerror.vshard(lerror.code.MULTIPLE_MASTERS_FOUND,
+                                 replicaset_uuid, master_uuid, replica_uuid)
+        do return is_done, is_nop, last_err end
+        ::next_wait::
+    end
+    master = replicaset.replicas[master_uuid]
+    if master then
+        log.info('Found master for replicaset %s: %s', replicaset_uuid,
+                 master_uuid)
+        replicaset.master = master
+        replicaset.master_cond:broadcast()
+    else
+        is_done = false
+    end
+    return is_done, is_nop, last_err
+end
+
+local function locate_masters(replicasets)
+    local is_all_done = true
+    local is_all_nop = true
+    local last_err
+    for _, replicaset in pairs(replicasets) do
+        local is_done, is_nop, err = replicaset_locate_master(replicaset)
+        is_all_done = is_all_done and is_done
+        is_all_nop = is_all_nop and is_nop
+        last_err = err or last_err
+        fiber_yield()
+    end
+    return is_all_done, is_all_nop, last_err
 end
 
 --
@@ -729,6 +906,8 @@ local function buildall(sharding_cfg)
             bucket_count = 0,
             lock = replicaset.lock,
             balance_i = 1,
+            is_auto_master = replicaset.master == 'auto',
+            master_cond = fiber.cond(),
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do
@@ -802,4 +981,5 @@ return {
     wait_masters_connect = wait_masters_connect,
     rebind_replicasets = rebind_replicasets,
     outdate_replicasets = outdate_replicasets,
+    locate_masters = locate_masters,
 }

@@ -68,6 +68,8 @@ local ROUTER_TEMPLATE = {
         replicasets = nil,
         -- Fiber to maintain replica connections.
         failover_fiber = nil,
+        -- Fiber to watch for master changes and find new masters.
+        master_search_fiber = nil,
         -- Fiber to discovery buckets in background.
         discovery_fiber = nil,
         -- How discovery works. On - work infinitely. Off - no
@@ -1031,6 +1033,100 @@ local function failover_f(router)
 end
 
 --------------------------------------------------------------------------------
+-- Master search
+--------------------------------------------------------------------------------
+
+local function master_search_step(router)
+    local ok, is_done, is_nop, err = pcall(lreplicaset.locate_masters,
+                                           router.replicasets)
+    if not ok then
+        err = is_done
+        is_done = false
+        is_nop = false
+    end
+    return is_done, is_nop, err
+end
+
+--
+-- Master discovery background function. It is supposed to notice master changes
+-- and find new masters in the replicasets, which are configured for that.
+--
+-- XXX: due to polling the search might notice master change not right when it
+-- happens. In future it makes sense to rewrite master search using
+-- subscriptions. The problem is that at the moment of writing the subscriptions
+-- are not working well in all Tarantool versions.
+--
+local function master_search_f(router)
+    local module_version = M.module_version
+    local is_in_progress = false
+    while module_version == M.module_version do
+        local timeout
+        local start_time = fiber_clock()
+        local is_done, is_nop, err = master_search_step(router)
+        if err then
+            log.error('Error during master search: %s', lerror.make(err))
+        end
+        if is_done then
+            timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
+        elseif err then
+            timeout = consts.MASTER_SEARCH_BACKOFF_INTERVAL
+        else
+            timeout = consts.MASTER_SEARCH_WORK_INTERVAL
+        end
+        if not is_in_progress then
+            if not is_nop and is_done then
+                log.info('Master search happened')
+            elseif not is_done then
+                log.info('Master search is started')
+                is_in_progress = true
+            end
+        elseif is_done then
+            log.info('Master search is finished')
+            is_in_progress = false
+        end
+        local end_time = fiber_clock()
+        local duration = end_time - start_time
+        if not is_nop then
+            log.verbose('Master search step took %s seconds. Next in %s '..
+                        'seconds', duration, timeout)
+        end
+        lfiber.sleep(timeout)
+    end
+end
+
+local function master_search_set(router)
+    local enable = false
+    for _, rs in pairs(router.replicasets) do
+        if rs.is_auto_master then
+            enable = true
+            break
+        end
+    end
+    local search_fiber = router.master_search_fiber
+    if enable and search_fiber == nil then
+        log.info('Master auto search is enabled')
+        router.master_search_fiber = util.reloadable_fiber_create(
+            'vshard.master_search.' .. router.name, M, 'master_search_f',
+            router)
+    elseif not enable and search_fiber ~= nil then
+        -- Do not make users pay for what they do not use - when the search is
+        -- disabled for all replicasets, there should not be any fiber.
+        log.info('Master auto search is disabled')
+        if search_fiber:status() ~= 'dead' then
+            search_fiber:cancel()
+        end
+        router.master_search_fiber = nil
+    end
+end
+
+local function master_search_wakeup(router)
+    local f = router.master_search_fiber
+    if f then
+        f:wakeup()
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
 
@@ -1100,6 +1196,7 @@ local function router_cfg(router, cfg, is_reload)
             'vshard.failover.' .. router.name, M, 'failover_f', router)
     end
     discovery_set(router, vshard_cfg.discovery_mode)
+    master_search_set(router)
 end
 
 --------------------------------------------------------------------------------
@@ -1455,6 +1552,7 @@ local router_mt = {
         bootstrap = cluster_bootstrap;
         bucket_discovery = bucket_discovery;
         discovery_wakeup = discovery_wakeup;
+        master_search_wakeup = master_search_wakeup,
         discovery_set = discovery_set,
         _route_map_clear = route_map_clear,
         _bucket_reset = bucket_reset,
@@ -1535,6 +1633,10 @@ end
 --------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
+M.discovery_f = discovery_f
+M.failover_f = failover_f
+M.master_search_f = master_search_f
+M.router_mt = router_mt
 --
 -- About functions, saved in M, and reloading see comment in
 -- storage/init.lua.
@@ -1555,10 +1657,6 @@ else
     end
     M.module_version = M.module_version + 1
 end
-
-M.discovery_f = discovery_f
-M.failover_f = failover_f
-M.router_mt = router_mt
 
 module.cfg = legacy_cfg
 module.new = router_new

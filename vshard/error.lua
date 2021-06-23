@@ -153,6 +153,11 @@ local error_message_template = {
         name = 'BUCKET_RECV_DATA_ERROR',
         msg = 'Can not receive the bucket %s data in space "%s" at tuple %s: %s',
         args = {'bucket_id', 'space', 'tuple', 'reason'},
+    },
+    [31] = {
+        name = 'MULTIPLE_MASTERS_FOUND',
+        msg = 'Found more than one master in replicaset %s on nodes %s and %s',
+        args = {'replicaset_uuid', 'master1', 'master2'},
     }
 }
 
