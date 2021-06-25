@@ -20,7 +20,7 @@ local error_message_template = {
     [2] = {
         name = 'NON_MASTER',
         msg = 'Replica %s is not a master for replicaset %s anymore',
-        args = {'replica_uuid', 'replicaset_uuid'}
+        args = {'replica_uuid', 'replicaset_uuid', 'master_uuid'}
     },
     [3] = {
         name = 'BUCKET_ALREADY_EXISTS',

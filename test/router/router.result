@@ -1105,11 +1105,12 @@ _ = test_run:switch("router_1")
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
 - null
-- replica_uuid: <storage_2_a>
-  replicaset_uuid: <replicaset_2>
-  type: ShardingError
+- master_uuid: <storage_2_b>
+  replica_uuid: <storage_2_a>
   message: Replica <storage_2_a> is not a master for replicaset
     <replicaset_2> anymore
+  type: ShardingError
+  replicaset_uuid: <replicaset_2>
   name: NON_MASTER
   code: 2
 ...
@@ -1175,6 +1176,7 @@ error_messages
   - Use replicaset:connect_replica(...) instead of replicaset.connect_replica(...)
   - Use replicaset:down_replica_priority(...) instead of replicaset.down_replica_priority(...)
   - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
+  - Use replicaset:update_master(...) instead of replicaset.update_master(...)
   - Use replicaset:wait_connected(...) instead of replicaset.wait_connected(...)
 ...
 _, replica = next(replicaset.replicas)

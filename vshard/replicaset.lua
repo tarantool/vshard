@@ -571,6 +571,70 @@ local function rebind_replicasets(replicasets, old_replicasets)
 end
 
 --
+-- Let the replicaset know @a old_master_uuid is not a master anymore, should
+-- use @a candidate_uuid instead.
+-- Returns whether the request, which brought this information, can be retried.
+--
+local function replicaset_update_master(replicaset, old_master_uuid,
+                                        candidate_uuid)
+    local is_auto = replicaset.is_auto_master
+    local replicaset_uuid = replicaset.uuid
+    if old_master_uuid == candidate_uuid then
+        -- It should not happen ever, but be ready to everything.
+        log.warn('Replica %s in replicaset %s reports self as both master '..
+                 'and not master', master_uuid, replicaset_uuid)
+        return is_auto
+    end
+    local master = replicaset.master
+    if not master then
+        if not is_auto or not candidate_uuid then
+            return is_auto
+        end
+        local candidate = replicaset.replicas[candidate_uuid]
+        if not candidate then
+            return true
+        end
+        replicaset.master = candidate
+        log.info('Replica %s becomes a master as reported by %s for '..
+                 'replicaset %s', candidate_uuid, old_master_uuid,
+                 replicaset_uuid)
+        return true
+    end
+    local master_uuid = master.uuid
+    if master_uuid ~= old_master_uuid then
+        -- Master was changed while the master update information was coming.
+        -- It means it is outdated and should be ignored.
+        -- Return true regardless of the auto-master config. Because the master
+        -- change means the caller's request has a chance to succeed on the new
+        -- master on retry.
+        return true
+    end
+    if not is_auto then
+        log.warn('Replica %s is not master for replicaset %s anymore, please '..
+                 'update configuration', master_uuid, replicaset_uuid)
+        return false
+    end
+    if not candidate_uuid then
+        replicaset.master = nil
+        log.warn('Replica %s is not a master anymore for replicaset %s, no '..
+                 'candidate was reported', master_uuid, replicaset_uuid)
+        return true
+    end
+    local candidate = replicaset.replicas[candidate_uuid]
+    if candidate then
+        replicaset.master = candidate
+        log.info('Replica %s becomes master instead of %s for replicaset %s',
+                 candidate_uuid, master_uuid, replicaset_uuid)
+    else
+        replicaset.master = nil
+        log.warn('Replica %s is not a master anymore for replicaset %s, new '..
+                 'master %s could not be found in the config',
+                 master_uuid, replicaset_uuid, candidate_uuid)
+    end
+    return true
+end
+
+--
 -- Check if the master is still master, and find a new master if there is no a
 -- known one.
 --
@@ -706,6 +770,7 @@ local replicaset_mt = {
         callbro = replicaset_template_multicallro(false, true);
         callre = replicaset_template_multicallro(true, false);
         callbre = replicaset_template_multicallro(true, true);
+        update_master = replicaset_update_master,
     };
     __tostring = replicaset_tostring;
 }

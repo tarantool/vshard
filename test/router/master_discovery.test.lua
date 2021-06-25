@@ -67,6 +67,16 @@ function check_master_for_replicaset(rs_id, master_name)                        
     return true                                                                 \
 end
 
+function check_no_master_for_replicaset(rs_id)                                  \
+    local rs_uuid = util.replicasets[rs_id]                                     \
+    local master = vshard.router.static.replicasets[rs_uuid].master             \
+    if not master then                                                          \
+        return true                                                             \
+    end                                                                         \
+    vshard.router.master_search_wakeup()                                        \
+    return false                                                                \
+end
+
 function check_all_buckets_found()                                              \
     if vshard.router.info().bucket.unknown == 0 then                            \
         return true                                                             \
@@ -94,6 +104,22 @@ function stop_aggressive_master_search()                                        
     master_search_helper_f:cancel()                                             \
     master_search_helper_f:join()                                               \
     master_search_helper_f = nil                                                \
+end
+
+function master_discovery_block()                                               \
+    vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = true             \
+end
+
+function check_master_discovery_block()                                         \
+    if vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY == 'in' then    \
+        return true                                                             \
+    end                                                                         \
+    vshard.router.master_search_wakeup()                                        \
+    return false                                                                \
+end
+
+function master_discovery_unblock()                                             \
+    vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = false            \
 end
 
 --
@@ -239,6 +265,171 @@ do                                                                              
         is_async = true, timeout = big_timeout                                  \
     })                                                                          \
 end
+
+--
+-- Restore the old master back.
+--
+test_run:switch('storage_1_b')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_b].master = false
+replicas[util.name_to_uuid.storage_1_a].master = true
+vshard.storage.cfg(cfg, instance_uuid)
+
+--
+-- RW call uses a hint from the old master about who is the new master.
+--
+test_run:switch('router_1')
+forget_masters()
+test_run:wait_cond(check_all_masters_found)
+master_discovery_block()
+test_run:wait_cond(check_master_discovery_block)
+
+-- Change master while discovery is asleep.
+test_run:switch('storage_1_a')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_a].master = false
+replicas[util.name_to_uuid.storage_1_b].master = true
+vshard.storage.cfg(cfg, instance_uuid)
+
+test_run:switch('storage_1_b')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_a].master = false
+replicas[util.name_to_uuid.storage_1_b].master = true
+vshard.storage.cfg(cfg, instance_uuid)
+
+-- First request fails and tells where is the master. The second attempt works.
+test_run:switch('router_1')
+vshard.router.callrw(1501, 'echo', {1}, opts_big_timeout)
+
+test_run:switch('storage_1_b')
+assert(echo_count == 1)
+echo_count = 0
+
+--
+-- A non master error might contain no information about a new master.
+--
+-- Make the replicaset read-only.
+test_run:switch('storage_1_a')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_b].master = false
+vshard.storage.cfg(cfg, instance_uuid)
+
+test_run:switch('storage_1_b')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_b].master = false
+vshard.storage.cfg(cfg, instance_uuid)
+
+test_run:switch('router_1')
+-- A request should return no info about a new master. The router will wait for
+-- a new master discovery.
+f = fiber.create(function()                                                     \
+    fiber.self():set_joinable(true)                                             \
+    return vshard.router.callrw(1501, 'echo', {1}, opts_big_timeout)            \
+end)
+test_run:wait_cond(function()                                                   \
+    return check_no_master_for_replicaset(1)                                    \
+end)
+
+test_run:switch('storage_1_a')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_a].master = true
+vshard.storage.cfg(cfg, instance_uuid)
+
+test_run:switch('storage_1_b')
+replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_a].master = true
+vshard.storage.cfg(cfg, instance_uuid)
+
+test_run:switch('router_1')
+master_discovery_unblock()
+test_run:wait_cond(check_all_masters_found)
+f:join()
+
+test_run:switch('storage_1_a')
+assert(echo_count == 1)
+echo_count = 0
+
+--
+-- Unit tests for master change in a replicaset object. Normally it can only
+-- happen in quite complicated cases. Hence the tests prefer to use the internal
+-- replicaset object instead.
+-- Disable the master search fiber so as it wouldn't interfere.
+--
+test_run:switch('router_1')
+master_discovery_block()
+test_run:wait_cond(check_master_discovery_block)
+rs = vshard.router.static.replicasets[util.replicasets[1]]
+storage_a_uuid = util.name_to_uuid.storage_1_a
+storage_b_uuid = util.name_to_uuid.storage_1_b
+
+assert(rs.master.uuid == storage_a_uuid)
+rs.master = nil
+rs.is_auto_master = false
+
+-- When auto-search is disabled and master is not known, nothing will make it
+-- known. It is up to the config.
+assert(not rs:update_master(storage_a_uuid, storage_b_uuid))
+assert(not rs.master)
+-- New master might be not reported.
+assert(not rs:update_master(storage_a_uuid))
+assert(not rs.master)
+
+-- With auto-search and not known master it is not assigned if a new master is
+-- not reported.
+rs.is_auto_master = true
+-- But update returns true, because it makes sense to try a next request later
+-- when the master is found.
+assert(rs:update_master(storage_a_uuid))
+assert(not rs.master)
+
+-- Report of a not known UUID won't assign the master.
+assert(rs:update_master(storage_a_uuid, util.name_to_uuid.storage_2_a))
+assert(not rs.master)
+
+-- Report of a known UUID assigns the master.
+assert(rs:update_master(storage_a_uuid, storage_b_uuid))
+assert(rs.master.uuid == storage_b_uuid)
+
+-- Master could change while the request's error was being received. Then the
+-- error should not change anything because it is outdated.
+assert(rs:update_master(storage_a_uuid))
+assert(rs.master.uuid == storage_b_uuid)
+-- It does not depend on auto-search. Still returns true, because if the master
+-- was changed since the request was sent, it means it could be retried and
+-- might succeed.
+rs.is_auto_master = false
+assert(rs:update_master(storage_a_uuid))
+assert(rs.master.uuid == storage_b_uuid)
+
+-- If the current master is reported as not a master and auto-search is
+-- disabled, update should fail. Because makes no sense to retry until a new
+-- config is applied externally.
+assert(not rs:update_master(storage_b_uuid, storage_a_uuid))
+assert(rs.master.uuid == storage_b_uuid)
+
+-- With auto-search, if the node is not a master and no new master is reported,
+-- the current master should be reset. Because makes no sense to send more RW
+-- requests to him. But update returns true, because the current request could
+-- be retried after waiting for a new master discovery.
+rs.is_auto_master = true
+assert(rs:update_master(storage_b_uuid))
+assert(rs.master == nil)
+
+-- When candidate is reported, and is known, it is used. But restore the master
+-- first to test its change.
+assert(rs:update_master(storage_b_uuid, storage_a_uuid))
+assert(rs.master.uuid == storage_a_uuid)
+-- Now update.
+assert(rs:update_master(storage_a_uuid, storage_b_uuid))
+assert(rs.master.uuid == storage_b_uuid)
+
+-- Candidate UUID might be not known in case the topology config is different on
+-- the router and on the storage. Then the master is simply reset.
+assert(rs:update_master(storage_b_uuid, util.name_to_uuid.storage_2_a))
+assert(rs.master == nil)
+
+master_discovery_unblock()
+test_run:wait_cond(check_all_masters_found)
 
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")

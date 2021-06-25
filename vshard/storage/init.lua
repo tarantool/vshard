@@ -971,9 +971,13 @@ local function bucket_check_state(bucket_id, mode)
         end
         reason = 'write is prohibited'
     elseif M.this_replicaset.master ~= M.this_replica then
+        local master_uuid = M.this_replicaset.master
+        if master_uuid then
+            master_uuid = master_uuid.uuid
+        end
         return bucket, lerror.vshard(lerror.code.NON_MASTER,
                                      M.this_replica.uuid,
-                                     M.this_replicaset.uuid)
+                                     M.this_replicaset.uuid, master_uuid)
     else
         return bucket
     end

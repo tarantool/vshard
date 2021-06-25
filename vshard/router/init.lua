@@ -33,6 +33,7 @@ if not M then
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
+            ERRINJ_MASTER_SEARCH_DELAY = false,
         },
         -- Dictionary, key is router name, value is a router.
         routers = {},
@@ -620,12 +621,11 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 bucket_reset(router, bucket_id)
                 return nil, err
             elseif err.code == lerror.code.NON_MASTER then
-                -- Same, as above - do not wait and repeat.
                 assert(mode == 'write')
-                log.warn("Replica %s is not master for replicaset %s anymore,"..
-                         "please update configuration!",
-                          replicaset.master.uuid, replicaset.uuid)
-                return nil, err
+                if not replicaset:update_master(err.replica_uuid,
+                                                err.master_uuid) then
+                    return nil, err
+                end
             else
                 return nil, err
             end
@@ -1059,7 +1059,14 @@ end
 local function master_search_f(router)
     local module_version = M.module_version
     local is_in_progress = false
+    local errinj = M.errinj
     while module_version == M.module_version do
+        if errinj.ERRINJ_MASTER_SEARCH_DELAY then
+            errinj.ERRINJ_MASTER_SEARCH_DELAY = 'in'
+            repeat
+                lfiber.sleep(0.001)
+            until not errinj.ERRINJ_MASTER_SEARCH_DELAY
+        end
         local timeout
         local start_time = fiber_clock()
         local is_done, is_nop, err = master_search_step(router)
