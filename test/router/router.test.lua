@@ -413,6 +413,7 @@ for _, func in pairs(getmetatable(replicaset).__index) do
     table.insert(error_messages, msg:match("Use .*"))
 end;
 _ = test_run:cmd("setopt delimiter ''");
+table.sort(error_messages)
 error_messages
 
 _, replica = next(replicaset.replicas)
@@ -424,6 +425,7 @@ for _, func in pairs(getmetatable(replica).__index) do
     table.insert(error_messages, msg:match("Use .*"))
 end;
 _ = test_run:cmd("setopt delimiter ''");
+table.sort(error_messages)
 error_messages
 
 --

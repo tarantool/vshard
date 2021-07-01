@@ -2566,8 +2566,9 @@ service_call_api = setmetatable({
 }, {__serialize = function(api)
     local res = {}
     for k, _ in pairs(api) do
-        res[k] = true
+        table.insert(res, k)
     end
+    table.sort(res)
     return res
 end})
 
