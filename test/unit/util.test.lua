@@ -28,6 +28,11 @@ while not test_run:grep_log('default', 'module is reloaded, restarting') do fibe
 test_run:grep_log('default', 'reloadable_function has been started', 1000)
 fib:cancel()
 
+-- Re-loadable fiber must truncate too long name.
+name = string.rep('a', 512)
+fib = util.reloadable_fiber_create(name, fake_M, 'reloadable_function')
+fib:cancel()
+
 -- Yielding table minus.
 minus_yield = util.table_minus_yield
 minus_yield({}, {}, 1)

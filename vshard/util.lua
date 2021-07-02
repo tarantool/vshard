@@ -90,7 +90,7 @@ local function reloadable_fiber_create(fiber_name, module, func_name, data)
     assert(type(fiber_name) == 'string')
     local xfiber = fiber.create(reloadable_fiber_main_loop, module, func_name,
                                 data)
-    xfiber:name(fiber_name)
+    xfiber:name(fiber_name, {truncate = true})
     return xfiber
 end
 
