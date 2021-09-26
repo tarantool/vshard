@@ -216,13 +216,15 @@ vshard.router.route(bucket_id):callrw('do_push', args, opts)
 messages
 
 --
--- gh-171: support is_async.
+-- gh-171, gh-294: support is_async.
 --
 future = vshard.router.callro(bucket_id, 'space_get', {'test', {1}}, {is_async = true})
 future:wait_result()
 future:is_ready()
 future = vshard.router.callrw(bucket_id, 'raise_client_error', {}, {is_async = true})
 res, err = future:wait_result()
+-- VShard wraps all errors.
+assert(type(err) == 'table')
 util.portable_error(err)
 future:is_ready()
 future = vshard.router.callrw(bucket_id, 'do_push', args, {is_async = true})
@@ -239,6 +241,122 @@ future = vshard.router.route(bucket_id):callro('space_get', {'test', {1}}, {is_a
 future:wait_result()
 future = vshard.router.route(bucket_id):callrw('space_get', {'test', {1}}, {is_async = true})
 future:wait_result()
+
+--
+-- Error as a result of discard.
+--
+future = vshard.router.callrw(bucket_id, 'do_push_wait', {10, {20}},            \
+                              {is_async = true})
+future:discard()
+res, err = future:result()
+assert(not res and err.message:match('discarded') ~= nil)
+assert(type(err) == 'table')
+res, err = future:wait_result()
+assert(not res and err.message:match('discarded') ~= nil)
+assert(type(err) == 'table')
+
+--
+-- See how pairs behaves when the final result is not immediately ready.
+--
+future = vshard.router.callrw(bucket_id, 'do_push_wait', {10, {20}},            \
+                              {is_async = true})
+assert(not future:is_ready())
+-- Get the push successfully.
+func, iter, i = future:pairs()
+i, res = func(iter, i)
+assert(i == 1)
+assert(res == 10)
+
+-- Fail to get the final result during the timeout. It is supposed to test how
+-- the router knows which result is final and which is just a push. Even before
+-- the request ends.
+func, iter, i = future:pairs(0.001)
+i, res = func(iter, i)
+i, res = func(iter, i)
+assert(not i and res.code == box.error.TIMEOUT)
+assert(type(res) == 'table')
+
+res, err = future:wait_result(0.001)
+assert(not res and err.code == box.error.TIMEOUT)
+assert(type(err) == 'table')
+
+test_run:switch('storage_1_a')
+is_push_wait_blocked = false
+test_run:switch('storage_2_a')
+is_push_wait_blocked = false
+test_run:switch('router_1')
+
+func, iter, i = future:pairs()
+i, res = func(iter, i)
+assert(i == 1)
+assert(res == 10)
+
+i, res = func(iter, i)
+assert(i == 2)
+assert(res[1] == 20 and not res[2])
+
+assert(future:is_ready())
+
+i, res = func(iter, i)
+assert(not i)
+assert(not res)
+
+-- Repeat the same to ensure it returns the same.
+i, res = func(iter, 1)
+assert(i == 2)
+assert(res[1] == 20 and not res[2])
+
+-- Non-pairs functions return correctly unpacked successful results.
+res, err = future:wait_result()
+assert(res[1] == 20 and not res[2] and not err)
+res, err = future:result()
+assert(res[1] == 20 and not res[2] and not err)
+
+-- Return 2 nils - shouldn't be treated as an error.
+future = vshard.router.callrw(bucket_id, 'do_push_wait',                        \
+                              {10, {nil, nil}}, {is_async = true})
+res, err = future:wait_result()
+assert(res[1] == nil and res[2] == nil and not err)
+res, err = future:result()
+assert(res[1] == nil and res[2] == nil and not err)
+func, iter, i = future:pairs()
+i, res = func(iter, i)
+i, res = func(iter, i)
+assert(res[1] == nil and res[2] == nil and not err)
+
+-- Serialize and tostring.
+future
+future.key = 'value'
+future
+tostring(future)
+
+--
+-- The same, but the push function returns an error.
+--
+future = vshard.router.callrw(bucket_id, 'do_push_wait', {10, {nil, 'err'}},    \
+                              {is_async = true})
+func, iter, i = future:pairs()
+i, res = func(iter, i)
+assert(i == 1)
+assert(res == 10)
+i, res = func(iter, i)
+-- This test is for the sake of checking how the async request handles nil,err
+-- result.
+assert(i == 2)
+assert(not res[1] and res[2].message == 'err')
+assert(type(res[2]) == 'table')
+i, res = func(iter, i)
+assert(not i)
+assert(not res)
+
+-- Non-pairs getting of an error.
+res, err = future:wait_result()
+assert(not res and err.message == 'err')
+assert(type(err) == 'table')
+
+res, err = future:result()
+assert(not res and err.message == 'err')
+assert(type(err) == 'table')
 
 --
 -- Test errors from router call.

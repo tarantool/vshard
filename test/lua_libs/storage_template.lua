@@ -101,6 +101,8 @@ function bootstrap_storage(engine)
         box.schema.role.grant('public', 'execute', 'function', 'raise_client_error')
         box.schema.func.create('do_push')
         box.schema.role.grant('public', 'execute', 'function', 'do_push')
+        box.schema.func.create('do_push_wait')
+        box.schema.role.grant('public', 'execute', 'function', 'do_push_wait')
         box.snapshot()
     end)
 end
@@ -150,6 +152,15 @@ end
 function do_push(push, retval)
     box.session.push(push)
     return retval
+end
+
+is_push_wait_blocked = true
+function do_push_wait(push, retval_arr)
+    box.session.push(push)
+    while is_push_wait_blocked do
+        fiber.sleep(0.001)
+    end
+    return unpack(retval_arr)
 end
 
 --
