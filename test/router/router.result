@@ -259,7 +259,6 @@ _, e = vshard.router.callro(1, 'raise_client_error', {}, {})
 util.portable_error(e)
 ---
 - type: ClientError
-  code: 32
   message: Unknown error
 ...
 _, e = vshard.router.route(1):callro('raise_client_error', {})
@@ -268,7 +267,6 @@ _, e = vshard.router.route(1):callro('raise_client_error', {})
 util.portable_error(e)
 ---
 - type: ClientError
-  code: 0
   message: Unknown error
 ...
 -- Ensure, that despite not working multi-return, it is allowed
@@ -640,7 +638,6 @@ assert(type(err) == 'table')
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 32
   message: Unknown error
 ...
 future:is_ready()

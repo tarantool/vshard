@@ -51,7 +51,6 @@ res, err = vshard.router.sync(-1)
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 res, err = vshard.router.sync(0)
@@ -60,7 +59,6 @@ res, err = vshard.router.sync(0)
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 --

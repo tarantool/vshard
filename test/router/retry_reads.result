@@ -118,7 +118,6 @@ fiber.time() - start < 1
 util.portable_error(e)
 ---
 - type: ClientError
-  code: 0
   message: Unknown error
 ...
 _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
@@ -127,7 +126,6 @@ _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
 util.portable_error(e)
 ---
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 --

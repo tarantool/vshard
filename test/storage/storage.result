@@ -514,7 +514,6 @@ res, err = vshard.storage.bucket_recv(4, util.replicasets[2], {{1000, {{1}}}})
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 36
   message: Space '1000' does not exist
 ...
 while box.space._bucket:get{4} do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end

@@ -28,7 +28,6 @@ str = tostring(box_error)
 util.portable_error(json.decode(str))
 ---
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, 'uuid', 'reason')
@@ -94,7 +93,6 @@ err = lerror.make(err)
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 32
   message: '[string "function raise_lua_err() assert(false) end "]:1: assertion failed!'
 ...
 --

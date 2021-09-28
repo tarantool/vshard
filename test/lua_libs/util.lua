@@ -198,7 +198,7 @@ end
 -- trimmed in order for the tests not to depend on line numbers of
 -- the source files, which may slip into a .result file.
 local function portable_error(err)
-    return {code = err.code, type = err.type, message = err.message}
+    return {type = err.type, message = err.message}
 end
 
 return {

@@ -45,7 +45,6 @@ res, util.portable_error(err)
 ---
 - null
 - type: ClientError
-  code: 77
   message: Connection closed
 ...
 test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%(storage%@')
@@ -174,7 +173,6 @@ res, util.portable_error(err)
 ---
 - null
 - type: ClientError
-  code: 77
   message: Connection closed
 ...
 -- Close existing connection on a first error and log it.

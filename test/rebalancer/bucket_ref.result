@@ -144,7 +144,6 @@ res, util.portable_error(err)
 ---
 - null
 - type: ClientError
-  code: 32
   message: Timeout exceeded
 ...
 vshard.storage.buckets_info(1)

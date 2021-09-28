@@ -167,7 +167,6 @@ res, util.portable_error(err)
 ---
 - null
 - type: ClientError
-  code: 32
   message: Error injection 'the bucket is received partially'
 ...
 box.space._bucket:get{1}
@@ -225,7 +224,6 @@ _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
 util.portable_error(err)
 ---
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 box.space._bucket:get{101}
@@ -332,7 +330,6 @@ ret, util.portable_error(err)
 ---
 - null
 - type: ClientError
-  code: 78
   message: Timeout exceeded
 ...
 finish_long_thing = true
