@@ -8,7 +8,6 @@ test_run:create_cluster(REPLICASET_2, 'storage')
 util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
-util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'%s\')', engine)
 
 _ = test_run:switch('storage_1_a')
 s = box.schema.create_space('test')
