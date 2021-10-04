@@ -1,0 +1,65 @@
+name: check_tarantool_integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: |
+          The full name of the repository like <owner>/<name> to search for
+          the tarantool build artifact
+        default: tarantool/tarantool
+        required: false
+      workflow_id:
+        description: |
+          The ID of the build workflow to search for the tarantool build
+          artifact, can be replaced with the workflow file name
+        default: build_tarantool.yml
+        required: false
+      run_id:
+        description: |
+          The ID of the workflow run to search for the tarantool build
+          artifact
+        required: false
+      sha:
+        description: |
+          The commit SHA that the tarantool build artifact is associated with
+        required: false
+      artifact_name:
+        description: 'The name of the tarantool build artifact'
+        default: ubuntu-focal
+        required: false
+      trace_id:
+        description: 'Any ID to mark the workflow run'
+        default: '<not set>'
+        required: false
+
+jobs:
+  run_tests:
+    runs-on: ubuntu-20.04
+    steps:
+      - run: |
+          echo "Trace ID: ${{ github.event.inputs.trace_id }}"
+      - name: 'Clone the module'
+        uses: actions/checkout@v2
+        with:
+          # Fetch the entire history for all branches and tags. It is needed for
+          # upgrade testing.
+          fetch-depth: 0
+          # Enable recursive submodules checkout as test-run git module is used
+          # for running tests.
+          submodules: recursive
+      - name: 'Download the tarantool build artifact'
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          repo: ${{ github.event.inputs.repo }}
+          workflow: ${{ github.event.inputs.workflow_id }}
+          run_id: ${{ github.event.inputs.run_id }}
+          commit: ${{ github.event.inputs.sha }}
+          name: ${{ github.event.inputs.artifact_name }}
+          workflow_conclusion: success
+      - name: 'Install tarantool'
+        run: sudo dpkg -i tarantool*.deb
+      - name: 'Install test requirements'
+        run: pip3 install --user -r test-run/requirements.txt
+      - run: cmake .
+      - run: make test
