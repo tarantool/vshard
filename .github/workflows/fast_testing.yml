@@ -18,12 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         tarantool:
-          # TODO: Add 2.9 version after https://github.com/tarantool/vshard/issues/294
-          # is resolved.
           - '1.10'
           - '2.7'
           - '2.8'
-          #- '2.9'
+          - '2.9'
 
     runs-on: ubuntu-latest
     steps:
