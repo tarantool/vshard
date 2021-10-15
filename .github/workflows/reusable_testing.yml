@@ -38,7 +38,7 @@ jobs:
       - name: 'Install test requirements'
         run: pip3 install --user -r test-run/requirements.txt
       - run: cmake .
-      - run: make test
+      - run: make test-force
       # TODO(ylobankov): Relevant to self-hosted runners. Remove this step
       # when only GitHub-hosted runners are used for integration testing.
       - if: always()

@@ -44,4 +44,4 @@ jobs:
         run: pip3 install --user -r test-run/requirements.txt
 
       - run: cmake .
-      - run: make test
+      - run: make test-force
