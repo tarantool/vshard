@@ -23,23 +23,19 @@ jobs:
           # Enable recursive submodules checkout as test-run git module is used
           # for running tests.
           submodules: recursive
+
       - name: 'Download the tarantool build artifact'
         uses: actions/download-artifact@v2
         with:
           name: ${{ inputs.artifact_name }}
-      # TODO(ylobankov): Just in case remove tarantool that could be previously
-      # installed on the runner. Relevant to self-hosted runners. Remove this
-      # step when only GitHub-hosted runners are used for integration testing.
-      - run: sudo apt-get -y purge 'tarantool*'
+
       - name: 'Install tarantool'
         # TODO(ylobankov): Install package dependencies. Now we're lucky: all
         # dependencies are already there.
         run: sudo dpkg -i tarantool*.deb
+
       - name: 'Install test requirements'
         run: pip3 install --user -r test-run/requirements.txt
+
       - run: cmake .
       - run: make test-force
-      # TODO(ylobankov): Relevant to self-hosted runners. Remove this step
-      # when only GitHub-hosted runners are used for integration testing.
-      - if: always()
-        run: sudo apt-get -y purge 'tarantool*'
