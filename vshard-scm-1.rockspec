@@ -1,7 +1,7 @@
 package = 'vshard'
 version = 'scm-1'
 source  = {
-    url    = 'git://github.com/tarantool/vshard.git',
+    url    = 'git+https://github.com/tarantool/vshard.git',
     branch = 'master',
 }
 description = {
