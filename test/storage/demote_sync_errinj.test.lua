@@ -17,7 +17,8 @@ cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master
 f = fiber.create(function() vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a) end)
 f:status()
 -- Can not write - read only mode is already on.
-s:replace{1}
+ok, err = pcall(s.replace, s, {1})
+assert(not ok and err.code == box.error.READONLY)
 
 test_run:switch('storage_1_b')
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master = true

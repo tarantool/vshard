@@ -23,7 +23,8 @@ box.space.test:select{}
 
 _ = test_run:switch('storage_1_b')
 box.cfg.read_only
-box.schema.create_space('test3')
+ok, err = pcall(box.schema.create_space, 'test3')
+assert(not ok and err.code == box.error.READONLY)
 fiber = require('fiber')
 function on_master_enable() box.space.test:replace{3, 3} end
 function on_master_disable() if not box.cfg.read_only then box.space.test:replace{4, 4} end end
@@ -46,7 +47,7 @@ cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 box.cfg.read_only
-ok, err
+assert(not ok and err.code == box.error.READONLY)
 fiber = require('fiber')
 while box.space.test:count() ~= 2 do fiber.sleep(0.1) end
 box.space.test:select{}

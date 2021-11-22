@@ -68,9 +68,12 @@ box.cfg.read_only
 ---
 - true
 ...
-box.schema.create_space('test3')
+ok, err = pcall(box.schema.create_space, 'test3')
 ---
-- error: Can't modify data because this instance is in read-only mode.
+...
+assert(not ok and err.code == box.error.READONLY)
+---
+- true
 ...
 fiber = require('fiber')
 ---
@@ -129,10 +132,9 @@ box.cfg.read_only
 ---
 - true
 ...
-ok, err
+assert(not ok and err.code == box.error.READONLY)
 ---
-- false
-- Can't modify data because this instance is in read-only mode.
+- true
 ...
 fiber = require('fiber')
 ---

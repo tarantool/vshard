@@ -52,9 +52,12 @@ f:status()
 - suspended
 ...
 -- Can not write - read only mode is already on.
-s:replace{1}
+ok, err = pcall(s.replace, s, {1})
 ---
-- error: Can't modify data because this instance is in read-only mode.
+...
+assert(not ok and err.code == box.error.READONLY)
+---
+- true
 ...
 test_run:switch('storage_1_b')
 ---
