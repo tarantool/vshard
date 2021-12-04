@@ -682,11 +682,7 @@ local function replicaset_locate_master(replicaset)
     local replicaset_uuid = replicaset.uuid
     for replica_uuid, replica in pairs(replicaset.replicas) do
         local conn = replica.conn
-        timeout, err = netbox_wait_connected(conn, timeout)
-        if not timeout then
-            last_err = err
-            timeout = deadline - fiber_clock()
-        else
+        if conn:is_connected() then
             ok, f = pcall(conn.call, conn, func, args, async_opts)
             if not ok then
                 last_err = lerror.make(f)
