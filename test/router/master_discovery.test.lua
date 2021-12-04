@@ -181,24 +181,27 @@ end)
 -- Call tries to wait for master if has enough time left.
 --
 start_aggressive_master_search()
+test_run:cmd('stop server storage_1_b')
+rs1 = vshard.router.static.replicasets[util.replicasets[1]]
+replica = rs1.replicas[util.name_to_uuid.storage_1_b]
+-- Ensure the replica is not available. Otherwise RO requests sneak into it
+-- instead of waiting for master.
+test_run:wait_cond(function() return not replica:is_connected() end)
 
 forget_masters()
 vshard.router.callrw(1501, 'echo', {1}, opts_big_timeout)
 
 forget_masters()
--- XXX: this should not depend on master so much. RO requests should be able to
--- go to replicas.
 vshard.router.callro(1501, 'echo', {1}, opts_big_timeout)
 
 forget_masters()
 vshard.router.route(1501):callrw('echo', {1}, opts_big_timeout)
 
 forget_masters()
--- XXX: the same as above - should not really wait for master. Regardless of it
--- being auto or not.
 vshard.router.route(1501):callro('echo', {1}, opts_big_timeout)
 
 stop_aggressive_master_search()
+test_run:cmd('start server storage_1_b')
 
 test_run:switch('storage_1_a')
 assert(echo_count == 4)
@@ -218,23 +221,30 @@ replicas = cfg.sharding[util.replicasets[1]].replicas
 replicas[util.name_to_uuid.storage_1_a].master = false
 vshard.storage.cfg(cfg, instance_uuid)
 
--- Try to make RW and RO requests but then turn of the auto search.
+-- Try to make an RW request but then turn of the auto search.
 test_run:switch('router_1')
 forget_masters()
 f1 = fiber.create(function()                                                    \
     fiber.self():set_joinable(true)                                             \
     return vshard.router.callrw(1501, 'echo', {1}, opts_big_timeout)            \
 end)
--- XXX: should not really wait for master since this is an RO request. It could
--- use a replica.
+fiber.sleep(0.01)
+disable_auto_masters()
+f1:join()
+
+-- Try to make an RO request but then turn of the auto search.
+test_run:cmd('stop server storage_1_a')
+test_run:cmd('stop server storage_1_b')
+forget_masters()
 f2 = fiber.create(function()                                                    \
     fiber.self():set_joinable(true)                                             \
     return vshard.router.callro(1501, 'echo', {1}, opts_big_timeout)            \
 end)
 fiber.sleep(0.01)
 disable_auto_masters()
-f1:join()
 f2:join()
+test_run:cmd('start server storage_1_a')
+test_run:cmd('start server storage_1_b')
 
 --
 -- Multiple masters logging.
@@ -242,14 +252,26 @@ f2:join()
 test_run:switch('storage_1_a')
 replicas = cfg.sharding[util.replicasets[1]].replicas
 replicas[util.name_to_uuid.storage_1_a].master = true
+replicas[util.name_to_uuid.storage_1_b].master = false
 vshard.storage.cfg(cfg, instance_uuid)
 
 test_run:switch('storage_1_b')
 replicas = cfg.sharding[util.replicasets[1]].replicas
+replicas[util.name_to_uuid.storage_1_a].master = false
 replicas[util.name_to_uuid.storage_1_b].master = true
 vshard.storage.cfg(cfg, instance_uuid)
 
 test_run:switch('router_1')
+-- Ensure both replicas are connected. Otherwise the router can go to only one,
+-- find it is master, and won't go to the second one until the first one resigns
+-- or dies.
+rs1 = vshard.router.static.replicasets[util.replicasets[1]]
+replica1 = rs1.replicas[util.name_to_uuid.storage_1_a]
+replica2 = rs1.replicas[util.name_to_uuid.storage_1_b]
+test_run:wait_cond(function()                                                   \
+    return replica1:is_connected() and replica2:is_connected()                  \
+end)
+
 forget_masters()
 start_aggressive_master_search()
 test_run:wait_log('router_1', 'Found more than one master', nil, 10)

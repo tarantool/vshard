@@ -455,18 +455,25 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                     return r
                 end
             end
-        elseif prefer_replica then
-            r = replicaset.replica
+        else
+            local start_r = replicaset.replica
+            r = start_r
             while r do
-                if r:is_connected() and r ~= master then
+                if r:is_connected() and (not prefer_replica or r ~= master) then
                     return r
                 end
                 r = r.next_by_priority
             end
-        else
-            r = replicaset.replica
-            if r and r:is_connected() then
-                return r
+            -- Iteration above could start not from the best prio replica.
+            -- Check the beginning of the list too.
+            for _, r in ipairs(replicaset.priority_list) do
+                if r == start_r then
+                    -- Reached already checked part.
+                    break
+                end
+                if r:is_connected() and (not prefer_replica or r ~= master) then
+                    return r
+                end
             end
         end
     end

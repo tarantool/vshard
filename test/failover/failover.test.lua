@@ -43,8 +43,8 @@ test_run:cmd('switch default')
 --   available;
 -- * up nearest replica priority if the best one is available
 --   again;
--- * replicaset uses master connection, if the nearest's one is
---   not available before call();
+-- * replicaset uses next prio available connection, if the
+--   nearest's one is not available before call();
 -- * current nearest connection is not down, when trying to
 --   connect to the replica with less weight.
 --
@@ -86,15 +86,10 @@ rs1.replica_up_ts - old_up_ts >= vshard.consts.FAILOVER_UP_TIMEOUT
 -- box_1_d.
 test_run:cmd('stop server box_1_d')
 -- Down_ts must be set in on_disconnect() trigger.
-while rs1.replica.down_ts == nil do fiber.sleep(0.1) end
--- Try to execute read-only request - it must use master
--- connection, because a replica's one is not available.
-vshard.router.call(1, 'read', 'echo', {123})
-test_run:switch('box_1_a')
-echo_count
-test_run:switch('router_1')
+box_1_d = rs1.replicas[names.replica_uuid.box_1_d]
+test_run:wait_cond(function() return box_1_d.down_ts ~= nil end)
 -- New replica is box_1_b.
-while rs1.replica.name ~= 'box_1_b' do fiber.sleep(0.1) end
+test_run:wait_cond(function() return rs1.replica.name == 'box_1_b' end)
 rs1.replica.down_ts == nil
 rs1.replica_up_ts ~= nil
 test_run:grep_log('router_1', 'New replica box_1_b%(storage%@')
@@ -103,8 +98,21 @@ vshard.router.callro(1, 'echo', {123})
 test_run:cmd('switch box_1_b')
 -- Ensure the 'read' echo was executed on box_1_b - nearest
 -- available replica.
-echo_count
+assert(echo_count == 1)
 test_run:switch('router_1')
+
+--
+-- gh-288: kill the best replica. Don't need to wait for failover to happen for
+-- the router to start using the next best available replica.
+--
+test_run:cmd('stop server box_1_b')
+box_1_b = rs1.replicas[names.replica_uuid.box_1_b]
+test_run:wait_cond(function() return box_1_b.down_ts ~= nil end)
+vshard.router.callro(1, 'echo', {123})
+test_run:switch('box_1_c')
+assert(echo_count == 1)
+test_run:switch('router_1')
+test_run:cmd('start server box_1_b')
 
 -- Revive the best replica. A router must reconnect to it in
 -- FAILOVER_UP_TIMEOUT seconds.
