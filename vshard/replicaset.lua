@@ -13,6 +13,8 @@
 --             weight = number,
 --             down_ts = <timestamp of disconnect from the
 --                        replica>,
+--             backoff_ts = <timestamp when was sent into backoff state>,
+--             backoff_err = <error object caused the backoff>,
 --             net_timeout = <current network timeout for calls,
 --                            doubled on each network fail until
 --                            max value, and reset to minimal
@@ -140,6 +142,25 @@ local function netbox_wait_connected(conn, timeout)
         timeout = deadline - fiber_clock()
     until conn:is_connected()
     return timeout
+end
+
+--
+-- Check if the replica is not in backoff. It also serves as an update - if the
+-- replica still has an old backoff timestamp, it is cleared. This way of
+-- backoff update does not require any fibers to perform background updates.
+-- Hence works not only on the router.
+--
+local function replica_check_backoff(replica, now)
+    if not replica.backoff_ts then
+        return true
+    end
+    if replica.backoff_ts + consts.REPLICA_BACKOFF_INTERVAL > now then
+        return false
+    end
+    log.warn('Replica %s returns from backoff', replica.uuid)
+    replica.backoff_ts = nil
+    replica.backoff_err = nil
+    return true
 end
 
 --
@@ -422,6 +443,39 @@ local function can_retry_after_error(e)
 end
 
 --
+-- True if after the given error on call of the given function the connection
+-- must go into backoff.
+--
+local function can_backoff_after_error(e, func)
+    if not e then
+        return false
+    end
+    if type(e) ~= 'table' and
+       (type(e) ~= 'cdata' or not ffi.istype('struct error', e)) then
+        return false
+    end
+    -- So far it is enabled only for vshard's own functions. Including
+    -- vshard.storage.call(). Otherwise it is not possible to retry safely -
+    -- user's function could have side effects before raising that error.
+    -- For instance, 'access denied' could be raised by user's function
+    -- internally after it already changed some data on the storage.
+    if not func:startswith('vshard.') then
+        return false
+    end
+    -- ClientError is sent for all errors by old Tarantool versions which didn't
+    -- keep error type. New versions preserve the original error type.
+    if e.type == 'ClientError' or e.type == 'AccessDeniedError' then
+        if e.code == box.error.ACCESS_DENIED then
+            return e.message:startswith("Execute access to function 'vshard.")
+        end
+        if e.code == box.error.NO_SUCH_PROC then
+            return e.message:startswith("Procedure 'vshard.")
+        end
+    end
+    return false
+end
+
+--
 -- Pick a next replica according to round-robin load balancing
 -- policy.
 --
@@ -443,7 +497,7 @@ end
 -- until failover fiber will repair the nearest connection.
 --
 local function replicaset_template_multicallro(prefer_replica, balance)
-    local function pick_next_replica(replicaset)
+    local function pick_next_replica(replicaset, now)
         local r
         local master = replicaset.master
         if balance then
@@ -451,7 +505,8 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             while i > 0 do
                 r = replicaset_balance_replica(replicaset)
                 i = i - 1
-                if r:is_connected() and (not prefer_replica or r ~= master) then
+                if r:is_connected() and (not prefer_replica or r ~= master) and
+                   replica_check_backoff(r, now) then
                     return r
                 end
             end
@@ -459,7 +514,8 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             local start_r = replicaset.replica
             r = start_r
             while r do
-                if r:is_connected() and (not prefer_replica or r ~= master) then
+                if r:is_connected() and (not prefer_replica or r ~= master) and
+                   replica_check_backoff(r, now) then
                     return r
                 end
                 r = r.next_by_priority
@@ -471,7 +527,8 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                     -- Reached already checked part.
                     break
                 end
-                if r:is_connected() and (not prefer_replica or r ~= master) then
+                if r:is_connected() and (not prefer_replica or r ~= master) and
+                   replica_check_backoff(r, now) then
                     return r
                 end
             end
@@ -488,26 +545,43 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         if timeout <= 0 then
             return nil, lerror.timeout()
         end
-        local end_time = fiber_clock() + timeout
+        local now = fiber_clock()
+        local end_time = now + timeout
         while not net_status and timeout > 0 do
-            replica = pick_next_replica(replicaset)
+            replica = pick_next_replica(replicaset, now)
             if not replica then
                 replica, timeout = replicaset_wait_master(replicaset, timeout)
                 if not replica then
                     return nil, timeout
                 end
                 replicaset_connect_to_replica(replicaset, replica)
+                if replica.backoff_ts then
+                    return nil, lerror.vshard(
+                        lerror.code.REPLICASET_IN_BACKOFF, replicaset.uuid,
+                        replica.backoff_err)
+                end
             end
             opts.timeout = timeout
             net_status, storage_status, retval, err =
                 replica_call(replica, func, args, opts)
-            timeout = end_time - fiber_clock()
+            now = fiber_clock()
+            timeout = end_time - now
             if not net_status and not storage_status and
                not can_retry_after_error(retval) then
-                -- There is no sense to retry LuaJit errors, such as
-                -- assetions, not defined variables etc.
-                net_status = true
-                break
+                if can_backoff_after_error(retval, func) then
+                    if not replica.backoff_ts then
+                        log.warn('Replica %s goes into backoff for %s sec '..
+                                 'after error %s', replica.uuid,
+                                 consts.REPLICA_BACKOFF_INTERVAL, retval)
+                        replica.backoff_ts = now
+                        replica.backoff_err = retval
+                    end
+                else
+                    -- There is no sense to retry LuaJit errors, such as
+                    -- assertions, undefined variables etc.
+                    net_status = true
+                    break
+                end
             end
         end
         if not net_status then
@@ -549,6 +623,8 @@ local function rebind_replicasets(replicasets, old_replicasets)
                 local conn = old_replica.conn
                 replica.conn = conn
                 replica.down_ts = old_replica.down_ts
+                replica.backoff_ts = old_replica.backoff_ts
+                replica.backoff_err = old_replica.backoff_err
                 replica.net_timeout = old_replica.net_timeout
                 replica.net_sequential_ok = old_replica.net_sequential_ok
                 replica.net_sequential_fail = old_replica.net_sequential_fail
@@ -986,7 +1062,7 @@ local function buildall(sharding_cfg)
                 uri = replica.uri, name = replica.name, uuid = replica_uuid,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
-                down_ts = curr_ts,
+                down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
             }, replica_mt)
             new_replicaset.replicas[replica_uuid] = new_replica
             if replica.master then

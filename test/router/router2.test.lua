@@ -119,6 +119,113 @@ end
 test_run:wait_cond(wait_all_rw)
 vshard.router.info().bucket
 
+--
+-- gh-298: backoff replicas when the storage raises errors meaning its
+-- configuration is not finished or even didn't start. Immediately failover to
+-- other instances then.
+--
+test_run:switch('storage_2_b')
+-- Turn off replication so as _func manipulations on the master wouldn't reach
+-- the replica.
+old_replication = box.cfg.replication
+box.cfg{replication = {}}
+
+test_run:switch('storage_2_a')
+box.schema.user.revoke('storage', 'execute', 'function', 'vshard.storage.call')
+
+test_run:switch('router_1')
+vshard.consts.REPLICA_BACKOFF_INTERVAL = 0.1
+
+-- Indeed fails when called directly via netbox.
+conn = vshard.router.route(1).master.conn
+ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
+                {1, 'read', 'echo', {1}})
+assert(not ok and err.code == box.error.ACCESS_DENIED)
+
+-- Works when called via vshard - it goes to another replica transparently.
+long_timeout = {timeout = 1000000}
+res = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(res == 100)
+
+--
+-- When all replicas are in backoff due to lack of access, raise an error.
+--
+test_run:switch('storage_2_b')
+assert(echo_count == 1)
+echo_count = 0
+-- Restore the replication so the replica gets the _func change from master.
+box.cfg{replication = old_replication}
+test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+
+test_run:switch('router_1')
+ok, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(not ok and err.code == vshard.error.code.REPLICASET_IN_BACKOFF)
+assert(err.error.code == box.error.ACCESS_DENIED)
+
+test_run:switch('storage_2_a')
+assert(echo_count == 0)
+box.schema.user.grant('storage', 'execute', 'function', 'vshard.storage.call')
+test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+
+--
+-- No vshard function = backoff.
+--
+test_run:switch('router_1')
+-- Drop all backoffs to check all works fine now.
+fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+res = vshard.router.callrw(1, 'echo', {100}, long_timeout)
+assert(res == 100)
+
+test_run:switch('storage_2_a')
+assert(echo_count == 1)
+echo_count = 0
+old_storage_call = vshard.storage.call
+vshard.storage.call = nil
+
+-- Indeed fails when called directly via netbox.
+test_run:switch('router_1')
+conn = vshard.router.route(1).master.conn
+ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
+                {1, 'read', 'echo', {1}})
+assert(not ok and err.code == box.error.NO_SUCH_PROC)
+
+-- Works when called via vshard - it goes to another replica.
+res = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(res == 100)
+
+--
+-- When all replicas are in backoff due to not having the function, raise
+-- an error.
+--
+test_run:switch('storage_2_b')
+assert(echo_count == 1)
+echo_count = 0
+old_storage_call = vshard.storage.call
+vshard.storage.call = nil
+
+test_run:switch('router_1')
+ok, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(not ok and err.code == vshard.error.code.REPLICASET_IN_BACKOFF)
+assert(err.error.code == box.error.NO_SUCH_PROC)
+
+test_run:switch('storage_2_b')
+assert(echo_count == 0)
+vshard.storage.call = old_storage_call
+
+test_run:switch('storage_2_a')
+assert(echo_count == 0)
+vshard.storage.call = old_storage_call
+
+--
+-- Fails without backoff for other errors.
+--
+test_run:switch('router_1')
+fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+rs = vshard.router.route(1)
+ok, err = rs:callro('vshard.storage.call', {1, 'badmode', 'echo', {100}},       \
+                    long_timeout)
+assert(not ok and err.message:match('Unknown mode') ~= nil)
+
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")
 _ = test_run:cmd("cleanup server router_1")

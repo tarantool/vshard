@@ -172,7 +172,8 @@ local function bucket_discovery(router, bucket_id)
             replicaset:callrw('vshard.storage.bucket_stat', {bucket_id})
         if err == nil then
             return bucket_set(router, bucket_id, replicaset.uuid)
-        elseif err.code ~= lerror.code.WRONG_BUCKET then
+        elseif err.code ~= lerror.code.WRONG_BUCKET and
+               err.code ~= lerror.code.REPLICASET_IN_BACKOFF then
             last_err = err
             unreachable_uuid = uuid
         end

@@ -158,7 +158,13 @@ local error_message_template = {
         name = 'MULTIPLE_MASTERS_FOUND',
         msg = 'Found more than one master in replicaset %s on nodes %s and %s',
         args = {'replicaset_uuid', 'master1', 'master2'},
-    }
+    },
+    [32] = {
+        name = 'REPLICASET_IN_BACKOFF',
+        msg = 'Replicaset %s is in backoff, can\'t take requests right now. '..
+              'Last error was %s',
+        args = {'replicaset_uuid', 'error'}
+    },
 }
 
 --
