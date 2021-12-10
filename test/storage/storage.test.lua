@@ -299,6 +299,49 @@ vshard.storage._call('info')
 _ = test_run:switch('storage_1_b')
 vshard.storage._call('info')
 
+--
+-- gh-123, gh-298: storage auto-enable/disable depending on instance state.
+--
+_ = test_run:cmd('stop server storage_1_a')
+_ = test_run:cmd('start server storage_1_a with wait=False, '..                 \
+                 'args="boot_before_cfg"')
+_ = test_run:switch('storage_1_a')
+-- Leaving box.cfg() not called won't work because at 1.10 test-run somewhy
+-- raises an error when try to start an instance without box.cfg(). It can only
+-- be emulated.
+old_cfg = box.cfg
+assert(type(old_cfg) == 'table')
+box.cfg = function(...) return old_cfg(...) end
+
+ok, err = pcall(vshard.storage.call, 1, 'read', 'echo', {100})
+assert(not ok and err.code == vshard.error.code.STORAGE_IS_DISABLED)
+assert(err.message:match('box seems not to be configured') ~= nil)
+box.cfg = old_cfg
+
+-- Disabled until box is loaded.
+vshard.storage.internal.errinj.ERRINJ_CFG_DELAY = true
+f = fiber.create(vshard.storage.cfg, cfg, instance_uuid)
+f:set_joinable(true)
+
+old_info = box.info
+box.info = {status = 'loading'}
+ok, err = pcall(vshard.storage.call, 1, 'read', 'echo', {100})
+assert(not ok and err.code == vshard.error.code.STORAGE_IS_DISABLED)
+assert(err.message:match('instance status is "loading"') ~= nil)
+box.info = old_info
+
+-- Disabled until storage is configured.
+test_run:wait_cond(function() return box.info.status == 'running' end)
+ok, err = pcall(vshard.storage.call, 1, 'read', 'echo', {100})
+assert(not ok and err.code == vshard.error.code.STORAGE_IS_DISABLED)
+assert(err.message:match('storage is not configured') ~= nil)
+vshard.storage.internal.errinj.ERRINJ_CFG_DELAY = false
+f:join()
+
+-- Enabled when all criteria are finally satisfied.
+ok, res = vshard.storage.call(1, 'read', 'echo', {100})
+assert(ok and res == 100)
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

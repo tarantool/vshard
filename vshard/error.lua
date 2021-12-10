@@ -165,6 +165,11 @@ local error_message_template = {
               'Last error was %s',
         args = {'replicaset_uuid', 'error'}
     },
+    [33] = {
+        name = 'STORAGE_IS_DISABLED',
+        msg = 'Storage is disabled: %s',
+        args = {'reason'}
+    },
 }
 
 --

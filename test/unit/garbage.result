@@ -16,7 +16,7 @@ test_run:cmd("setopt delimiter ';'")
 ...
 function show_sharded_spaces()
     local result = {}
-    for k, space in pairs(vshard.storage.sharded_spaces()) do
+    for k, space in pairs(vshard.storage._sharded_spaces()) do
         table.insert(result, space.name)
     end
     table.sort(result)
@@ -489,7 +489,10 @@ f:cancel()
 util = require('util')
 ---
 ...
-util.check_error(vshard.storage.bucket_delete_garbage)
+delete_garbage = vshard.storage._bucket_delete_garbage
+---
+...
+util.check_error(delete_garbage)
 ---
 - 'Usage: bucket_delete_garbage(bucket_id, opts)'
 ...
@@ -506,7 +509,7 @@ s:replace{6, 4}
 ---
 - [6, 4]
 ...
-vshard.storage.bucket_delete_garbage(4)
+delete_garbage(4)
 ---
 ...
 s:select{}
@@ -526,7 +529,7 @@ s:replace{6, 4}
 ---
 - [6, 4]
 ...
-vshard.storage.bucket_delete_garbage(4)
+delete_garbage(4)
 ---
 ...
 s:select{}
@@ -547,16 +550,16 @@ s:replace{6, 4}
 ---
 - [6, 4]
 ...
-util.check_error(vshard.storage.bucket_delete_garbage, 4)
+util.check_error(delete_garbage, 4)
 ---
 - Can not delete not garbage bucket. Use "{force=true}" to ignore this attention
 ...
-util.check_error(vshard.storage.bucket_delete_garbage, 4, 10000)
+util.check_error(delete_garbage, 4, 10000)
 ---
 - 'Usage: bucket_delete_garbage(bucket_id, opts)'
 ...
 -- 'Force' option ignores this error.
-vshard.storage.bucket_delete_garbage(4, {force = true})
+delete_garbage(4, {force = true})
 ---
 ...
 s:select{}

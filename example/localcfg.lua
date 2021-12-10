@@ -1,5 +1,4 @@
 return {
-    memtx_memory = 100 * 1024 * 1024,
     sharding = {
         ['cbf06940-0790-498b-948d-042b62cf3d29'] = { -- replicaset #1
             replicas = {

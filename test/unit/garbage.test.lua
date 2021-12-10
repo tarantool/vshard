@@ -6,7 +6,7 @@ engine = test_run:get_cfg('engine')
 test_run:cmd("setopt delimiter ';'")
 function show_sharded_spaces()
     local result = {}
-    for k, space in pairs(vshard.storage.sharded_spaces()) do
+    for k, space in pairs(vshard.storage._sharded_spaces()) do
         table.insert(result, space.name)
     end
     table.sort(result)
@@ -197,30 +197,31 @@ f:cancel()
 --
 util = require('util')
 
-util.check_error(vshard.storage.bucket_delete_garbage)
+delete_garbage = vshard.storage._bucket_delete_garbage
+util.check_error(delete_garbage)
 
 -- Delete an existing garbage bucket.
 _bucket:replace{4, vshard.consts.BUCKET.SENT}
 s:replace{5, 4}
 s:replace{6, 4}
-vshard.storage.bucket_delete_garbage(4)
+delete_garbage(4)
 s:select{}
 
 -- Delete a not existing garbage bucket.
 _ = _bucket:delete{4}
 s:replace{5, 4}
 s:replace{6, 4}
-vshard.storage.bucket_delete_garbage(4)
+delete_garbage(4)
 s:select{}
 
 -- Fail to delete a not garbage bucket.
 _bucket:replace{4, vshard.consts.BUCKET.ACTIVE}
 s:replace{5, 4}
 s:replace{6, 4}
-util.check_error(vshard.storage.bucket_delete_garbage, 4)
-util.check_error(vshard.storage.bucket_delete_garbage, 4, 10000)
+util.check_error(delete_garbage, 4)
+util.check_error(delete_garbage, 4, 10000)
 -- 'Force' option ignores this error.
-vshard.storage.bucket_delete_garbage(4, {force = true})
+delete_garbage(4, {force = true})
 s:select{}
 
 --

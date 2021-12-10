@@ -75,7 +75,7 @@ build_routes(replicasets)
 --
 -- Test rebalancer local state.
 --
-get_state = vshard.storage.rebalancer_request_state
+get_state = vshard.storage._rebalancer_request_state
 _bucket = box.schema.create_space('_bucket')
 pk = _bucket:create_index('pk')
 status = _bucket:create_index('status', {parts = {{2, 'string'}}, unique = false})

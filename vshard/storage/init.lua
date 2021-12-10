@@ -134,6 +134,16 @@ if not M then
         -- help routers find a new location for sent and deleted buckets without
         -- whole cluster scan.
         route_map = {},
+        -- Flag whether vshard.storage.cfg() is finished.
+        is_configured = false,
+        -- Flag whether box.info.status is acceptable. For instance, 'loading'
+        -- is not.
+        is_loaded = false,
+        -- Reference to the function-proxy to most of the public functions. It
+        -- allows to avoid 'if's in each function by adding expensive
+        -- conditional checks in one rarely used version of the wrapper and no
+        -- checks into the other almost always used wrapper.
+        api_call_cache = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -670,19 +680,19 @@ local function this_is_master()
            M.this_replica == M.this_replicaset.master
 end
 
-local function on_master_disable(...)
-    M._on_master_disable(...)
+local function on_master_disable(new_func, old_func)
+    M._on_master_disable(new_func, old_func)
     -- If a trigger is set after storage.cfg(), then notify an
     -- user, that the current instance is not master.
-    if select('#', ...) == 1 and not this_is_master() then
+    if old_func == nil and not this_is_master() then
         M._on_master_disable:run()
     end
 end
 
-local function on_master_enable(...)
-    M._on_master_enable(...)
+local function on_master_enable(new_func, old_func)
+    M._on_master_enable(new_func, old_func)
     -- Same as above, but notify, that the instance is master.
-    if select('#', ...) == 1 and this_is_master() then
+    if old_func == nil and this_is_master() then
         M._on_master_enable:run()
     end
 end
@@ -1361,6 +1371,13 @@ local function find_sharded_spaces()
     sharded_spaces_cache_schema_version = box.internal.schema_version()
     sharded_spaces_cache = spaces
     return spaces
+end
+
+--
+-- Public wrapper for sharded spaces list getter.
+--
+local function storage_sharded_spaces()
+    return table.deepcopy(find_sharded_spaces())
 end
 
 if M.errinj.ERRINJ_RELOAD then
@@ -2764,6 +2781,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         M.rebalancer_fiber = nil
     end
     lua_gc.set_state(M.collect_lua_garbage, consts.COLLECT_LUA_GARBAGE_INTERVAL)
+    M.is_configured = true
     -- Destroy connections, not used in a new configuration.
     collectgarbage()
 end
@@ -2916,6 +2934,55 @@ local function storage_info()
 end
 
 --------------------------------------------------------------------------------
+-- Public API protection
+--------------------------------------------------------------------------------
+
+--
+-- Arguments are listed explicitly instead of '...' because the latter does not
+-- jit.
+--
+local function storage_api_call_safe(func, arg1, arg2, arg3, arg4)
+    return func(arg1, arg2, arg3, arg4)
+end
+
+--
+-- Unsafe proxy is loaded with protections. But it is used rarely and only in
+-- the beginning of instance's lifetime.
+--
+local function storage_api_call_unsafe(func, arg1, arg2, arg3, arg4)
+    -- box.info is quite expensive. Avoid calling it again when the instance
+    -- is finally loaded.
+    if not M.is_loaded then
+        if type(box.cfg) == 'function' then
+            local msg = 'box seems not to be configured'
+            return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
+        end
+        local status = box.info.status
+        -- 'Orphan' is allowed because even if a replica is an orphan, it still
+        -- could be up to date. Just not all other replicas are connected.
+        if status ~= 'running' and status ~= 'orphan' then
+            local msg = ('instance status is "%s"'):format(status)
+            return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
+        end
+        M.is_loaded = true
+    end
+    if not M.is_configured then
+        local msg = 'storage is not configured'
+        return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
+    end
+    M.api_call_cache = storage_api_call_safe
+    return func(arg1, arg2, arg3, arg4)
+end
+
+M.api_call_cache = storage_api_call_unsafe
+
+local function storage_make_api(func)
+    return function(arg1, arg2, arg3, arg4)
+        return M.api_call_cache(func, arg1, arg2, arg3, arg4)
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
 --
@@ -3021,44 +3088,67 @@ M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
 lregistry.storage = M
 
+--
+-- Not all methods are public here. Private methods should not be exposed if
+-- possible. At least not without notable difference in naming.
+--
 return {
-    sync = sync,
-    bucket_force_create = bucket_force_create,
-    bucket_force_drop = bucket_force_drop,
-    bucket_collect = bucket_collect,
-    bucket_recv = bucket_recv,
-    bucket_send = bucket_send,
-    bucket_stat = bucket_stat,
-    bucket_pin = bucket_pin,
-    bucket_unpin = bucket_unpin,
-    bucket_ref = bucket_ref,
-    bucket_unref = bucket_unref,
-    bucket_refro = bucket_refro,
-    bucket_refrw = bucket_refrw,
-    bucket_unrefro = bucket_unrefro,
-    bucket_unrefrw = bucket_unrefrw,
-    bucket_delete_garbage = bucket_delete_garbage,
-    garbage_collector_wakeup = garbage_collector_wakeup,
-    rebalancer_wakeup = rebalancer_wakeup,
-    rebalancer_apply_routes = rebalancer_apply_routes,
-    rebalancer_disable = rebalancer_disable,
-    rebalancer_enable = rebalancer_enable,
-    is_locked = is_this_replicaset_locked,
-    rebalancing_is_in_progress = rebalancing_is_in_progress,
-    recovery_wakeup = recovery_wakeup,
-    call = storage_call,
-    _call = service_call,
-    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
-    info = storage_info,
-    buckets_info = storage_buckets_info,
-    buckets_count = bucket_count_public,
-    buckets_discovery = buckets_discovery,
-    rebalancer_request_state = rebalancer_request_state,
-    internal = M,
-    on_master_enable = on_master_enable,
-    on_master_disable = on_master_disable,
-    sharded_spaces = function()
-        return table.deepcopy(find_sharded_spaces())
-    end,
+    --
+    -- Bucket methods.
+    --
+    bucket_force_create = storage_make_api(bucket_force_create),
+    bucket_force_drop = storage_make_api(bucket_force_drop),
+    bucket_collect = storage_make_api(bucket_collect),
+    bucket_recv = storage_make_api(bucket_recv),
+    bucket_send = storage_make_api(bucket_send),
+    bucket_stat = storage_make_api(bucket_stat),
+    bucket_pin = storage_make_api(bucket_pin),
+    bucket_unpin = storage_make_api(bucket_unpin),
+    bucket_ref = storage_make_api(bucket_ref),
+    bucket_unref = storage_make_api(bucket_unref),
+    bucket_refro = storage_make_api(bucket_refro),
+    bucket_refrw = storage_make_api(bucket_refrw),
+    bucket_unrefro = storage_make_api(bucket_unrefro),
+    bucket_unrefrw = storage_make_api(bucket_unrefrw),
+    bucket_delete_garbage = storage_make_api(bucket_delete_garbage),
+    _bucket_delete_garbage = bucket_delete_garbage,
+    buckets_info = storage_make_api(storage_buckets_info),
+    buckets_count = storage_make_api(bucket_count_public),
+    buckets_discovery = storage_make_api(buckets_discovery),
+    --
+    -- Garbage collector.
+    --
+    garbage_collector_wakeup = storage_make_api(garbage_collector_wakeup),
+    --
+    -- Rebalancer.
+    --
+    rebalancer_wakeup = storage_make_api(rebalancer_wakeup),
+    rebalancer_apply_routes = storage_make_api(rebalancer_apply_routes),
+    rebalancer_disable = storage_make_api(rebalancer_disable),
+    rebalancer_enable = storage_make_api(rebalancer_enable),
+    rebalancing_is_in_progress = storage_make_api(rebalancing_is_in_progress),
+    rebalancer_request_state = storage_make_api(rebalancer_request_state),
+    _rebalancer_request_state = rebalancer_request_state,
+    --
+    -- Recovery.
+    --
+    recovery_wakeup = storage_make_api(recovery_wakeup),
+    --
+    -- Instance info.
+    --
+    is_locked = storage_make_api(is_this_replicaset_locked),
+    info = storage_make_api(storage_info),
+    sharded_spaces = storage_make_api(storage_sharded_spaces),
+    _sharded_spaces = storage_sharded_spaces,
     module_version = function() return M.module_version end,
+    --
+    -- Miscellaneous.
+    --
+    call = storage_make_api(storage_call),
+    _call = storage_make_api(service_call),
+    sync = storage_make_api(sync),
+    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
+    on_master_enable = storage_make_api(on_master_enable),
+    on_master_disable = storage_make_api(on_master_disable),
+    internal = M,
 }
