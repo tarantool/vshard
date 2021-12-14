@@ -1052,6 +1052,33 @@ assert(ok and res == 100)
 ---
 - true
 ...
+--
+-- Manual enable/disable.
+--
+vshard.storage.disable()
+---
+...
+ok, err = pcall(vshard.storage.call, 1, 'read', 'echo', {100})
+---
+...
+assert(not ok and err.code == vshard.error.code.STORAGE_IS_DISABLED)
+---
+- true
+...
+assert(err.message:match('storage is disabled explicitly') ~= nil)
+---
+- true
+...
+vshard.storage.enable()
+---
+...
+ok, res = vshard.storage.call(1, 'read', 'echo', {100})
+---
+...
+assert(ok and res == 100)
+---
+- true
+...
 _ = test_run:switch("default")
 ---
 ...

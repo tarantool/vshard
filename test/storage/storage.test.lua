@@ -342,6 +342,18 @@ f:join()
 ok, res = vshard.storage.call(1, 'read', 'echo', {100})
 assert(ok and res == 100)
 
+--
+-- Manual enable/disable.
+--
+vshard.storage.disable()
+ok, err = pcall(vshard.storage.call, 1, 'read', 'echo', {100})
+assert(not ok and err.code == vshard.error.code.STORAGE_IS_DISABLED)
+assert(err.message:match('storage is disabled explicitly') ~= nil)
+
+vshard.storage.enable()
+ok, res = vshard.storage.call(1, 'read', 'echo', {100})
+assert(ok and res == 100)
+
 _ = test_run:switch("default")
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

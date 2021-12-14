@@ -139,6 +139,9 @@ if not M then
         -- Flag whether box.info.status is acceptable. For instance, 'loading'
         -- is not.
         is_loaded = false,
+        -- Flag whether the instance is enabled manually. It is true by default
+        -- for backward compatibility with old vshard.
+        is_enabled = true,
         -- Reference to the function-proxy to most of the public functions. It
         -- allows to avoid 'if's in each function by adding expensive
         -- conditional checks in one rarely used version of the wrapper and no
@@ -201,6 +204,11 @@ if not M then
     }
 else
     bucket_ref_new = ffi.typeof("struct bucket_ref")
+
+    -- It is not set when reloaded from an old vshard version.
+    if M.is_enabled == nil then
+        M.is_enabled = true
+    end
 end
 
 --
@@ -2970,6 +2978,10 @@ local function storage_api_call_unsafe(func, arg1, arg2, arg3, arg4)
         local msg = 'storage is not configured'
         return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
     end
+    if not M.is_enabled then
+        local msg = 'storage is disabled explicitly'
+        return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
+    end
     M.api_call_cache = storage_api_call_safe
     return func(arg1, arg2, arg3, arg4)
 end
@@ -2980,6 +2992,20 @@ local function storage_make_api(func)
     return function(arg1, arg2, arg3, arg4)
         return M.api_call_cache(func, arg1, arg2, arg3, arg4)
     end
+end
+
+local function storage_enable()
+    M.is_enabled = true
+end
+
+--
+-- Disable can be used in case the storage entered a critical state in which
+-- requests are not allowed. For instance, its config got broken or too old
+-- compared to a centric config somewhere.
+--
+local function storage_disable()
+    M.is_enabled = false
+    M.api_call_cache = storage_api_call_unsafe
 end
 
 --------------------------------------------------------------------------------
@@ -3150,5 +3176,7 @@ return {
     cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     on_master_enable = storage_make_api(on_master_enable),
     on_master_disable = storage_make_api(on_master_disable),
+    enable = storage_enable,
+    disable = storage_disable,
     internal = M,
 }
