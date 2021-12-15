@@ -226,6 +226,42 @@ ok, err = rs:callro('vshard.storage.call', {1, 'badmode', 'echo', {100}},       
                     long_timeout)
 assert(not ok and err.message:match('Unknown mode') ~= nil)
 
+--
+-- Storage is disabled = backoff.
+--
+test_run:switch('storage_2_a')
+vshard.storage.disable()
+
+test_run:switch('router_1')
+-- Drop old backoffs.
+fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+-- Success, but internally the request was retried.
+res, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(res == 100)
+-- The best replica entered backoff state.
+util = require('util')
+storage_2 = vshard.router.static.replicasets[replicasets[2]]
+storage_2_a = storage_2.replicas[util.name_to_uuid.storage_2_a]
+assert(storage_2_a.backoff_ts ~= nil)
+
+test_run:switch('storage_2_b')
+assert(echo_count == 1)
+echo_count = 0
+
+test_run:switch('storage_2_a')
+assert(echo_count == 0)
+vshard.storage.enable()
+
+test_run:switch('router_1')
+-- Drop the backoff.
+fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+-- Now goes to the best replica - it is enabled again.
+res, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
+assert(res == 100)
+
+test_run:switch('storage_2_a')
+assert(echo_count == 1)
+
 _ = test_run:switch("default")
 _ = test_run:cmd("stop server router_1")
 _ = test_run:cmd("cleanup server router_1")

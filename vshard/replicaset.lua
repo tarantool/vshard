@@ -347,9 +347,21 @@ local function replica_call(replica, func, args, opts)
         if opts.timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
+        local err = storage_status
+        -- VShard functions can throw exceptions using error() function. When
+        -- it reaches the network layer, it is wrapped into LuajitError. Try to
+        -- extract the original error if this is the case. Not always is
+        -- possible - the string representation could be truncated.
+        --
+        -- In old Tarantool versions LuajitError turned into ClientError on the
+        -- client. Check both types.
+        if func:startswith('vshard.') and (err.type == 'LuajitError' or
+           err.type == 'ClientError') then
+            err = lerror.from_string(err.message) or err
+        end
         log.error("Exception during calling '%s' on '%s': %s", func, replica,
-                  storage_status)
-        return false, nil, lerror.make(storage_status)
+                  err)
+        return false, nil, lerror.make(err)
     else
         replica_on_success_request(replica)
     end
@@ -471,6 +483,9 @@ local function can_backoff_after_error(e, func)
         if e.code == box.error.NO_SUCH_PROC then
             return e.message:startswith("Procedure 'vshard.")
         end
+    end
+    if e.type == 'ShardingError' then
+        return e.code == vshard.error.code.STORAGE_IS_DISABLED
     end
     return false
 end
