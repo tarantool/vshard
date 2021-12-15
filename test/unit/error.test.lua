@@ -19,6 +19,20 @@ log = require('log')
 log.info('Log error: %s', vshard_error)
 test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"')
 
+e = lerror.vshard(lerror.code.STORAGE_IS_DISABLED, 'any reason')
+e = lerror.from_string(tostring(e))
+assert(e.code == lerror.code.STORAGE_IS_DISABLED)
+assert(e.type == 'ShardingError')
+assert(e.message == 'Storage is disabled: any reason')
+
+assert(not lerror.from_string('bad json'))
+assert(not lerror.from_string('100'))
+assert(not lerror.from_string('{"type": 100}'))
+assert(not lerror.from_string('{"type": "type", "code": "str"}'))
+assert(not lerror.from_string('{"type": "type", "code": 100, "message": 100}'))
+assert(lerror.from_string('{"type": "type", "code": 100, '..                    \
+                          '"message": "msg"}') ~= nil)
+
 --
 -- Part of gh-100: check `error.vshard`.
 --

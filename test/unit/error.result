@@ -48,6 +48,49 @@ test_run:grep_log('default', '"reason":"reason","code":11,"type":"ShardingError"
 ---
 - '"reason":"reason","code":11,"type":"ShardingError"'
 ...
+e = lerror.vshard(lerror.code.STORAGE_IS_DISABLED, 'any reason')
+---
+...
+e = lerror.from_string(tostring(e))
+---
+...
+assert(e.code == lerror.code.STORAGE_IS_DISABLED)
+---
+- true
+...
+assert(e.type == 'ShardingError')
+---
+- true
+...
+assert(e.message == 'Storage is disabled: any reason')
+---
+- true
+...
+assert(not lerror.from_string('bad json'))
+---
+- true
+...
+assert(not lerror.from_string('100'))
+---
+- true
+...
+assert(not lerror.from_string('{"type": 100}'))
+---
+- true
+...
+assert(not lerror.from_string('{"type": "type", "code": "str"}'))
+---
+- true
+...
+assert(not lerror.from_string('{"type": "type", "code": 100, "message": 100}'))
+---
+- true
+...
+assert(lerror.from_string('{"type": "type", "code": 100, '..                    \
+                          '"message": "msg"}') ~= nil)
+---
+- true
+...
 --
 -- Part of gh-100: check `error.vshard`.
 --

@@ -244,6 +244,24 @@ local function make_error(e)
     end
 end
 
+--
+-- Restore an error object from its string serialization.
+--
+local function from_string(str)
+    -- Error objects in VShard are stringified into json. Hence can restore also
+    -- as json. The only problem is that the json might be truncated if it was
+    -- stored in an error message of a real error object. It is not very
+    -- reliable.
+    local ok, res = pcall(json.decode, str)
+    if not ok then
+        return nil
+    end
+    if type(res) ~= 'table' or type(res.type) ~= 'string' or
+       type(res.code) ~= 'number' or type(res.message) ~= 'string' then
+        return nil
+    end
+    return make_error(res)
+end
 
 local function make_alert(code, ...)
     local format = error_message_template[code]
@@ -266,6 +284,7 @@ return {
     box = box_error,
     vshard = vshard_error,
     make = make_error,
+    from_string = from_string,
     alert = make_alert,
     timeout = make_timeout,
 }
