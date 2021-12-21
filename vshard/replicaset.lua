@@ -417,7 +417,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
             return nil, lerror.vshard(lerror.code.MISSING_MASTER,
                                       replicaset.uuid)
         end
-        local timeout = opts.timeout or consts.MASTER_SEARCH_TIEMOUT
+        local timeout = opts.timeout or consts.MASTER_SEARCH_TIMEOUT
         master, timeout = replicaset_wait_master(replicaset, timeout)
         if not master then
             return nil, timeout
@@ -744,7 +744,7 @@ local function replicaset_locate_master(replicaset)
     end
     local func = 'vshard.storage._call'
     local args = {'info'}
-    local const_timeout = consts.MASTER_SEARCH_TIEMOUT
+    local const_timeout = consts.MASTER_SEARCH_TIMEOUT
     local ok, res, err, f
     local master = replicaset.master
     if master then
