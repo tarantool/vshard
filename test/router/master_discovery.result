@@ -979,6 +979,16 @@ assert(rs.master == nil)
  | - true
  | ...
 
+-- Replica reports self as both master and not - ignore conflicting info.
+assert(rs:update_master(storage_b_uuid, storage_b_uuid))
+ | ---
+ | - true
+ | ...
+assert(rs.master == nil)
+ | ---
+ | - true
+ | ...
+
 master_discovery_unblock()
  | ---
  | ...

@@ -680,7 +680,7 @@ local function replicaset_update_master(replicaset, old_master_uuid,
     if old_master_uuid == candidate_uuid then
         -- It should not happen ever, but be ready to everything.
         log.warn('Replica %s in replicaset %s reports self as both master '..
-                 'and not master', master_uuid, replicaset_uuid)
+                 'and not master', old_master_uuid, replicaset_uuid)
         return is_auto
     end
     local master = replicaset.master
