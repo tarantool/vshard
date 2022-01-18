@@ -450,6 +450,10 @@ assert(rs.master.uuid == storage_b_uuid)
 assert(rs:update_master(storage_b_uuid, util.name_to_uuid.storage_2_a))
 assert(rs.master == nil)
 
+-- Replica reports self as both master and not - ignore conflicting info.
+assert(rs:update_master(storage_b_uuid, storage_b_uuid))
+assert(rs.master == nil)
+
 master_discovery_unblock()
 test_run:wait_cond(check_all_masters_found)
 
