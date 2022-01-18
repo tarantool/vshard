@@ -485,7 +485,7 @@ local function can_backoff_after_error(e, func)
         end
     end
     if e.type == 'ShardingError' then
-        return e.code == vshard.error.code.STORAGE_IS_DISABLED
+        return e.code == lerror.code.STORAGE_IS_DISABLED
     end
     return false
 end

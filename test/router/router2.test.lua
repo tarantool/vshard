@@ -236,8 +236,16 @@ test_run:switch('router_1')
 -- Drop old backoffs.
 fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
 -- Success, but internally the request was retried.
-res, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
+--
+-- n/a: there was a bug when an error code in the router depended
+-- on vshard.error being global. Nullify it to ensure it is not
+-- the case anymore.
+router = vshard.router
+vshard = nil
+res, err = router.callro(1, 'echo', {100}, long_timeout)
 assert(res == 100)
+vshard = package.loaded.vshard
+
 -- The best replica entered backoff state.
 util = require('util')
 storage_2 = vshard.router.static.replicasets[replicasets[2]]
