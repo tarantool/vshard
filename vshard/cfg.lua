@@ -2,7 +2,6 @@
 
 local log = require('log')
 local luri = require('uri')
-local lutil = require('vshard.util')
 local consts = require('vshard.consts')
 
 local function check_uri(uri)
@@ -22,10 +21,6 @@ local function check_replica_master(master, ctx)
 end
 
 local function check_replicaset_master(master, ctx)
-    -- Limit the version due to extensive usage of netbox is_async feature.
-    if not lutil.version_is_at_least(1, 10, 1) then
-        error('Only versions >= 1.10.1 support master discovery')
-    end
     if master ~= 'auto' then
         error('Only "auto" master is supported')
     end

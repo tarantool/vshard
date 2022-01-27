@@ -1288,11 +1288,8 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         local space_name, space_data = row[1], row[2]
         local space = box.space[space_name]
         if space == nil then
-            -- Tarantool doesn't provide API to create box.error
-            -- objects before 1.10.
-            local _, boxerror = pcall(box.error, box.error.NO_SUCH_SPACE,
-                                      space_name)
-            return nil, lerror.box(boxerror)
+            local err = box.error.new(box.error.NO_SUCH_SPACE, space_name)
+            return nil, lerror.box(err)
         end
         box.begin()
         for _, tuple in ipairs(space_data) do
@@ -2209,13 +2206,6 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    if not util.version_is_at_least(1, 10, 0) then
-        -- Return control to the caller immediately to allow it
-        -- to finish preparations. In 1.9 a caller couldn't create
-        -- a fiber without switching to it.
-        lfiber.yield()
-    end
-
     local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     local active_key = {consts.BUCKET.ACTIVE}
@@ -2299,12 +2289,7 @@ local function rebalancer_apply_routes_f(routes)
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
     for i = 1, worker_count do
-        local f
-        if util.version_is_at_least(1, 10, 0) then
-            f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
-        else
-            f = lfiber.create(rebalancer_worker_f, i, dispenser, quit_cond)
-        end
+        local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
         f:set_joinable(true)
         workers[i] = f
     end

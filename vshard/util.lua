@@ -154,6 +154,10 @@ local function version_is_at_least(major_need, middle_need, minor_need)
     return minor >= minor_need
 end
 
+if not version_is_at_least(1, 10, 1) then
+    error("VShard supports only Tarantool >= 1.10.1")
+end
+
 --
 -- Copy @a src table. Fiber yields every @a interval keys copied. Does not give
 -- any guarantees on what is the result when the source table is changed during

@@ -249,15 +249,10 @@ local function discovery_handle_buckets(router, replicaset, buckets)
     end
 end
 
-local discovery_f
-
-if util.version_is_at_least(1, 10, 0) then
 --
--- >= 1.10 version of discovery fiber does parallel discovery of
--- all replicasets at once. It uses is_async feature of netbox
--- for that.
+-- Bucket discovery main loop.
 --
-discovery_f = function(router)
+local function discovery_f(router)
     local module_version = M.module_version
     assert(router.discovery_mode == 'on' or router.discovery_mode == 'once')
     local iterators = {}
@@ -392,47 +387,6 @@ discovery_f = function(router)
             end
         until next(router.replicasets)
     end
-end
-
--- Version >= 1.10.
-else
--- Version < 1.10.
-
---
--- Background fiber to perform discovery. It periodically scans
--- replicasets one by one and updates route_map.
---
-discovery_f = function(router)
-    local module_version = M.module_version
-    while module_version == M.module_version do
-        while not next(router.replicasets) do
-            lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
-        end
-        local old_replicasets = router.replicasets
-        for rs_uuid, replicaset in pairs(router.replicasets) do
-            local active_buckets, err =
-                replicaset:callro('vshard.storage.buckets_discovery', {},
-                                  {timeout = 2})
-            while M.errinj.ERRINJ_LONG_DISCOVERY do
-                M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
-                lfiber.sleep(0.01)
-            end
-            -- Renew replicasets object captured by the for loop
-            -- in case of reconfigure and reload events.
-            if router.replicasets ~= old_replicasets then
-                break
-            end
-            if not active_buckets then
-                log.error('Error during discovery %s: %s', replicaset, err)
-            else
-                discovery_handle_buckets(router, replicaset, active_buckets)
-            end
-            lfiber.sleep(consts.DISCOVERY_IDLE_INTERVAL)
-        end
-    end
-end
-
--- Version < 1.10.
 end
 
 --
@@ -758,9 +712,6 @@ local function router_call(router, bucket_id, opts, ...)
                             ...)
 end
 
-local router_map_callrw
-
-if util.version_is_at_least(1, 10, 0) then
 --
 -- Consistent Map-Reduce. The given function is called on all masters in the
 -- cluster with a guarantee that in case of success it was executed with all
@@ -800,7 +751,7 @@ if util.version_is_at_least(1, 10, 0) then
 --     about concrete replicaset. For example, not all buckets were found even
 --     though all replicasets were scanned.
 --
-router_map_callrw = function(router, func, args, opts)
+local function router_map_callrw(router, func, args, opts)
     local replicasets = router.replicasets
     local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
     local deadline = fiber_clock() + timeout
@@ -917,16 +868,6 @@ router_map_callrw = function(router, func, args, opts)
     end
     err = lerror.make(err)
     return nil, err, err_uuid
-end
-
--- Version >= 1.10.
-else
--- Version < 1.10.
-
-router_map_callrw = function()
-    error('Supported for Tarantool >= 1.10')
-end
-
 end
 
 --

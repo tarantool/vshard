@@ -235,8 +235,7 @@ local function make_error(e)
         -- box.error, return unpacked
         return box_error(e)
     elseif type(e) == 'string' then
-        local ok, err = pcall(box.error, box.error.PROC_LUA, e)
-        return box_error(err)
+        return box_error(box.error.new(box.error.PROC_LUA, e))
     elseif type(e) == 'table' then
         return setmetatable(e, {__tostring = json.encode})
     else
@@ -271,12 +270,10 @@ local function make_alert(code, ...)
 end
 
 --
--- Create a timeout error object. Box.error.new() can't be used because is
--- present only since 1.10.
+-- Create a timeout error object.
 --
 local function make_timeout()
-    local _, err = pcall(box.error, box.error.TIMEOUT)
-    return make_error(err)
+    return make_error(box.error.new(box.error.TIMEOUT))
 end
 
 return {
