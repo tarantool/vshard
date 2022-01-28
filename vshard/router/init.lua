@@ -8,8 +8,7 @@ local MODULE_INTERNALS = '__module_vshard_router'
 if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg',
-        'vshard.hash', 'vshard.replicaset', 'vshard.util',
-        'vshard.lua_gc',
+        'vshard.hash', 'vshard.replicaset', 'vshard.util'
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -21,7 +20,6 @@ local lcfg = require('vshard.cfg')
 local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
-local lua_gc = require('vshard.lua_gc')
 local seq_serializer = { __serialize = 'seq' }
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -43,8 +41,6 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
-        -- Number of router which require collecting lua garbage.
-        collect_lua_garbage_cnt = 0,
 
         ----------------------- Map-Reduce -----------------------
         -- Storage Ref ID. It must be unique for each ref request
@@ -79,8 +75,6 @@ local ROUTER_TEMPLATE = {
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
         known_bucket_count = 0,
-        -- Boolean lua_gc state (create periodic gc task).
-        collect_lua_garbage = nil,
         -- Timeout after which a ping is considered to be
         -- unacknowledged. Used by failover fiber to detect if a
         -- node is down.
@@ -130,26 +124,6 @@ local function route_map_clear(router)
     router.known_bucket_count = 0
     for _, rs in pairs(router.replicasets) do
         rs.bucket_count = 0
-    end
-end
-
---
--- Increase/decrease number of routers which require to collect
--- a lua garbage and change state of the `lua_gc` fiber.
---
-
-local function lua_gc_cnt_inc()
-    M.collect_lua_garbage_cnt = M.collect_lua_garbage_cnt + 1
-    if M.collect_lua_garbage_cnt == 1 then
-        lua_gc.set_state(true, consts.COLLECT_LUA_GARBAGE_INTERVAL)
-    end
-end
-
-local function lua_gc_cnt_dec()
-    M.collect_lua_garbage_cnt = M.collect_lua_garbage_cnt - 1
-    assert(M.collect_lua_garbage_cnt >= 0)
-    if M.collect_lua_garbage_cnt == 0 then
-        lua_gc.set_state(false, consts.COLLECT_LUA_GARBAGE_INTERVAL)
     end
 end
 
@@ -1187,19 +1161,11 @@ local function router_cfg(router, cfg, is_reload)
     for _, replicaset in pairs(new_replicasets) do
         replicaset:connect_all()
     end
-    -- Change state of lua GC.
-    if vshard_cfg.collect_lua_garbage and not router.collect_lua_garbage then
-        lua_gc_cnt_inc()
-    elseif not vshard_cfg.collect_lua_garbage and
-       router.collect_lua_garbage then
-        lua_gc_cnt_dec()
-    end
     lreplicaset.wait_masters_connect(new_replicasets)
     lreplicaset.outdate_replicasets(router.replicasets,
                                     vshard_cfg.connection_outdate_delay)
     router.connection_outdate_delay = vshard_cfg.connection_outdate_delay
     router.total_bucket_count = vshard_cfg.bucket_count
-    router.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     router.current_cfg = cfg
     router.replicasets = new_replicasets
     router.failover_ping_timeout = vshard_cfg.failover_ping_timeout

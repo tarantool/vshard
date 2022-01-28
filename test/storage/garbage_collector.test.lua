@@ -40,29 +40,6 @@ _ = test_run:switch('storage_1_b')
 while box.space._bucket:get{3} ~= nil do fiber.sleep(0.1) end
 test:select{}
 
---
--- gh-77: garbage collection options and Lua garbage collection.
---
-_ = test_run:switch('storage_1_a')
-lua_gc = require('vshard.lua_gc')
-cfg.collect_lua_garbage = true
-vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
-lua_gc.internal.bg_fiber ~= nil
--- Check that `collectgarbage()` was really called.
-a = setmetatable({}, {__mode = 'v'})
-a.k = {b = 100}
-iterations = lua_gc.internal.iterations
-lua_gc.internal.bg_fiber:wakeup()
-while lua_gc.internal.iterations < iterations + 1 do fiber.sleep(0.01) end
-a.k
-lua_gc.internal.interval = 0.001
-cfg.collect_lua_garbage = false
-vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
-lua_gc.internal.bg_fiber == nil
-iterations = lua_gc.internal.iterations
-fiber.sleep(0.01)
-iterations == lua_gc.internal.iterations
-
 _ = test_run:switch('default')
 test_run:drop_cluster(REPLICASET_2)
 test_run:drop_cluster(REPLICASET_1)

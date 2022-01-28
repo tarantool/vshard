@@ -15,8 +15,7 @@ if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg',
         'vshard.replicaset', 'vshard.util',
-        'vshard.storage.reload_evolution',
-        'vshard.lua_gc', 'vshard.rlist', 'vshard.registry',
+        'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
     }
     for _, module in pairs(vshard_modules) do
@@ -29,7 +28,6 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
-local lua_gc = require('vshard.lua_gc')
 local lregistry = require('vshard.registry')
 local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
@@ -151,8 +149,6 @@ if not M then
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
         collect_bucket_garbage_fiber = nil,
-        -- Boolean lua_gc state (create periodic gc task).
-        collect_lua_garbage = nil,
 
         -------------------- Bucket recovery ---------------------
         recovery_fiber = nil,
@@ -2746,7 +2742,6 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         vshard_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = vshard_cfg.rebalancer_max_receiving
     M.shard_index = vshard_cfg.shard_index
-    M.collect_lua_garbage = vshard_cfg.collect_lua_garbage
     M.rebalancer_worker_count = vshard_cfg.rebalancer_max_sending
     M.current_cfg = cfg
 
@@ -2773,7 +2768,6 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         M.rebalancer_fiber:cancel()
         M.rebalancer_fiber = nil
     end
-    lua_gc.set_state(M.collect_lua_garbage, consts.COLLECT_LUA_GARBAGE_INTERVAL)
     M.is_configured = true
     -- Destroy connections, not used in a new configuration.
     collectgarbage()

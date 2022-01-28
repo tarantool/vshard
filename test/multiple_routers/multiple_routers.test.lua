@@ -80,26 +80,6 @@ vshard.router.call(1, 'read', 'do_select', {1})
 router_2:call(1, 'read', 'do_select', {2})
 routers[5]:call(1, 'read', 'do_select', {2})
 
--- Check lua_gc counter.
-lua_gc = require('vshard.lua_gc')
-vshard.router.internal.collect_lua_garbage_cnt == 0
-lua_gc.internal.bg_fiber == nil
-configs.cfg_2.collect_lua_garbage = true
-routers[5]:cfg(configs.cfg_2)
-lua_gc.internal.bg_fiber ~= nil
-routers[7]:cfg(configs.cfg_2)
-lua_gc.internal.bg_fiber ~= nil
-vshard.router.internal.collect_lua_garbage_cnt == 2
-package.loaded['vshard.router'] = nil
-vshard.router = require('vshard.router')
-vshard.router.internal.collect_lua_garbage_cnt == 2
-configs.cfg_2.collect_lua_garbage = nil
-routers[5]:cfg(configs.cfg_2)
-lua_gc.internal.bg_fiber ~= nil
-routers[7]:cfg(configs.cfg_2)
-vshard.router.internal.collect_lua_garbage_cnt == 0
-lua_gc.internal.bg_fiber == nil
-
 -- Self checker.
 util.check_error(router_2.info)
 

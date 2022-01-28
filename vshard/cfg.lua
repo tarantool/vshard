@@ -272,8 +272,8 @@ local cfg_template = {
         reason = 'Has no effect anymore'
     },
     collect_lua_garbage = {
-        type = 'boolean', name = 'Garbage Lua collect necessity',
-        is_optional = true, default = false
+        name = 'Garbage Lua collect necessity', is_deprecated = true,
+        reason = 'Has no effect anymore and never had much sense'
     },
     sync_timeout = {
         type = 'non-negative number', name = 'Sync timeout', is_optional = true,

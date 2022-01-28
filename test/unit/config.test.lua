@@ -173,16 +173,6 @@ cfg.shard_index = 'vbucket'
 _ = lcfg.check(cfg)
 
 --
--- gh-77: garbage collection options.
---
-cfg.collect_lua_garbage = 100
-check(cfg)
-cfg.collect_lua_garbage = true
-_ = lcfg.check(cfg)
-cfg.collect_lua_garbage = false
-_ = lcfg.check(cfg)
-
---
 -- gh-84: sync before master demotion, and allow to configure
 -- sync timeout.
 --
@@ -237,9 +227,10 @@ lcfg.check(cfg).rebalancer_max_sending
 cfg.rebalancer_max_sending = nil
 
 --
--- Deprecated option does not break anything.
+-- Deprecated options do not break anything.
 --
 cfg.collect_bucket_garbage_interval = 100
+cfg.collect_lua_garbage = 100
 _ = lcfg.check(cfg)
 
 --
