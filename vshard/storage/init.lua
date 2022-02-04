@@ -13,7 +13,7 @@ local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
 if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
-        'vshard.consts', 'vshard.error', 'vshard.cfg',
+        'vshard.consts', 'vshard.error', 'vshard.cfg', 'vshard.version',
         'vshard.replicaset', 'vshard.util',
         'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',

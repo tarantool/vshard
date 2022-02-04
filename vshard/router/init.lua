@@ -7,7 +7,7 @@ local MODULE_INTERNALS = '__module_vshard_router'
 -- Reload requirements, in case this module is reloaded manually.
 if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
-        'vshard.consts', 'vshard.error', 'vshard.cfg',
+        'vshard.consts', 'vshard.error', 'vshard.cfg', 'vshard.version',
         'vshard.hash', 'vshard.replicaset', 'vshard.util'
     }
     for _, module in pairs(vshard_modules) do

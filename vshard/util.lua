@@ -2,6 +2,7 @@
 local log = require('log')
 local fiber = require('fiber')
 local lerror = require('vshard.error')
+local lversion = require('vshard.version')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -16,13 +17,7 @@ if not M then
     rawset(_G, MODULE_INTERNALS, M)
 end
 
-local version_str = _TARANTOOL:sub(1, _TARANTOOL:find('-')-1)
-local dot = version_str:find('%.')
-local major = tonumber(version_str:sub(1, dot - 1))
-version_str = version_str:sub(dot + 1)
-dot = version_str:find('%.')
-local middle = tonumber(version_str:sub(1, dot - 1))
-local minor = tonumber(version_str:sub(dot + 1))
+local tnt_version = lversion.parse(_TARANTOOL)
 
 --
 -- Extract parts of a tuple.
@@ -146,12 +141,8 @@ end
 --
 -- Check if Tarantool version is >= that a specified one.
 --
-local function version_is_at_least(major_need, middle_need, minor_need)
-    if major > major_need then return true end
-    if major < major_need then return false end
-    if middle > middle_need then return true end
-    if middle < middle_need then return false end
-    return minor >= minor_need
+local function version_is_at_least(...)
+    return tnt_version >= lversion.new(...)
 end
 
 if not version_is_at_least(1, 10, 1) then
