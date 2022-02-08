@@ -3,6 +3,7 @@ local log = require('log')
 local fiber = require('fiber')
 local lerror = require('vshard.error')
 local lversion = require('vshard.version')
+local lmsgpack = require('msgpack')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -230,6 +231,14 @@ local function fiber_is_self_canceled()
     return not pcall(fiber.testcancel)
 end
 
+--
+-- Dictionary of supported core features on the given instance. Try to use it
+-- in all the other code rather than direct version check.
+--
+local feature = {
+    msgpack_object = lmsgpack.object ~= nil,
+}
+
 return {
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
@@ -241,4 +250,5 @@ return {
     table_minus_yield = table_minus_yield,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
+    feature = feature,
 }

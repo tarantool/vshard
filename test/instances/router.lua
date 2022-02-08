@@ -1,5 +1,6 @@
 #!/usr/bin/env tarantool
 local helpers = require('test.luatest_helpers')
+_G.msgpack = require('msgpack')
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.
 _G.vshard = {

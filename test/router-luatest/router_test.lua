@@ -1,5 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local vutil = require('vshard.util')
 local wait_timeout = 120
 
 local g = t.group('router')
@@ -51,4 +52,47 @@ g.test_basic = function(g)
     end, {wait_timeout})
     t.assert(not err, 'no error')
     t.assert_equals(res, 1, 'good result')
+end
+
+g.test_msgpack_args = function(g)
+    t.run_only_if(vutil.feature.msgpack_object)
+    --
+    -- Normal call ro.
+    --
+    local router = g.router
+    local res, err = router:exec(function(timeout)
+        local args = msgpack.object({100})
+        return vshard.router.callrw(1, 'echo', args, {timeout = timeout})
+    end, {wait_timeout})
+    t.assert(not err, 'no error')
+    t.assert_equals(res, 100, 'good result')
+    --
+    -- Normal call rw.
+    --
+    res, err = router:exec(function(timeout)
+        local args = msgpack.object({100})
+        return vshard.router.callro(1, 'echo', args, {timeout = timeout})
+    end, {wait_timeout})
+    t.assert(not err, 'no error')
+    t.assert_equals(res, 100, 'good result')
+    --
+    -- Direct call ro.
+    --
+    res, err = router:exec(function(timeout)
+        local args = msgpack.object({100})
+        local route = vshard.router.route(1)
+        return route:callro('echo', args, {timeout = timeout})
+    end, {wait_timeout})
+    t.assert(err == nil, 'no error')
+    t.assert_equals(res, 100, 'good result')
+    --
+    -- Direct call rw.
+    --
+    res, err = router:exec(function(timeout)
+        local args = msgpack.object({100})
+        local route = vshard.router.route(1)
+        return route:callrw('echo', args, {timeout = timeout})
+    end, {wait_timeout})
+    t.assert(err == nil, 'no error')
+    t.assert_equals(res, 100, 'good result')
 end

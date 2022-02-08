@@ -408,8 +408,6 @@ end
 --
 local function replicaset_master_call(replicaset, func, args, opts)
     assert(opts == nil or type(opts) == 'table')
-    assert(type(func) == 'string', 'function name')
-    assert(args == nil or type(args) == 'table', 'function arguments')
     local master = replicaset.master
     if not master then
         opts = opts and table.copy(opts) or {}
@@ -552,8 +550,6 @@ local function replicaset_template_multicallro(prefer_replica, balance)
 
     return function(replicaset, func, args, opts)
         assert(opts == nil or type(opts) == 'table')
-        assert(type(func) == 'string', 'function name')
-        assert(args == nil or type(args) == 'table', 'function arguments')
         opts = opts and table.copy(opts) or {}
         local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
         local net_status, storage_status, retval, err, replica
