@@ -122,8 +122,6 @@ vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 ---
 - true
 - - [42, 3000]
-- null
-- null
 ...
 vshard.storage.bucket_send(bucket_id_to_move, util.replicasets[1])
 ---
@@ -155,8 +153,6 @@ vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 ---
 - true
 - - [42, 3000]
-- null
-- null
 ...
 -- Check info() does not fail.
 vshard.storage.info() ~= nil

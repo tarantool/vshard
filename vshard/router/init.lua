@@ -1,5 +1,6 @@
 local log = require('log')
 local lfiber = require('fiber')
+local lmsgpack = require('msgpack')
 local table_new = require('table.new')
 local fiber_clock = lfiber.clock
 
@@ -21,6 +22,20 @@ local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local seq_serializer = { __serialize = 'seq' }
+
+local msgpack_is_object = lmsgpack.is_object
+local msgpack_object = lmsgpack.object
+
+if not util.feature.msgpack_object then
+    local msg = 'Msgpack object feature is not supported by current '..
+                'Tarantool version'
+    msgpack_is_object = function()
+        error(msg)
+    end
+    msgpack_object = function()
+        error(msg)
+    end
+end
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
@@ -530,14 +545,17 @@ end
 --
 local function router_call_impl(router, bucket_id, mode, prefer_replica,
                                 balance, func, args, opts)
+    local do_return_raw
     if opts then
         if type(opts) ~= 'table' or
            (opts.timeout and type(opts.timeout) ~= 'number') then
             error('Usage: call(bucket_id, mode, func, args, opts)')
         end
         opts = table.copy(opts)
-    elseif not opts then
+        do_return_raw = opts.return_raw
+    else
         opts = {}
+        do_return_raw = false
     end
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local replicaset, err
@@ -569,6 +587,26 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
             local storage_call_status, call_status, call_error =
                 replicaset[call](replicaset, 'vshard.storage.call',
                                  {bucket_id, mode, func, args}, opts)
+            if do_return_raw and msgpack_is_object(storage_call_status) then
+                -- Storage.call returns in the first value a flag whether user's
+                -- function threw an exception or not. Need to extract it.
+                -- Unfortunately, it forces to repack the rest of values into a
+                -- new array. But the values themselves are not decoded.
+                local it = storage_call_status:iterator()
+                local count = it:decode_array_header()
+                storage_call_status = it:decode()
+                -- When no values, nil is not packed into msgpack object. Same
+                -- as in raw netbox.
+                if count > 1 then
+                    count = count - 1
+                    local res = table_new(count, 0)
+                    for i = 1, count do
+                        res[i] = it:take()
+                    end
+                    call_status = msgpack_object(res)
+                end
+                call_error = nil
+            end
             if storage_call_status then
                 if call_status == nil and call_error ~= nil then
                     return call_status, call_error

@@ -14,10 +14,15 @@ end
 box.cfg(helpers.box_cfg())
 box.schema.user.grant('guest', 'super', nil, nil, {if_not_exists = true})
 
+local function box_error()
+    box.error(box.error.PROC_LUA, 'box_error')
+end
+
 local function echo(...)
     return ...
 end
 
+_G.box_error = box_error
 _G.echo = echo
 
 _G.ready = true

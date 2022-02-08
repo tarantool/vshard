@@ -237,6 +237,7 @@ end
 --
 local feature = {
     msgpack_object = lmsgpack.object ~= nil,
+    netbox_return_raw = version_is_at_least(2, 10, 0, 'beta', 2, 86),
 }
 
 return {

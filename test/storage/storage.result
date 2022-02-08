@@ -480,8 +480,6 @@ vshard.storage.call(1, 'read', 'space_get', {'test', {1}})
 ---
 - true
 - [1, 1]
-- null
-- null
 ...
 vshard.storage.call(100500, 'read', 'space_get', {'test', {1}})
 ---

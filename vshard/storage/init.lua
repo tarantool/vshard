@@ -2512,6 +2512,21 @@ local function storage_call(bucket_id, mode, name, args)
     if not ok then
         ret1 = lerror.make(ret1)
     end
+    -- Truncate nil values. Can't return them all because empty values turn into
+    -- box.NULL. Even if user's function actually returned just 1 value, this
+    -- would lead to '1, box.NULL, box.NULL' on the client. Not visible on the
+    -- router when called normally, but won't help if the router did
+    -- 'return_raw' and just forwards everything as is without truncation.
+    -- Although this solution truncates really returned nils.
+    if ret3 == nil then
+        if ret2 == nil then
+            if ret1 == nil then
+                return ok
+            end
+            return ok, ret1
+        end
+        return ok, ret1, ret2
+    end
     return ok, ret1, ret2, ret3
 end
 

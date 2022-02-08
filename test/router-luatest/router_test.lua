@@ -96,3 +96,87 @@ g.test_msgpack_args = function(g)
     t.assert(err == nil, 'no error')
     t.assert_equals(res, 100, 'good result')
 end
+
+local function test_return_raw_template(g, mode)
+    --
+    -- Normal call.
+    --
+    local router = g.router
+    local res = router:exec(function(timeout, mode)
+        return add_details(vshard.router[mode](1, 'echo', {1, 2, 3},
+                           {timeout = timeout, return_raw = true}))
+    end, {wait_timeout, mode})
+    t.assert_equals(res.val, {1, 2, 3}, 'value value')
+    t.assert_equals(res.val_type, 'userdata', 'value type')
+    t.assert(not res.err, 'no error')
+
+    --
+    -- Route call.
+    --
+    res = router:exec(function(timeout, mode)
+        local route = vshard.router.route(1)
+        return add_details(route[mode](route, 'echo', {1, 2, 3},
+                           {timeout = timeout, return_raw = true}))
+    end, {wait_timeout, mode})
+    t.assert_equals(res.val, {1, 2, 3}, 'value value')
+    t.assert_equals(res.val_type, 'userdata', 'value type')
+    t.assert(not res.err, 'no error')
+
+    --
+    -- Empty result set.
+    --
+    res = router:exec(function(timeout, mode)
+        return add_details(vshard.router[mode](1, 'echo', {},
+                           {timeout = timeout, return_raw = true}))
+    end, {wait_timeout, mode})
+    t.assert(not res.val, 'no value')
+    t.assert(not res.err, 'no error')
+
+    --
+    -- Error.
+    --
+    res = router:exec(function(timeout, mode)
+        return add_details(vshard.router[mode](1, 'box_error', {1, 2, 3},
+                           {timeout = timeout}))
+    end, {wait_timeout, mode})
+    t.assert(not res.val, 'no value')
+    t.assert_equals(res.err_type, 'table', 'error type')
+    t.assert_covers(res.err, {type = 'ClientError', code = box.error.PROC_LUA},
+                    'error value')
+
+    --
+    -- Route error.
+    --
+    res = router:exec(function(timeout, mode)
+        local route = vshard.router.route(1)
+        return add_details(route[mode](route, 'box_error', {1, 2, 3},
+                           {timeout = timeout}))
+    end, {wait_timeout, mode})
+    t.assert(not res.val, 'no value')
+    t.assert_equals(res.err_type, 'table', 'error type')
+    t.assert_covers(res.err, {type = 'ClientError', code = box.error.PROC_LUA},
+                    'error value')
+end
+
+g.test_return_raw = function(g)
+    t.run_only_if(vutil.feature.netbox_return_raw)
+
+    g.router:exec(function()
+        rawset(_G, 'add_details', function(val, err)
+            -- Direct return would turn nils into box.NULLs. The tests want to
+            -- ensure it doesn't happen. Table wrap makes the actual nils
+            -- eliminate themselves.
+            return {
+                val = val,
+                val_type = type(val),
+                err = err,
+                err_type = type(err),
+            }
+        end)
+    end)
+    test_return_raw_template(g, 'callrw')
+    test_return_raw_template(g, 'callro')
+    g.router:exec(function()
+        _G.add_details = nil
+    end)
+end
