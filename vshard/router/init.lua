@@ -765,12 +765,20 @@ end
 --
 local function router_map_callrw(router, func, args, opts)
     local replicasets = router.replicasets
-    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
+    local timeout
+    local do_return_raw
+    if opts then
+        timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+        do_return_raw = opts.return_raw
+    else
+        timeout = consts.CALL_TIMEOUT_MIN
+    end
     local deadline = fiber_clock() + timeout
     local err, err_uuid, res, ok, map
     local futures = {}
     local bucket_count = 0
-    local opts_async = {is_async = true}
+    local opts_ref = {is_async = true}
+    local opts_map = {is_async = true, return_raw = do_return_raw}
     local rs_count = 0
     local rid = M.ref_id
     M.ref_id = rid + 1
@@ -789,7 +797,7 @@ local function router_map_callrw(router, func, args, opts)
             goto fail
         end
         res, err = rs:callrw('vshard.storage._call',
-                              {'storage_ref', rid, timeout}, opts_async)
+                              {'storage_ref', rid, timeout}, opts_ref)
         if res == nil then
             err_uuid = uuid
             goto fail
@@ -833,7 +841,7 @@ local function router_map_callrw(router, func, args, opts)
     --
     args = {'storage_map', rid, func, args}
     for uuid, rs in pairs(replicasets) do
-        res, err = rs:callrw('vshard.storage._call', args, opts_async)
+        res, err = rs:callrw('vshard.storage._call', args, opts_map)
         if res == nil then
             err_uuid = uuid
             goto fail
@@ -843,25 +851,51 @@ local function router_map_callrw(router, func, args, opts)
     --
     -- Ref stage: collect.
     --
-    for uuid, f in pairs(futures) do
-        res, err = f:wait_result(timeout)
-        if res == nil then
-            err_uuid = uuid
-            goto fail
+    if do_return_raw then
+        for uuid, f in pairs(futures) do
+            res, err = f:wait_result(timeout)
+            if res == nil then
+                err_uuid = uuid
+                goto fail
+            end
+            -- Map returns true,res or nil,err.
+            res = res:iterator()
+            local count = res:decode_array_header()
+            ok = res:decode()
+            if ok == nil then
+                err = res:decode()
+                err_uuid = uuid
+                goto fail
+            end
+            if count > 1 then
+                -- XXX: msgpack object API doesn't allow to wrap tail of its
+                -- iterator into an array. Which probably renders this feature
+                -- not very useful here for small- and middle-sized responses.
+                map[uuid] = msgpack_object({res:take()})
+            end
+            timeout = deadline - fiber_clock()
         end
-        -- Map returns true,res or nil,err.
-        ok, res = res[1], res[2]
-        if ok == nil then
-            err = res
-            err_uuid = uuid
-            goto fail
+    else
+        for uuid, f in pairs(futures) do
+            res, err = f:wait_result(timeout)
+            if res == nil then
+                err_uuid = uuid
+                goto fail
+            end
+            -- Map returns true,res or nil,err.
+            ok, res = res[1], res[2]
+            if ok == nil then
+                err = res
+                err_uuid = uuid
+                goto fail
+            end
+            if res ~= nil then
+                -- Store as a table so in future it could be extended for
+                -- multireturn.
+                map[uuid] = {res}
+            end
+            timeout = deadline - fiber_clock()
         end
-        if res ~= nil then
-            -- Store as a table so in future it could be extended for
-            -- multireturn.
-            map[uuid] = {res}
-        end
-        timeout = deadline - fiber_clock()
     end
     do return map end
 
@@ -871,7 +905,7 @@ local function router_map_callrw(router, func, args, opts)
         -- Best effort to remove the created refs before exiting. Can help if
         -- the timeout was big and the error happened early.
         f = replicasets[uuid]:callrw('vshard.storage._call',
-                                     {'storage_unref', rid}, opts_async)
+                                     {'storage_unref', rid}, opts_ref)
         if f ~= nil then
             -- Don't care waiting for a result - no time for this. But it won't
             -- affect the request sending if the connection is still alive.

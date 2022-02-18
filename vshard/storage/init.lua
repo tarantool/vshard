@@ -2571,7 +2571,10 @@ local function storage_map(rid, name, args)
     if not ok then
         return nil, err
     end
-    return true, res
+    if res ~= nil then
+        return true, res
+    end
+    return true
 end
 
 local function storage_service_info()
