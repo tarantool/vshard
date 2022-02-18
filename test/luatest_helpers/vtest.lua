@@ -21,9 +21,13 @@ end
 local function config_new(templ)
     local res = table.deepcopy(templ)
     local sharding = {}
+    local meta = {replicasets = {}}
     res.sharding = sharding
-    for _, replicaset_templ in pairs(templ.sharding) do
+    for i, replicaset_templ in pairs(templ.sharding) do
         local replicaset_uuid = uuid_next()
+        meta.replicasets[i] = {
+            uuid = replicaset_uuid
+        }
         local replicas = {}
         local replicaset = table.deepcopy(replicaset_templ)
         replicaset.replicas = replicas
@@ -36,7 +40,7 @@ local function config_new(templ)
         end
         sharding[replicaset_uuid] = replicaset
     end
-    return res
+    return res, meta
 end
 
 --

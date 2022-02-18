@@ -4,7 +4,7 @@ local vutil = require('vshard.util')
 local wait_timeout = 120
 
 local g = t.group('router')
-local cluster_cfg = vtest.config_new({
+local cluster_cfg, cfg_meta = vtest.config_new({
     sharding = {
         {
             replicas = {
@@ -178,5 +178,83 @@ g.test_return_raw = function(g)
     test_return_raw_template(g, 'callro')
     g.router:exec(function()
         _G.add_details = nil
+    end)
+end
+
+g.test_map_callrw_raw = function(g)
+    t.run_only_if(vutil.feature.netbox_return_raw)
+
+    local create_map_func_f = function(res1)
+        _G.do_map = function(res2)
+            return {res1, res2}
+        end
+    end
+    g.replica_1_a:exec(create_map_func_f, {1})
+    g.replica_2_a:exec(create_map_func_f, {2})
+    --
+    -- Successful map.
+    --
+    local res = g.router:exec(function(timeout)
+        local val, err = vshard.router.map_callrw('do_map', msgpack.object({3}),
+                                                  {timeout = timeout,
+                                                   return_raw = true})
+        local _, one_map = next(val)
+        return {
+            val = val,
+            map_type = type(one_map),
+            err = err,
+        }
+    end, {wait_timeout})
+    local expected = {
+        [cfg_meta.replicasets[1].uuid] = {{1, 3}},
+        [cfg_meta.replicasets[2].uuid] = {{2, 3}},
+    }
+    t.assert_equals(res.val, expected, 'map callrw success')
+    t.assert_equals(res.map_type, 'userdata', 'values are msgpacks')
+    t.assert(not res.err, 'no error')
+    --
+    -- Successful map, but one of the storages returns nothing.
+    --
+    g.replica_2_a:exec(function()
+        _G.do_map = function()
+            return
+        end
+    end)
+    res = g.router:exec(function(timeout)
+        return vshard.router.map_callrw('do_map', {}, {timeout = timeout,
+                                        return_raw = true})
+    end, {wait_timeout})
+    expected = {
+        [cfg_meta.replicasets[1].uuid] = {{1}},
+    }
+    t.assert_equals(res, expected, 'map callrw without one value success')
+    --
+    -- Error at map stage.
+    --
+    g.replica_2_a:exec(function()
+        _G.do_map = function()
+            return box.error(box.error.PROC_LUA, "map_err")
+        end
+    end)
+    local err, err_uuid
+    res, err, err_uuid = g.router:exec(function(timeout)
+        return vshard.router.map_callrw('do_map', {}, {timeout = timeout,
+                                        return_raw = true})
+    end, {wait_timeout})
+    t.assert(res == nil, 'no result')
+    t.assert_covers(err, {
+        code = box.error.PROC_LUA,
+        type = 'ClientError',
+        message = 'map_err'
+    }, 'error object')
+    t.assert_equals(err_uuid, cfg_meta.replicasets[2].uuid, 'error uuid')
+    --
+    -- Cleanup.
+    --
+    g.replica_1_a:exec(function()
+        _G.do_map = nil
+    end)
+    g.replica_2_a:exec(function()
+        _G.do_map = nil
     end)
 end
