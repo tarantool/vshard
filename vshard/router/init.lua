@@ -167,7 +167,7 @@ local function bucket_discovery(router, bucket_id)
             unreachable_uuid = uuid
         end
     end
-    local err = nil
+    local err
     if last_err then
         if last_err.type == 'ClientError' and
            last_err.code == box.error.NO_CONNECTION then
@@ -192,7 +192,7 @@ end
 -- Resolve bucket id to replicaset uuid
 local function bucket_resolve(router, bucket_id)
     local replicaset, err
-    local replicaset = router.route_map[bucket_id]
+    replicaset = router.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
     end
@@ -431,7 +431,8 @@ local function vshard_future_is_ready(self)
 end
 
 local function vshard_future_wrap_result(res)
-    local storage_ok, res, err = res[1], res[2], res[3]
+    local storage_ok, err
+    storage_ok, res, err = res[1], res[2], res[3]
     if storage_ok then
         if res == nil and err ~= nil then
             return nil, lerror.make(err)
@@ -1072,7 +1073,6 @@ local function failover_f(router)
     -- each min_timeout seconds.
     local prev_was_ok = false
     while module_version == M.module_version do
-::continue::
         local ok, replica_is_changed = pcall(failover_step, router)
         if not ok then
             log.error('Error during failovering: %s',
@@ -1282,7 +1282,7 @@ local function cluster_bootstrap(router, opts)
         if_not_bootstrapped = false
     end
 
-    for uuid, replicaset in pairs(router.replicasets) do
+    for _, replicaset in pairs(router.replicasets) do
         table.insert(replicasets, replicaset)
         count, err = replicaset:callrw('vshard.storage.buckets_count', {}, opts)
         if count == nil then
@@ -1378,7 +1378,7 @@ local function router_info(router)
         status = consts.STATUS.GREEN,
     }
     local bucket_info = state.bucket
-    for rs_uuid, replicaset in pairs(router.replicasets) do
+    for _, replicaset in pairs(router.replicasets) do
         -- Replicaset info parameters:
         -- * master instance info;
         -- * replica instance info;

@@ -20,7 +20,7 @@ local function check_replica_master(master, ctx)
     end
 end
 
-local function check_replicaset_master(master, ctx)
+local function check_replicaset_master(master)
     if master ~= 'auto' then
         error('Only "auto" master is supported')
     end

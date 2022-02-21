@@ -101,6 +101,7 @@ local function test_return_raw_template(g, mode)
     --
     -- Normal call.
     --
+    -- luacheck: ignore 113/add_details
     local router = g.router
     local res = router:exec(function(timeout, mode)
         return add_details(vshard.router[mode](1, 'echo', {1, 2, 3},

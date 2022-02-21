@@ -3,7 +3,7 @@ local lversion = require('vshard.version')
 
 local g = t.group('version')
 
-g.test_order = function(g)
+g.test_order = function()
     -- Example of a full version: 2.10.0-beta2-86-gc9981a567.
     local versions = {
         {
@@ -169,7 +169,7 @@ g.test_order = function(g)
     end
 end
 
-g.test_error = function(g)
+g.test_error = function()
     t.assert_error_msg_contains('Could not parse version', lversion.parse,
                                 'bad version')
     t.assert_error_msg_contains('Could not parse version', lversion.parse,

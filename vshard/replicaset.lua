@@ -430,6 +430,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
         end
     end
     replicaset_connect_to_replica(replicaset, master)
+    -- luacheck: ignore 211/net_status
     local net_status, storage_status, retval, error_object =
         replica_call(master, func, args, opts)
     -- Ignore net_status - master does not retry requests.
@@ -904,7 +905,7 @@ replica_mt.__index = index
 -- They define only attributes from corresponding metatables to
 -- make user able to access fields of old objects.
 --
-local function outdated_warning(...)
+local function outdated_warning()
     return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED)
 end
 
@@ -913,7 +914,7 @@ local outdated_replicaset_mt = {
         is_outdated = true
     }
 }
-for fname, func in pairs(replicaset_mt.__index) do
+for fname, _ in pairs(replicaset_mt.__index) do
     outdated_replicaset_mt.__index[fname] = outdated_warning
 end
 
@@ -922,7 +923,7 @@ local outdated_replica_mt = {
         is_outdated = true
     }
 }
-for fname, func in pairs(replica_mt.__index) do
+for fname, _ in pairs(replica_mt.__index) do
     outdated_replica_mt.__index[fname] = outdated_warning
 end
 
