@@ -67,7 +67,7 @@ local function heap_new(is_left_above)
         local orig_idx = idx
         local left
         local right
-        local right_idx = left_idx + 1
+        local right_idx
         local top
         local top_idx
         local value = data[idx]

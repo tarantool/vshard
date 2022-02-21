@@ -737,7 +737,7 @@ end
 --
 -- Check if a local bucket can become active.
 --
-local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
+local function recovery_local_bucket_is_active(_, remote_bucket)
     return not remote_bucket or bucket_is_garbage(remote_bucket)
 end
 
@@ -970,7 +970,7 @@ local function bucket_check_state(bucket_id, mode)
     assert(type(bucket_id) == 'number')
     assert(mode == 'read' or mode == 'write')
     local bucket = box.space._bucket:get({bucket_id})
-    local reason = nil
+    local reason
     if not bucket then
         reason = 'Not found'
     elseif mode == 'read' then
@@ -1341,7 +1341,6 @@ local function bucket_recv(bucket_id, from, data, opts)
         end
     else
         err = ret
-        ret = status
     end
     box.rollback()
     return nil, err
@@ -1392,14 +1391,14 @@ local function bucket_collect(bucket_id)
     if type(bucket_id) ~= 'number' then
         error('Usage: bucket_collect(bucket_id)')
     end
-    local status, err = bucket_check_state(bucket_id, 'read')
+    local _, err = bucket_check_state(bucket_id, 'read')
     if err then
         return nil, err
     end
     local data = {}
     local spaces = find_sharded_spaces()
     local idx = M.shard_index
-    for k, space in pairs(spaces) do
+    for _, space in pairs(spaces) do
         assert(space.index[idx] ~= nil)
         local space_data = space.index[idx]:select({bucket_id})
         table.insert(data, {space.name, space_data})
@@ -1556,7 +1555,7 @@ end
 --
 local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local uuid = box.info.cluster.uuid
-    local status
+    local status, ok
     local ref, err = bucket_refrw_touch(bucket_id)
     if not ref then
         return nil, err
@@ -1596,7 +1595,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local bucket_generation = M.bucket_generation
     local sendg = consts.BUCKET.SENDING
 
-    local ok, err = lsched.move_start(timeout)
+    ok, err = lsched.move_start(timeout)
     if not ok then
         return nil, err
     end
@@ -1815,7 +1814,8 @@ end
 -- Exception safe version of gc_bucket_drop_xc.
 --
 local function gc_bucket_drop(status, route_map)
-    local status, err = pcall(gc_bucket_drop_xc, status, route_map)
+    local err
+    status, err = pcall(gc_bucket_drop_xc, status, route_map)
     if not status then
         box.rollback()
     end
@@ -1836,7 +1836,7 @@ end
 -- 4) Sleep, go to (1).
 -- For each step details see comments in the code.
 --
-function gc_bucket_f()
+local function gc_bucket_f()
     local module_version = M.module_version
     -- Changes of _bucket increments bucket generation. Garbage
     -- collector has its own bucket generation which is <= actual.
@@ -2502,7 +2502,8 @@ end
 -- @retval nil, err Error.
 -- @retval values Success.
 local function storage_call(bucket_id, mode, name, args)
-    local ok, err, ret1, ret2, ret3, _ = bucket_ref(bucket_id, mode)
+    local ret1, ret2, ret3, _
+    local ok, err = bucket_ref(bucket_id, mode)
     if not ok then
         return ok, err
     end
@@ -2637,7 +2638,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local this_replica
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
     local min_master
-    for rs_uuid, rs in pairs(new_replicasets) do
+    for _, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
             if (min_master == nil or replica_uuid < min_master.uuid) and
                rs.master == replica then
@@ -2694,7 +2695,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         box_cfg.listen = box_cfg.listen or this_replica.uri
         if not box_cfg.replication then
             box_cfg.replication = {}
-            for uuid, replica in pairs(this_replicaset.replicas) do
+            for _, replica in pairs(this_replicaset.replicas) do
                 table.insert(box_cfg.replication, replica.uri)
             end
         end
@@ -2833,7 +2834,7 @@ local function storage_info()
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
     if this_master and this_master ~= M.this_replica then
-        for id, replica in pairs(box.info.replication) do
+        for _, replica in pairs(box.info.replication) do
             if replica.uuid ~= this_master.uuid then
                 goto cont
             end
@@ -2872,7 +2873,7 @@ local function storage_info()
         state.replication.status = 'master'
         local replica_count = 0
         local not_available_replicas = 0
-        for id, replica in pairs(box.info.replication) do
+        for _, replica in pairs(box.info.replication) do
             if replica.uuid ~= M.this_replica.uuid then
                 replica_count = replica_count + 1
                 if replica.downstream == nil or

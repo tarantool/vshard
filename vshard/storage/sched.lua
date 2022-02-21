@@ -26,7 +26,6 @@ local MODULE_INTERNALS = '__module_vshard_storage_sched'
 local MODULE_VERSION = 1
 
 local lfiber = require('fiber')
-local lerror = require('vshard.error')
 local lconsts = require('vshard.consts')
 local lregistry = require('vshard.registry')
 local lutil = require('vshard.util')

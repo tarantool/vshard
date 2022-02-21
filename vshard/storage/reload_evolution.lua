@@ -14,7 +14,7 @@ local fiber = require('fiber')
 local migrations = {}
 
 -- Initialize reload_upgrade mechanism
-migrations[#migrations + 1] = function(M)
+migrations[#migrations + 1] = function(_)
     -- Code to update Lua objects.
 end
 

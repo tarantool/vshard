@@ -1,36 +1,29 @@
-redefined = false
+std = "luajit"
+globals = {"box", "_TARANTOOL", "tonumber64", "utf8", "table"}
+ignore = {
+    -- Unused argument <self>.
+    "212/self",
+    -- Shadowing a local variable.
+    "421",
+    -- Shadowing an upvalue.
+    "431",
+    -- Shadowing an upvalue argument.
+    "432",
+}
+
 include_files = {
     'vshard/**/*.lua',
+    'test/**/*_test.lua',
 }
-new_read_globals = {
-    'box',
-    '_TARANTOOL',
-    'tonumber64',
-    os = {
-        fields = {
-            'environ',
-        }
-    },
-    string = {
-        fields = {
-            'split',
-        },
-    },
-    table = {
-        fields = {
-            'maxn',
-            'copy',
-            'new',
-            'clear',
-            'move',
-            'foreach',
-            'sort',
-            'remove',
-            'foreachi',
-            'deepcopy',
-            'getn',
-            'concat',
-            'insert',
-        },
-    },
+
+exclude_files = {
+    'test/var/*',
+}
+
+files["**/*_test.lua"] = {
+    ignore = {
+        -- Accessing an undefined variable.
+        "113/msgpack",
+        "113/vshard",
+    }
 }
