@@ -53,7 +53,7 @@ big_timeout = 1000000
 timeout = 0.01
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \
                                      {timeout = timeout})
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
 
 --
 -- After unref all the bucket moves are allowed again.
@@ -78,7 +78,7 @@ fiber = require('fiber')
 _ = fiber.create(vshard.storage.bucket_send, 1, util.replicasets[2],            \
                  {timeout = big_timeout})
 ok, err = lref.add(rid, sid, small_timeout)
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
 -- Ref will wait if timeout is big enough.
 ok, err = nil
 _ = fiber.create(function()                                                     \

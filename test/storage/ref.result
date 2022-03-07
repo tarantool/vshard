@@ -126,9 +126,9 @@ ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 
                                      {timeout = timeout})
  | ---
  | ...
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
  | ---
- | - Timeout exceeded
+ | - true
  | ...
 
 --
@@ -181,9 +181,9 @@ _ = fiber.create(vshard.storage.bucket_send, 1, util.replicasets[2],            
 ok, err = lref.add(rid, sid, small_timeout)
  | ---
  | ...
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
  | ---
- | - Timeout exceeded
+ | - true
  | ...
 -- Ref will wait if timeout is big enough.
 ok, err = nil

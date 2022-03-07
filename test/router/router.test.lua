@@ -273,11 +273,11 @@ assert(res == 10)
 func, iter, i = future:pairs(0.001)
 i, res = func(iter, i)
 i, res = func(iter, i)
-assert(not i and res.code == box.error.TIMEOUT)
+assert(not i and util.is_timeout_error(res))
 assert(type(res) == 'table')
 
 res, err = future:wait_result(0.001)
-assert(not res and err.code == box.error.TIMEOUT)
+assert(not res and util.is_timeout_error(err))
 assert(type(err) == 'table')
 
 test_run:switch('storage_1_a')

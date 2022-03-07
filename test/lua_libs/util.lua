@@ -201,6 +201,12 @@ local function portable_error(err)
     return {type = err.type, message = err.message}
 end
 
+-- Function to check if the error is a timeout error. The function
+-- works for old and new error type in net.box functions.
+function is_timeout_error(err)
+    return 'Timeout exceeded' == err.message or 'timed out' == err.message
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -215,4 +221,5 @@ return {
     BUILDDIR = BUILDDIR,
     git_checkout = git_checkout,
     portable_error = portable_error,
+    is_timeout_error = is_timeout_error,
 }

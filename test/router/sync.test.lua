@@ -18,7 +18,7 @@ vshard.router.bootstrap()
 res, err = vshard.router.sync(-1)
 util.portable_error(err)
 res, err = vshard.router.sync(0)
-util.portable_error(err)
+util.is_timeout_error(err)
 
 --
 -- gh-190: router should not ignore cfg.sync_timeout.

@@ -74,7 +74,7 @@ lsched.move_start(big_timeout)
 
 _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, timeout_opts)
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
 
 _ = test_run:switch('storage_2_a')
 lsched = require('vshard.storage.sched')
@@ -94,7 +94,7 @@ assert(lref.count == 0)
 
 _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, timeout_opts)
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
 
 _ = test_run:switch('storage_1_a')
 test_run:wait_cond(function() return lref.count == 0 end)
