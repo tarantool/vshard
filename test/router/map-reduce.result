@@ -187,9 +187,9 @@ _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, timeout_opts)
  | ---
  | ...
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
  | ---
- | - Timeout exceeded
+ | - true
  | ...
 
 _ = test_run:switch('storage_2_a')
@@ -237,9 +237,9 @@ _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, timeout_opts)
  | ---
  | ...
-assert(not ok and err.message)
+assert(not ok and util.is_timeout_error(err))
  | ---
- | - Timeout exceeded
+ | - true
  | ...
 
 _ = test_run:switch('storage_1_a')

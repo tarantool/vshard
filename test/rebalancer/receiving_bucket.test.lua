@@ -89,7 +89,7 @@ _ = test_run:switch('box_1_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 _ = test_run:switch('box_2_a')
 _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
-util.portable_error(err)
+util.is_timeout_error(err)
 box.space._bucket:get{101}
 while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 box.space._bucket:get{101}

@@ -45,7 +45,7 @@ fiber.time() - start < 1
 util.portable_error(e)
 
 _, e = rs1:callro('sleep', {1}, {timeout = 0.0001})
-util.portable_error(e)
+util.is_timeout_error(e)
 
 --
 -- Do not send multiple requests during timeout - it brokes long

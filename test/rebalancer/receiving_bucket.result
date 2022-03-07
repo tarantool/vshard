@@ -221,10 +221,9 @@ _ = test_run:switch('box_2_a')
 _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
 ---
 ...
-util.portable_error(err)
+util.is_timeout_error(err)
 ---
-- type: ClientError
-  message: Timeout exceeded
+- true
 ...
 box.space._bucket:get{101}
 ---
