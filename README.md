@@ -14,6 +14,13 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 Install **vshard** as module `tarantoolctl rocks install https://raw.githubusercontent.com/tarantool/vshard/master/vshard-scm-1.rockspec`
 
+## Install for contributing
+
+* `git clone <this repo or your fork`
+* `git submodule update --init --recursive`
+* Add pathes `tarantool/build/src` and `tarantool/build/extra` to `PATH` environment variable
+* Run tests with `cd test` and then `./test-run`
+
 ## Configuration
 
 A Tarantool sharded cluster consists of the following components:
