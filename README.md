@@ -14,12 +14,25 @@ Sharding module for **Tarantool** based on Virtual Buckets concept.
 
 Install **vshard** as module `tarantoolctl rocks install https://raw.githubusercontent.com/tarantool/vshard/master/vshard-scm-1.rockspec`
 
-## Install for contributing
+## Contribution
 
-* `git clone <this repo or your fork`
-* `git submodule update --init --recursive`
-* Add pathes `tarantool/build/src` and `tarantool/build/extra` to `PATH` environment variable
-* Run tests with `cd test` and then `./test-run`
+In order to contribute you might want to avoid installation into regular paths.
+You need to fetch the source code to patch it in a local folder.
+
+* `git clone <this repo or your fork>`;
+* `git submodule update --init --recursive`;
+* VShard requires Tarantool being in `PATH`. So either you install one into the
+  system or you fetch Tarantool's main repository source code, build it, and
+  add to `PATH` manually these paths: `<path to tarantool build>/src` and
+  `<path to tarantool build>/extra`.
+
+Now vshard should be functional. You can try it in `example` folder, see its
+Makefile.
+
+Your patch should pass all the existing tests (unless it is necessary to change
+them) and have its own test usually. To run the tests this should work:
+  * `cd test`;
+  * `python test-run.py` or `./test-run.py`;
 
 ## Configuration
 
