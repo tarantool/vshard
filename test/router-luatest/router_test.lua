@@ -186,9 +186,9 @@ g.test_map_callrw_raw = function(g)
     t.run_only_if(vutil.feature.netbox_return_raw)
 
     local create_map_func_f = function(res1)
-        _G.do_map = function(res2)
+        rawset(_G, 'do_map', function(res2)
             return {res1, res2}
-        end
+        end)
     end
     g.replica_1_a:exec(create_map_func_f, {1})
     g.replica_2_a:exec(create_map_func_f, {2})
