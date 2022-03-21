@@ -599,12 +599,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 -- When no values, nil is not packed into msgpack object. Same
                 -- as in raw netbox.
                 if count > 1 then
-                    count = count - 1
-                    local res = table_new(count, 0)
-                    for i = 1, count do
-                        res[i] = it:take()
-                    end
-                    call_status = msgpack_object(res)
+                    call_status = it:take_array(count - 1)
                 end
                 call_error = nil
             end
@@ -869,10 +864,7 @@ local function router_map_callrw(router, func, args, opts)
                 goto fail
             end
             if count > 1 then
-                -- XXX: msgpack object API doesn't allow to wrap tail of its
-                -- iterator into an array. Which probably renders this feature
-                -- not very useful here for small- and middle-sized responses.
-                map[uuid] = msgpack_object({res:take()})
+                map[uuid] = res:take_array(count - 1)
             end
             timeout = deadline - fiber_clock()
         end
