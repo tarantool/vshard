@@ -389,3 +389,58 @@ g.test_multilisten = function(g)
     vtest.storage_cfg(g, cluster_cfg)
     vtest.router_cfg(g.router, cluster_cfg)
 end
+
+g.test_ssl = function(g)
+    t.run_only_if(vutil.feature.ssl)
+
+    -- So as not to assume where buckets are located, find first bucket of the
+    -- first replicaset.
+    local bid1 = vtest.storage_first_bucket(g.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(g.replica_2_a)
+
+    -- Enable SSL everywhere.
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local sharding_templ = new_cfg_template.sharding
+    local rs_1_templ = sharding_templ[1]
+    local rs_2_templ = sharding_templ[2]
+    rs_1_templ.is_ssl = true
+    rs_2_templ.is_ssl = true
+
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.storage_cfg(g, new_cluster_cfg)
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    local rep_1_a_uuid = g.replica_1_a:instance_uuid()
+    local res, err = g.router:exec(callrw_get_uuid, {bid1, wait_timeout})
+    t.assert_equals(err, nil)
+    t.assert_equals(res, rep_1_a_uuid, 'went to 1_a')
+
+    local rep_2_a_uuid = g.replica_2_a:instance_uuid()
+    res, err = g.router:exec(callrw_get_uuid, {bid2, wait_timeout})
+    t.assert_equals(err, nil)
+    t.assert_equals(res, rep_2_a_uuid, 'went to 2_a')
+
+    -- Ensure that non-encrypted connection won't work.
+    rs_2_templ.is_ssl = nil
+    new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    res, err = g.router:exec(callrw_get_uuid, {bid2, 0.01})
+    t.assert_equals(res, nil, 'rw failed on non-encrypted connection')
+    t.assert_covers(err, {code = box.error.NO_CONNECTION}, 'got error')
+
+    -- Works again when the replicaset also disables SSL.
+    vtest.storage_cfg(g, new_cluster_cfg)
+
+    -- Force a reconnect right now instead of waiting until it happens
+    -- automatically.
+    vtest.router_disconnect(g.router)
+    res, err = g.router:exec(callrw_get_uuid, {bid2, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, rep_2_a_uuid, 'went to 2_a')
+
+    -- Restore everything back.
+    vtest.storage_cfg(g, cluster_cfg)
+    vtest.router_cfg(g.router, cluster_cfg)
+    vtest.storage_wait_fullsync(g)
+end

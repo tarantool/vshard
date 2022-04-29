@@ -5,6 +5,7 @@ local lerror = require('vshard.error')
 local lversion = require('vshard.version')
 local lmsgpack = require('msgpack')
 local luri = require('uri')
+local ltarantool = require('tarantool')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -20,6 +21,7 @@ if not M then
 end
 
 local tnt_version = lversion.parse(_TARANTOOL)
+local is_enterprise = (ltarantool.package == 'Tarantool Enterprise')
 
 --
 -- Deep comparison of tables. Stolen from built-in table.equals() which sadly is
@@ -295,7 +297,19 @@ local feature = {
     -- It appeared earlier but at 2.9.0 there is a strange bug about an immortal
     -- tuple - after :delete(pk) it still stays in the space. That makes the
     -- feature barely working, can be treated like it didn't exist.
-    memtx_mvcc = version_is_at_least(2, 10, 0, nil, 0, 0)
+    memtx_mvcc = version_is_at_least(2, 10, 0, nil, 0, 0),
+    ssl = (function()
+        if not is_enterprise then
+            return false
+        end
+        -- Beforehand there is a bug which can kill replication on SSL reconfig.
+        -- Fixed in EE 2.11.0-entrypoint-2-gffeb093.
+        if version_is_at_least(2, 11, 0, 'entrypoint', 0, 0) then
+            return version_is_at_least(2, 11, 0, 'entrypoint', 0, 2)
+        end
+        -- Backported into 2.10 since EE 2.10.0-2-g6b29095.
+        return version_is_at_least(2, 10, 0, nil, 0, 2)
+    end)(),
 }
 
 return {
