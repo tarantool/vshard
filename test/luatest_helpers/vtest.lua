@@ -1,10 +1,13 @@
 local t = require('luatest')
 local helpers = require('test.luatest_helpers')
 local cluster = require('test.luatest_helpers.cluster')
+local fio = require('fio')
 local fiber = require('fiber')
 local uuid = require('uuid')
+local yaml = require('yaml')
 local vrepset = require('vshard.replicaset')
 
+local wait_timeout = 120
 local uuid_idx = 1
 --
 -- The maps help to preserve the same UUID for replicas and replicasets during
@@ -15,6 +18,11 @@ local uuid_idx = 1
 --
 local replica_name_to_uuid_map = {}
 local replicaset_name_to_uuid_map = {}
+
+local cert_dir = fio.pathjoin(fio.cwd(), './test/certs')
+local ssl_ca_file = fio.pathjoin(cert_dir, 'ca.crt')
+local ssl_server_cert_file = fio.pathjoin(cert_dir, 'server.crt')
+local ssl_server_key_file = fio.pathjoin(cert_dir, 'server.key')
 
 local function uuid_str_from_int(i)
     i = tostring(i)
@@ -69,6 +77,8 @@ local function config_new(templ)
         local replicas = {}
         local replicaset = table.deepcopy(replicaset_templ)
         replicaset.replicas = replicas
+        replicaset.is_ssl = nil
+        local is_ssl = replicaset_templ.is_ssl
         for replica_name, replica_templ in pairs(replicaset_templ.replicas) do
             local replica_uuid = replica_name_to_uuid(replica_name)
             local replica = table.deepcopy(replica_templ)
@@ -87,6 +97,28 @@ local function config_new(templ)
                 end
                 replica.listen = listen
                 replica.uri = listen[replica_templ.port_uri]
+            end
+            if is_ssl then
+                if not replica.listen then
+                    replica.listen = {replica.uri}
+                end
+                for j, listen in pairs(replica.listen) do
+                    replica.listen[j] = {
+                        listen,
+                        params = {
+                            transport = 'ssl',
+                            ssl_cert_file = ssl_server_cert_file,
+                            ssl_key_file = ssl_server_key_file,
+                        },
+                    }
+                end
+                replica.uri = {
+                    replica.uri,
+                    params = {
+                        transport = 'ssl',
+                        ssl_ca_file = ssl_ca_file,
+                    }
+                }
             end
             replicas[replica_uuid] = replica
         end
@@ -405,6 +437,83 @@ local function storage_wait_vclock_all(g)
 end
 
 --
+-- Wait until the instance follows the master having the given instance ID.
+--
+local function storage_wait_follow_f(timeout, id)
+    local deadline = ifiber.clock() + timeout
+    local last_err
+    while true do
+        local info = box.info.replication[id]
+        local stream, status
+        if info == nil then
+            last_err = 'Not found replication info'
+            goto retry
+        end
+        stream = info.upstream
+        if stream == nil then
+            last_err = 'Not found upstream'
+            goto retry
+        end
+        status = stream.status
+        if status == nil then
+            last_err = 'Not found upstream status'
+            goto retry
+        end
+        if status ~= 'follow' then
+            last_err = 'Upstream status is not follow'
+            goto retry
+        end
+        do return end
+    ::retry::
+        if ifiber.clock() > deadline or status == 'stopped' then
+            ilt.fail(yaml.encode({
+                err = last_err,
+                dst_id = id,
+                replication_info = box.info.replication,
+                replication_cfg = box.cfg.replication,
+            }))
+        end
+        ifiber.sleep(0.01)
+    end
+end
+
+--
+-- Wait full synchronization between the given servers: same vclock and mutual
+-- following.
+--
+local function storage_wait_pairsync(s1, s2)
+    s1:wait_vclock_of(s2)
+    s2:wait_vclock_of(s1)
+    s1:exec(storage_wait_follow_f, {wait_timeout, s2:instance_id()})
+    s2:exec(storage_wait_follow_f, {wait_timeout, s1:instance_id()})
+end
+
+--
+-- Wait full synchronization between all nodes in each replication of the
+-- cluster.
+--
+local function storage_wait_fullsync(g)
+    local replicasets = {}
+    for _, storage in pairs(storage_find_all(g)) do
+        local uuid = storage:replicaset_uuid()
+        local replicaset = replicasets[uuid]
+        if not replicaset then
+            replicasets[uuid] = {storage}
+        else
+            table.insert(replicaset, storage)
+        end
+    end
+    for _, replicaset in pairs(replicasets) do
+        for i = 1, #replicaset do
+            local s1 = replicaset[i]
+            for j = i + 1, #replicaset do
+                storage_wait_pairsync(s1, replicaset[j])
+            end
+        end
+    end
+end
+
+--
 -- Apply the config on the given router.
 --
 local function router_cfg(router, cfg)
@@ -459,6 +568,7 @@ return {
     storage_rebalancer_disable = storage_rebalancer_disable,
     storage_rebalancer_enable = storage_rebalancer_enable,
     storage_wait_vclock_all = storage_wait_vclock_all,
+    storage_wait_fullsync = storage_wait_fullsync,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
