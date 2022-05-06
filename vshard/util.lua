@@ -22,6 +22,50 @@ end
 local tnt_version = lversion.parse(_TARANTOOL)
 
 --
+-- Deep comparison of tables. Stolen from built-in table.equals() which sadly is
+-- not available in 1.10.
+--
+local function table_equals(a, b)
+    if type(a) ~= 'table' or type(b) ~= 'table' then
+        return type(a) == type(b) and a == b
+    end
+    local mta = getmetatable(a)
+    local mtb = getmetatable(b)
+    if mta and mta.__eq or mtb and mtb.__eq then
+        return a == b
+    end
+    for k, v in pairs(a) do
+        if not table_equals(v, b[k]) then
+            return false
+        end
+    end
+    for k, _ in pairs(b) do
+        if type(a[k]) == 'nil' then
+            return false
+        end
+    end
+    return true
+end
+
+local function uri_eq(a, b)
+    -- Numbers are not directly supported by old versions.
+    if type(a) == 'number' then
+        a = tostring(a)
+    end
+    if type(b) == 'number' then
+        b = tostring(b)
+    end
+    a = luri.parse(a)
+    b = luri.parse(b)
+    -- Query is inconsistent: a string URI with query params and a table URI
+    -- with explicitly specified same params are parsed into tables whose
+    -- queries are different. Discard them.
+    a.query = nil
+    b.query = nil
+    return table_equals(a, b)
+end
+
+--
 -- Extract parts of a tuple.
 -- @param tuple Tuple to extract a key from.
 -- @param parts Array of index parts. Each part must contain
@@ -243,6 +287,7 @@ local feature = {
 }
 
 return {
+    uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
     generate_self_checker = generate_self_checker,

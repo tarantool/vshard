@@ -277,6 +277,39 @@ g.test_map_callrw_raw = function(g)
     end)
 end
 
+g.test_uri_compare_and_reuse = function(g)
+    -- Multilisten itself is not used, but URI-table is supported since the same
+    -- version.
+    t.run_only_if(vutil.feature.multilisten)
+
+    local rs1_uuid = g.replica_1_a:replicaset_uuid()
+    local rep_1_a_uuid = g.replica_1_a:instance_uuid()
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    local res, err
+
+    local new_cfg = vtest.config_new(cfg_template)
+    local rs_1_cfg = new_cfg.sharding[rs1_uuid]
+    local rep_1_a_cfg = rs_1_cfg.replicas[rep_1_a_uuid]
+    t.assert_equals(type(rep_1_a_cfg.uri), 'string', 'URI is a string')
+
+    -- Set a key in the session to check later for a reconnect.
+    res, err = g.router:exec(callrw_session_set, {bid, 1, 10, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert(res, 'set session key')
+
+    -- Make the URI a table but it is still the same.
+    rep_1_a_cfg.uri = {rep_1_a_cfg.uri}
+    vtest.router_cfg(g.router, new_cfg)
+
+    -- The connection is still the same - session key remains.
+    res, err = g.router:exec(callrw_session_get, {bid, 1, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, 10, 'get session key')
+
+    -- Restore the globals back.
+    vtest.router_cfg(g.router, cluster_cfg)
+end
+
 g.test_multilisten = function(g)
     t.run_only_if(vutil.feature.multilisten)
 
