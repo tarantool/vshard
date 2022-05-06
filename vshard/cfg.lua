@@ -2,11 +2,19 @@
 
 local log = require('log')
 local luri = require('uri')
+local lutil = require('vshard.util')
 local consts = require('vshard.consts')
 
 local function check_uri(uri)
+    if not lutil.feature.multilisten then
+        if type(uri) == 'number' then
+            uri = tostring(uri)
+        elseif type(uri) ~= 'string' then
+            error('Only number and string URI are supported at this version')
+        end
+    end
     if not luri.parse(uri) then
-        error('Invalid URI: ' .. uri)
+        error('Invalid URI')
     end
 end
 
@@ -113,7 +121,11 @@ local function validate_config(config, template, check_arg)
 end
 
 local replica_template = {
-    uri = {type = 'non-empty string', name = 'URI', check = check_uri},
+    uri = {
+        type = {'non-empty string', 'number', 'table'},
+        name = 'URI',
+        check = check_uri
+    },
     name = {type = 'string', name = "Name", is_optional = true},
     zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},
     master = {

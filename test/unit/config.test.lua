@@ -18,15 +18,9 @@ check({sharding = 100})
 -- Replicaset is not table.
 check({sharding = {100}})
 
-replica = {}
+replica = {uri = 'uri:uri@uri'}
 replicaset = {replicas = {['replica_uuid'] = replica}}
 cfg = {sharding = {['replicaset_uuid'] = replicaset}}
-
--- URI is not string.
-check(cfg)
-replica.uri = 100
-check(cfg)
-replica.uri = 'uri:uri@uri'
 
 -- Name is not string.
 replica.name = 100

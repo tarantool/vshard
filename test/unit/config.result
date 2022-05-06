@@ -31,28 +31,13 @@ check({sharding = {100}})
 ---
 - Replicaset must be a table
 ...
-replica = {}
+replica = {uri = 'uri:uri@uri'}
 ---
 ...
 replicaset = {replicas = {['replica_uuid'] = replica}}
 ---
 ...
 cfg = {sharding = {['replicaset_uuid'] = replicaset}}
----
-...
--- URI is not string.
-check(cfg)
----
-- URI must be specified
-...
-replica.uri = 100
----
-...
-check(cfg)
----
-- URI must be non-empty string
-...
-replica.uri = 'uri:uri@uri'
 ---
 ...
 -- Name is not string.
@@ -467,7 +452,7 @@ replica.uri = 'invalid uri'
 ...
 util.check_error(lcfg.check, cfg)
 ---
-- 'Invalid URI: invalid uri'
+- Invalid URI
 ...
 replica.uri = '127.0.0.1'
 ---

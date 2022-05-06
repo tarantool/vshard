@@ -4,6 +4,7 @@ local fiber = require('fiber')
 local lerror = require('vshard.error')
 local lversion = require('vshard.version')
 local lmsgpack = require('msgpack')
+local luri = require('uri')
 
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
@@ -238,6 +239,7 @@ end
 local feature = {
     msgpack_object = lmsgpack.object ~= nil,
     netbox_return_raw = version_is_at_least(2, 10, 0, 'beta', 2, 86),
+    multilisten = luri.parse_many ~= nil,
 }
 
 return {
