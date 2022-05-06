@@ -5,7 +5,7 @@ local luuid = require('uuid')
 
 local g = t.group('config')
 
-g.test_basic_uri = function()
+g.test_replica_uri = function()
     local url = 'storage:storage@127.0.0.1:3301'
     local storage_1_a = {
         uri = url,
@@ -52,4 +52,42 @@ g.test_basic_uri = function()
 
     storage_1_a.uri = luuid.new()
     t.assert_error(vcfg.check, config)
+end
+
+g.test_replica_listen = function()
+    t.run_only_if(vutil.feature.multilisten)
+
+    local url1 = 'storage:storage@127.0.0.1:3301'
+    local url2 = 'storage:storage@127.0.0.1:3302'
+    local storage_1_a = {
+        uri = url1,
+        listen = url2,
+        name = 'storage_1_a',
+    }
+    local config = {
+        sharding = {
+            storage_1_uuid = {
+                replicas = {
+                    storage_1_a_uuid = storage_1_a,
+                }
+            },
+        },
+    }
+
+    -- Simple listen with one URI.
+    local res = vcfg.check(config)
+    t.assert(res, 'listen and uri are both specified')
+
+    local rep_1_a = res.sharding.storage_1_uuid.replicas.storage_1_a_uuid
+    t.assert_equals(rep_1_a.uri, url1, 'uri value')
+    t.assert_equals(rep_1_a.listen, url2, 'listen value')
+
+    -- Listen can by multiple.
+    storage_1_a.listen = {url1, url2}
+    res = vcfg.check(config)
+    t.assert(res, 'listen is array')
+
+    rep_1_a = res.sharding.storage_1_uuid.replicas.storage_1_a_uuid
+    t.assert_equals(rep_1_a.uri, url1, 'uri value')
+    t.assert_equals(rep_1_a.listen, {url1, url2}, 'listen value')
 end

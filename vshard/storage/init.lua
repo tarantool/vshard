@@ -2692,7 +2692,15 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         --
         -- If a master role of the replica is not changed, then
         -- 'read_only' can be set right here.
-        box_cfg.listen = box_cfg.listen or this_replica.uri
+        local this_replicaset_cfg = vshard_cfg.sharding[this_replicaset.uuid]
+        local this_replica_cfg = this_replicaset_cfg.replicas[this_replica.uuid]
+
+        if box_cfg.listen == nil then
+            box_cfg.listen = this_replica_cfg.listen
+            if box_cfg.listen == nil then
+                box_cfg.listen = this_replica_cfg.uri
+            end
+        end
         if not box_cfg.replication then
             box_cfg.replication = {}
             for _, replica in pairs(this_replicaset.replicas) do

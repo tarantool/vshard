@@ -4,7 +4,7 @@
 -- <replicaset> = {
 --     replicas = {
 --         [replica_uuid] = {
---             uri = string,
+--             uri = URI,
 --             name = string,
 --             uuid = string,
 --             conn = <netbox> + .replica + .replicaset,

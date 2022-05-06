@@ -5,7 +5,7 @@ local luri = require('uri')
 local lutil = require('vshard.util')
 local consts = require('vshard.consts')
 
-local function check_uri(uri)
+local function check_uri_connect(uri)
     if not lutil.feature.multilisten then
         if type(uri) == 'number' then
             uri = tostring(uri)
@@ -15,6 +15,16 @@ local function check_uri(uri)
     end
     if not luri.parse(uri) then
         error('Invalid URI')
+    end
+end
+
+local function check_uri_listen(uri)
+    if not lutil.feature.multilisten then
+        error('Listen URIs are not supported at this version')
+    end
+    if not luri.parse_many(uri) then
+       error('URI must be a non-empty string, or a number, or a table, or an '..
+             'array of these types')
     end
 end
 
@@ -124,7 +134,13 @@ local replica_template = {
     uri = {
         type = {'non-empty string', 'number', 'table'},
         name = 'URI',
-        check = check_uri
+        check = check_uri_connect
+    },
+    listen = {
+        type = {'non-empty string', 'number', 'table'},
+        name = 'listen',
+        check = check_uri_listen,
+        is_optional = true,
     },
     name = {type = 'string', name = "Name", is_optional = true},
     zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},

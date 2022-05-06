@@ -4,7 +4,7 @@ local vutil = require('vshard.util')
 local wait_timeout = 120
 
 local g = t.group('router')
-local cluster_cfg = vtest.config_new({
+local cfg_template = {
     sharding = {
         {
             replicas = {
@@ -24,7 +24,22 @@ local cluster_cfg = vtest.config_new({
         },
     },
     bucket_count = 100
-})
+}
+local cluster_cfg = vtest.config_new(cfg_template)
+
+local function callrw_get_uuid(bid, timeout)
+    return vshard.router.callrw(bid, 'get_uuid', {}, {timeout = timeout})
+end
+
+local function callrw_session_get(bid, key, timeout)
+    return vshard.router.callrw(bid, 'session_get', {key},
+                                {timeout = timeout})
+end
+
+local function callrw_session_set(bid, key, value, timeout)
+    return vshard.router.callrw(bid, 'session_set', {key, value},
+                                {timeout = timeout})
+end
 
 g.before_all(function()
     vtest.storage_new(g, cluster_cfg)
@@ -260,4 +275,84 @@ g.test_map_callrw_raw = function(g)
     g.replica_2_a:exec(function()
         _G.do_map = nil
     end)
+end
+
+g.test_multilisten = function(g)
+    t.run_only_if(vutil.feature.multilisten)
+
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+
+    -- Set 2 listen ports on the master.
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs_1_templ = new_cfg_template.sharding[1]
+    local rep_1_a_templ = rs_1_templ.replicas.replica_1_a
+    rep_1_a_templ.port_count = 2
+    -- Clients should use the first port.
+    rep_1_a_templ.port_uri = 1
+    local new_storage_cfg = vtest.config_new(new_cfg_template)
+    vtest.storage_cfg(g, new_storage_cfg)
+
+    -- Router connects to the first port.
+    local new_router_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_router_cfg)
+
+    local rep_1_a_uuid = g.replica_1_a:instance_uuid()
+    local res, err = g.router:exec(callrw_get_uuid, {bid, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, rep_1_a_uuid, 'went to 1_a')
+
+    -- Save a key in the session to check later for a reconnect.
+    res, err = g.router:exec(callrw_session_set, {bid, 1, 10, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert(res, 'set session key')
+
+    -- The key is actually saved.
+    res, err = g.router:exec(callrw_session_get, {bid, 1, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, 10, 'get session key')
+
+    -- Router connects to the second port. The storage's cfg is intentionally
+    -- unchanged.
+    rep_1_a_templ.port_uri = 2
+    new_router_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_router_cfg)
+
+    res, err = g.router:exec(callrw_get_uuid, {bid, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, rep_1_a_uuid, 'went to 1_a again')
+
+    -- There was a reconnect - the session is new.
+    res, err = g.router:exec(callrw_session_get, {bid, 1, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, nil, 'no session key')
+
+    -- To confirm that the router uses the second port, shut it down on the
+    -- storage. The router won't be able to reconnect.
+    rep_1_a_templ.port_count = 1
+    rep_1_a_templ.port_uri = 1
+    new_storage_cfg = vtest.config_new(new_cfg_template)
+    vtest.storage_cfg(g, new_storage_cfg)
+    -- Force router reconnect. Otherwise the router would use the old still
+    -- alive connection even though the original listening socket is closed
+    -- above.
+    vtest.router_disconnect(g.router)
+
+    res, err = g.router:exec(callrw_get_uuid, {bid, 0.05})
+    t.assert_equals(res, nil, 'rw failed when second port was shut down')
+    -- Code can be anything really. Can't check it reliably not depending on OS.
+    t.assert_covers(err, {type = 'ClientError'}, 'got error')
+
+    -- Make the router connect to the first port while it still thinks there
+    -- are two ports.
+    rep_1_a_templ.port_count = 2
+    rep_1_a_templ.port_uri = 1
+    new_router_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_router_cfg)
+    res, err = g.router:exec(callrw_get_uuid, {bid, wait_timeout})
+    t.assert_equals(err, nil, 'no error')
+    t.assert_equals(res, rep_1_a_uuid, 'went to 1_a again')
+
+    -- Restore everything back.
+    vtest.storage_cfg(g, cluster_cfg)
+    vtest.router_cfg(g.router, cluster_cfg)
 end
