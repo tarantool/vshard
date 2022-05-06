@@ -4,7 +4,7 @@ local vutil = require('vshard.util')
 local wait_timeout = 120
 
 local g = t.group('router')
-local cluster_cfg, cfg_meta = vtest.config_new({
+local cluster_cfg = vtest.config_new({
     sharding = {
         {
             replicas = {
@@ -206,9 +206,11 @@ g.test_map_callrw_raw = function(g)
             err = err,
         }
     end, {wait_timeout})
+    local rs1_uuid = g.replica_1_a:replicaset_uuid()
+    local rs2_uuid = g.replica_2_a:replicaset_uuid()
     local expected = {
-        [cfg_meta.replicasets[1].uuid] = {{1, 3}},
-        [cfg_meta.replicasets[2].uuid] = {{2, 3}},
+        [rs1_uuid] = {{1, 3}},
+        [rs2_uuid] = {{2, 3}},
     }
     t.assert_equals(res.val, expected, 'map callrw success')
     t.assert_equals(res.map_type, 'userdata', 'values are msgpacks')
@@ -226,7 +228,7 @@ g.test_map_callrw_raw = function(g)
                                         return_raw = true})
     end, {wait_timeout})
     expected = {
-        [cfg_meta.replicasets[1].uuid] = {{1}},
+        [rs1_uuid] = {{1}},
     }
     t.assert_equals(res, expected, 'map callrw without one value success')
     --
@@ -248,7 +250,7 @@ g.test_map_callrw_raw = function(g)
         type = 'ClientError',
         message = 'map_err'
     }, 'error object')
-    t.assert_equals(err_uuid, cfg_meta.replicasets[2].uuid, 'error uuid')
+    t.assert_equals(err_uuid, rs2_uuid, 'error uuid')
     --
     -- Cleanup.
     --

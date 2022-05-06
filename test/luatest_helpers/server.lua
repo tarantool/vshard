@@ -160,6 +160,21 @@ function Server:instance_uuid()
     return uuid
 end
 
+function Server:replicaset_uuid()
+    -- Cache the value when found it first time.
+    if self.replicaset_uuid_value then
+        return self.replicaset_uuid_value
+    end
+    local uuid = self:exec(function() return box.info.cluster.uuid end)
+    if uuid == nil then
+        -- Probably didn't bootstrap yet. Listen starts before replicaset UUID
+        -- is assigned.
+        return nil
+    end
+    self.replicaset_uuid_value = uuid
+    return uuid
+end
+
 -- TODO: Add the 'wait_for_readiness' parameter for the restart()
 -- method.
 
@@ -192,6 +207,7 @@ function Server:cleanup()
     end
     self.instance_id_value = nil
     self.instance_uuid_value = nil
+    self.replicaset_uuid_value = nil
 end
 
 function Server:drop()
