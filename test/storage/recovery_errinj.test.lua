@@ -23,7 +23,7 @@ vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
 _bucket = box.space._bucket
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[2]}
 ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
-ret, err.code
+ret, util.is_timeout_error(err)
 _bucket = box.space._bucket
 _bucket:get{1}
 
