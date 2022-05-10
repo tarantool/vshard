@@ -24,15 +24,11 @@ local util = require('vshard.util')
 local seq_serializer = { __serialize = 'seq' }
 
 local msgpack_is_object = lmsgpack.is_object
-local msgpack_object = lmsgpack.object
 
 if not util.feature.msgpack_object then
     local msg = 'Msgpack object feature is not supported by current '..
                 'Tarantool version'
     msgpack_is_object = function()
-        error(msg)
-    end
-    msgpack_object = function()
         error(msg)
     end
 end
