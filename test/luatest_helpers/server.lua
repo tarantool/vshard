@@ -6,6 +6,8 @@ local fio = require('fio')
 local fun = require('fun')
 local json = require('json')
 local errno = require('errno')
+local log = require('log')
+local yaml = require('yaml')
 
 local checks = require('checks')
 local luatest = require('luatest')
@@ -19,28 +21,32 @@ local Server = luatest.Server:inherit({})
 local WAIT_TIMEOUT = 60
 local WAIT_DELAY = 0.1
 
-local DEFAULT_CHECKPOINT_PATTERNS = {"*.snap", "*.xlog", "*.vylog",
-                                     "*.inprogress", "[0-9]*/"}
-
 -- Differences from luatest.Server:
 --
 -- * 'alias' is mandatory.
 -- * 'command' is optional, assumed test/instances/default.lua by
 --   default.
+-- * 'datadir' is optional, specifies a directory: if specified, the directory's
+--   contents will be recursively copied into 'workdir' during initialization.
 -- * 'workdir' is optional, determined by 'alias'.
 -- * The new 'box_cfg' parameter.
 -- * engine - provides engine for parameterized tests
 Server.constructor_checks = fun.chain(Server.constructor_checks, {
     alias = 'string',
     command = '?string',
+    datadir = '?string',
     workdir = '?string',
     box_cfg = '?table',
     engine = '?string',
 }):tomap()
 
-function Server:initialize()
-    local vardir = fio.abspath(os.getenv('VARDIR') or 'test/var')
+Server.socketdir = fio.abspath(os.getenv('VARDIR') or '/tmp/t')
 
+function Server.build_instance_uri(alias)
+    return ('%s/%s.iproto'):format(Server.socketdir, alias)
+end
+
+function Server:initialize()
     if self.id == nil then
         local random = digest.urandom(9)
         self.id = digest.base64_encode(random, {urlsafe = true})
@@ -49,13 +55,20 @@ function Server:initialize()
         self.command = 'test/instances/default.lua'
     end
     if self.workdir == nil then
-        self.workdir = ('%s/%s-%s'):format(vardir, self.alias, self.id)
+        self.workdir = ('%s/%s-%s'):format(self.socketdir, self.alias, self.id)
         fio.rmtree(self.workdir)
         fio.mktree(self.workdir)
     end
+    if self.datadir ~= nil then
+        local ok, err = fio.copytree(self.datadir, self.workdir)
+        if not ok then
+            error(string.format('Failed to copy directory: %s', err))
+        end
+        self.datadir = nil
+    end
     if self.net_box_port == nil and self.net_box_uri == nil then
-        self.net_box_uri = ('%s/%s.iproto'):format(vardir, self.alias)
-        fio.mktree(vardir)
+        self.net_box_uri = self.build_instance_uri(self.alias)
+        fio.mktree(self.socketdir)
     end
 
     -- AFAIU, the inner getmetatable() returns our helpers.Server
@@ -118,6 +131,18 @@ function Server:wait_election_leader_found()
                      function() return box.info.election.leader ~= 0 end)
 end
 
+function Server:wait_election_term(term)
+    return wait_cond('election term', self, self.exec, self, function(term)
+        return box.info.election.term >= term
+    end, {term})
+end
+
+function Server:wait_synchro_queue_term(term)
+    return wait_cond('synchro queue term', self, self.exec, self, function(term)
+        return box.info.synchro.queue.term >= term
+    end, {term})
+end
+
 -- Unlike the original luatest.Server function it waits for
 -- starting the server.
 function Server:start(opts)
@@ -175,6 +200,14 @@ function Server:replicaset_uuid()
     return uuid
 end
 
+function Server:election_term()
+    return self:exec(function() return box.info.election.term end)
+end
+
+function Server:synchro_queue_term()
+    return self:exec(function() return box.info.synchro.queue.term end)
+end
+
 -- TODO: Add the 'wait_for_readiness' parameter for the restart()
 -- method.
 
@@ -202,9 +235,7 @@ function Server:stop()
 end
 
 function Server:cleanup()
-    for _, pattern in ipairs(DEFAULT_CHECKPOINT_PATTERNS) do
-        fio.rmtree(('%s/%s'):format(self.workdir, pattern))
-    end
+    fio.rmtree(self.workdir)
     self.instance_id_value = nil
     self.instance_uuid_value = nil
     self.replicaset_uuid_value = nil
@@ -277,6 +308,48 @@ function Server:grep_log(what, bytes, opts)
     until s == ''
     file:close()
     return found
+end
+
+function Server:assert_follows_upstream(server_id)
+    local status = self:exec(function(id)
+        return box.info.replication[id].upstream.status
+    end, {server_id})
+    luatest.assert_equals(status, 'follow',
+        ('%s: server does not follow upstream'):format(self.alias))
+end
+
+function Server:get_vclock()
+    return self:exec(function() return box.info.vclock end)
+end
+
+function Server:wait_vclock(to_vclock)
+    while true do
+        local vclock = self:get_vclock()
+        local ok = true
+
+        for server_id, to_lsn in pairs(to_vclock) do
+            local lsn = vclock[server_id]
+            if lsn == nil or lsn < to_lsn then
+                ok = false
+                break
+            end
+        end
+
+        if ok then
+            return
+        end
+
+        log.info("wait vclock: %s to %s",
+            yaml.encode(vclock), yaml.encode(to_vclock))
+        fiber.sleep(0.001)
+    end
+end
+
+function Server:wait_vclock_of(other_server)
+    local vclock = other_server:get_vclock()
+    -- First component is for local changes.
+    vclock[0] = nil
+    return self:wait_vclock(vclock)
 end
 
 return Server
