@@ -1,7 +1,9 @@
 local t = require('luatest')
 local helpers = require('test.luatest_helpers')
 local cluster = require('test.luatest_helpers.cluster')
+local fiber = require('fiber')
 local vconst = require('vshard.consts')
+local vrepset = require('vshard.replicaset')
 
 local uuid_idx = 1
 --
@@ -160,36 +162,180 @@ local function storage_new(g, cfg)
 end
 
 --
+-- Find all vshard storages in the cluster.
+--
+local function storage_find_all(g)
+    local result = {}
+    for _, storage in pairs(g.cluster.servers) do
+        if storage.vtest and storage.vtest.is_storage then
+            table.insert(result, storage)
+        end
+    end
+    return result
+end
+
+--
+-- Execute func(storage) in parallel for all the given storages.
+--
+local function storage_for_each_in(storages, func)
+    local fibers = table.new(0, #storages)
+    -- Map-reduce. Parallel execution not only is faster but also helps not to
+    -- depend on which order would be non-blocking. For example, at storage
+    -- reconfiguration there might be a config which makes the master hang until
+    -- some replica is configured first. When all are done in parallel, it won't
+    -- matter.
+    for _, storage in pairs(storages) do
+        local name = storage.vtest.name
+        local f = fiber.new(func, storage)
+        f:set_joinable(true)
+        fibers[name] = f
+    end
+    local result = table.new(0, #storages)
+    local errors = {}
+    for name, f in pairs(fibers) do
+        local ok, res = f:join()
+        if not ok then
+            errors[name] = res
+        else
+            result[name] = res
+        end
+    end
+    if not next(errors) then
+        return result
+    end
+    return nil, errors
+end
+
+--
+-- Execute func(storage) in parallel for all storages.
+--
+local function storage_for_each(g, func)
+    return storage_for_each_in(storage_find_all(g), func)
+end
+
+--
+-- Execute storage:exec(func, args) in parallel for all storages.
+--
+local function storage_exec_each(g, func, args)
+    return storage_for_each(g, function(storage)
+        return storage:exec(func, args)
+    end)
+end
+
+--
+-- Find all vshard storage masters in the cluster.
+--
+local function storage_find_all_masters(g)
+    local res, err = storage_for_each(g, function(storage)
+        return storage:call('vshard.storage._call', {'info'}).is_master
+    end)
+    if not res then
+        return nil, err
+    end
+    local masters = {}
+    for name, is_master in pairs(res) do
+        if is_master then
+            local server = g[name]
+            t.assert_not_equals(server, nil, 'find master instance')
+            table.insert(masters, server)
+        end
+    end
+    return masters
+end
+
+--
+-- Execute func(storage) in parallel for all master storages.
+--
+local function storage_for_each_master(g, func)
+    local masters, err = storage_find_all_masters(g)
+    if not masters then
+        return nil, err
+    end
+    return storage_for_each_in(masters, func)
+end
+
+--
+-- Execute storage:exec(func, args) in parallel for all master storages.
+--
+local function storage_exec_each_master(g, func, args)
+    return storage_for_each_master(g, function(storage)
+        return storage:exec(func, args)
+    end)
+end
+
+local function storage_boot_one_f(first, count)
+    return ivshard.storage.bucket_force_create(first, count)
+end
+
+--
+-- Bootstrap the cluster without a router by a given config. In theory the
+-- config could be fetched from the storages, but it would force to check its
+-- consistency.
+--
+local function storage_bootstrap(g, cfg)
+    local masters = {}
+    local etalon_balance = {}
+    local replicaset_count = 0
+    for rs_uuid, rs in pairs(cfg.sharding) do
+        local is_master_found = false
+        for _, rep in pairs(rs.replicas) do
+            if rep.master then
+                t.assert(not is_master_found, 'only one master')
+                local server = g[rep.name]
+                t.assert_not_equals(server, nil, 'find master instance')
+                t.assert_equals(server:replicaset_uuid(), rs_uuid,
+                                'replicaset uuid')
+                masters[rs_uuid] = server
+                is_master_found = true
+            end
+        end
+        t.assert(is_master_found, 'found master')
+        local weight = rs.weight
+        if weight == nil then
+            weight = 1
+        end
+        etalon_balance[rs_uuid] = {
+            weight = weight
+        }
+        replicaset_count = replicaset_count + 1
+    end
+    t.assert_not_equals(masters, {}, 'have masters')
+    vrepset.calculate_etalon_balance(etalon_balance, cfg.bucket_count)
+    local fibers = table.new(0, replicaset_count)
+    local bid = 1
+    for rs_uuid, rs in pairs(etalon_balance) do
+        local master = masters[rs_uuid]
+        local count = rs.etalon_bucket_count
+        local f = fiber.new(master.exec, master, storage_boot_one_f,
+                            {bid, count})
+        f:set_joinable(true)
+        fibers[master.vtest.name] = f
+        bid = bid + count
+    end
+    local errors = {}
+    for name, f in pairs(fibers) do
+        local ok, res1, res2 = f:join()
+        if not ok then
+            errors[name] = res1
+        elseif res1 == nil then
+            errors[name] = res2
+        else
+            t.assert_equals(res2, nil, 'boot_one no error')
+            t.assert(res1, 'boot_one success')
+        end
+    end
+    t.assert_equals(errors, {}, 'storage bootstrap')
+end
+
+--
 -- Apply the config to all vshard storages in the cluster.
 --
 local function storage_cfg(g, cfg)
     -- No support yet for dynamic node addition and removal. Only reconfig.
-    local fids = {}
-    local storages = {}
-    -- Map-reduce. It should make reconfig not only faster but also not depend
-    -- on which order would be non-blocking. For example, there might be a
-    -- config which makes the master hang until some replica is configured
-    -- first. When all are done in parallel, it won't matter.
-    for _, storage in pairs(g.cluster.servers) do
-        if storage.vtest and storage.vtest.is_storage then
-            table.insert(storages, storage)
-            table.insert(fids, storage:exec(function(cfg)
-                local f = ifiber.new(ivshard.storage.cfg, cfg, box.info.uuid)
-                f:set_joinable(true)
-                return f:id()
-            end, {cfg}))
-        end
-    end
-    local errors = {}
-    for i, storage in pairs(storages) do
-        local ok, err = storage:exec(function(fid)
-            return ifiber.find(fid):join()
-        end, {fids[i]})
-        if not ok then
-            errors[storage.vtest.name] = err
-        end
-    end
-    t.assert_equals(errors, {}, 'storage reconfig')
+    local _, err = storage_exec_each(g, function(cfg)
+        return ivshard.storage.cfg(cfg, box.info.uuid)
+    end, {cfg})
+    t.assert_equals(err, nil, 'storage reconfig')
 end
 
 --
@@ -201,6 +347,52 @@ local function storage_first_bucket(storage)
         local res = box.space._bucket.index.status:min(status)
         return res ~= nil and res.id or nil
     end, {vconst.BUCKET.ACTIVE})
+end
+
+--
+-- Disable rebalancer on all storages.
+--
+local function storage_rebalancer_disable(g)
+    local _, err =  storage_exec_each(g, function()
+        ivshard.storage.rebalancer_disable()
+    end)
+    t.assert_equals(err, nil, 'rebalancer disable')
+end
+
+--
+-- Enable rebalancer on all storages.
+--
+local function storage_rebalancer_enable(g)
+    local _, err =  storage_exec_each(g, function()
+        ivshard.storage.rebalancer_enable()
+    end)
+    t.assert_equals(err, nil, 'rebalancer enable')
+end
+
+--
+-- Wait vclock sync in each replicaset between all its replicas.
+--
+local function storage_wait_vclock_all(g)
+    local replicasets = {}
+    for _, storage in pairs(storage_find_all(g)) do
+        local uuid = storage:replicaset_uuid()
+        local replicaset = replicasets[uuid]
+        if not replicaset then
+            replicasets[uuid] = {storage}
+        else
+            table.insert(replicaset, storage)
+        end
+    end
+    for _, replicaset in pairs(replicasets) do
+        for i = 1, #replicaset do
+            local s1 = replicaset[i]
+            for j = i + 1, #replicaset do
+                local s2 = replicaset[j]
+                s1:wait_vclock_of(s2)
+                s2:wait_vclock_of(s1)
+            end
+        end
+    end
 end
 
 --
@@ -250,7 +442,14 @@ return {
     config_new = config_new,
     storage_new = storage_new,
     storage_cfg = storage_cfg,
+    storage_for_each = storage_for_each,
+    storage_for_each_master = storage_for_each_master,
+    storage_exec_each_master = storage_exec_each_master,
+    storage_bootstrap = storage_bootstrap,
     storage_first_bucket = storage_first_bucket,
+    storage_rebalancer_disable = storage_rebalancer_disable,
+    storage_rebalancer_enable = storage_rebalancer_enable,
+    storage_wait_vclock_all = storage_wait_vclock_all,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
