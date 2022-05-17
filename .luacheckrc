@@ -26,7 +26,9 @@ local test_rules = {
     ignore = {
         -- Accessing an undefined variable.
         '113/ifiber',
+        '113/ilt',
         '113/imsgpack',
+        '113/ivconst',
         '113/ivshard',
     }
 }

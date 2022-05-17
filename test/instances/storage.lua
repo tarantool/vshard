@@ -7,6 +7,8 @@ local helpers = require('test.luatest_helpers')
 -- same lib is declared in the _test.lua file.
 --
 _G.ifiber = require('fiber')
+_G.ilt = require('luatest')
+_G.ivconst = require('vshard.consts')
 
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.
@@ -14,6 +16,11 @@ _G.vshard = {
     storage = require('vshard.storage'),
 }
 _G.ivshard = _G.vshard
+
+-- Get rid of luacheck warnings that _G members != variables.
+local vshard = _G.ivshard
+local vconst = _G.ivconst
+local t = _G.ilt
 
 -- Somewhy shutdown hangs on new Tarantools even though the nodes do not seem to
 -- have any long requests running.
@@ -46,10 +53,24 @@ local function session_get(key)
     return box.session.storage[key]
 end
 
+local function wait_bucket_gc(timeout)
+    local status_index = box.space._bucket.index.status
+    t.helpers.retrying({timeout = timeout}, function()
+        vshard.storage.garbage_collector_wakeup()
+        if status_index:min({vconst.BUCKET.SENT}) ~= nil then
+            error('Still have SENT buckets')
+        end
+        if status_index:min({vconst.BUCKET.GARBAGE}) ~= nil then
+            error('Still have GARBAGE buckets')
+        end
+    end)
+end
+
 _G.box_error = box_error
 _G.echo = echo
 _G.get_uuid = get_uuid
 _G.session_set = session_set
 _G.session_get = session_get
+_G.wait_bucket_gc = wait_bucket_gc
 
 _G.ready = true
