@@ -2,7 +2,6 @@ local t = require('luatest')
 local helpers = require('test.luatest_helpers')
 local cluster = require('test.luatest_helpers.cluster')
 local fiber = require('fiber')
-local vconst = require('vshard.consts')
 local vrepset = require('vshard.replicaset')
 
 local uuid_idx = 1
@@ -115,6 +114,7 @@ local function storage_new(g, cfg)
             box_cfg.listen = helpers.instance_uri(replica.name)
             -- Need to specify read-only explicitly to know how is master.
             box_cfg.read_only = not replica.master
+            box_cfg.memtx_use_mvcc_engine = cfg.memtx_use_mvcc_engine
             local server = g.cluster:build_server({
                 alias = name,
                 box_cfg = box_cfg,
@@ -343,10 +343,9 @@ end
 -- where the buckets are located by hardcoded numbers and uuids.
 --
 local function storage_first_bucket(storage)
-    return storage:exec(function(status)
-        local res = box.space._bucket.index.status:min(status)
-        return res ~= nil and res.id or nil
-    end, {vconst.BUCKET.ACTIVE})
+    return storage:exec(function()
+        return _G.get_first_bucket()
+    end)
 end
 
 --

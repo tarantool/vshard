@@ -44,6 +44,11 @@ local function get_uuid()
     return instance_uuid
 end
 
+local function get_first_bucket()
+    local res = box.space._bucket.index.status:min(vconst.BUCKET.ACTIVE)
+    return res ~= nil and res.id or nil
+end
+
 local function session_set(key, value)
     box.session.storage[key] = value
     return true
@@ -69,6 +74,7 @@ end
 _G.box_error = box_error
 _G.echo = echo
 _G.get_uuid = get_uuid
+_G.get_first_bucket = get_first_bucket
 _G.session_set = session_set
 _G.session_get = session_get
 _G.wait_bucket_gc = wait_bucket_gc

@@ -1,10 +1,21 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local vutil = require('vshard.util')
 local wait_timeout = 120
 
-local test_group = t.group('bucket_gc', {
-    {engine = 'memtx'}, {engine = 'vinyl'}
-})
+local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
+
+if vutil.feature.memtx_mvcc then
+    table.insert(group_config, {
+        engine = 'memtx', memtx_use_mvcc_engine = true
+    })
+    table.insert(group_config, {
+        engine = 'vinyl', memtx_use_mvcc_engine = true
+    })
+end
+
+local test_group = t.group('bucket_gc', group_config)
+
 local cfg_template = {
     sharding = {
         {
@@ -18,9 +29,12 @@ local cfg_template = {
     },
     bucket_count = 20
 }
-local cluster_cfg = vtest.config_new(cfg_template)
+local cluster_cfg
 
 test_group.before_all(function(g)
+    cfg_template.memtx_use_mvcc_engine = g.params.memtx_use_mvcc_engine
+    cluster_cfg = vtest.config_new(cfg_template)
+
     vtest.storage_new(g, cluster_cfg)
     vtest.storage_bootstrap(g, cluster_cfg)
     vtest.storage_exec_each_master(g, function(engine)
@@ -136,4 +150,52 @@ test_group.test_basic = function(g)
         ilt.assert_equals(
             ivshard.storage.internal.collect_bucket_garbage_fiber, nil)
     end)
+end
+
+test_group.test_yield_before_send_commit = function(g)
+    t.run_only_if(cluster_cfg.memtx_use_mvcc_engine)
+
+    g.replica_1_a:exec(function(timeout)
+        local s = box.space.test
+        local bucket_space = box.space._bucket
+        local bid = _G.get_first_bucket()
+        ilt.assert_not_equals(bid, nil, 'get any bucket')
+
+        -- Fill a bucket with some data.
+        local tuple_count = 10
+        box.begin()
+        for i = 1, tuple_count do
+            s:replace{i, bid}
+        end
+        box.commit()
+
+        -- Start its "sending" but yield before commit.
+        local is_send_blocked = true
+        local f_send = ifiber.new(function()
+            box.begin()
+            bucket_space:update({bid}, {{'=', 2, ivconst.BUCKET.SENT}})
+            while is_send_blocked do
+                ifiber.sleep(0.01)
+            end
+            box.commit()
+        end)
+        f_send:set_joinable(true)
+        ifiber.sleep(0.01)
+        ilt.assert_equals(bucket_space:get{bid}.status, ivconst.BUCKET.ACTIVE,
+                        'sending is not visible yet')
+        is_send_blocked = false
+        ilt.assert(f_send:join(), 'long send succeeded')
+
+        -- Bucket GC should react on commit. Not wakeup on replace, notice no
+        -- changes, and go to sleep.
+        _G.wait_bucket_gc(timeout)
+        ilt.assert_equals(s:count(), 0, 'no garbage data')
+
+        -- Restore the bucket for next tests.
+        ivshard.storage.bucket_force_create(bid)
+        s:truncate()
+    end, {wait_timeout})
+
+    -- Ensure the replica received all that and didn't break.
+    g.replica_1_b:wait_vclock_of(g.replica_1_a)
 end
