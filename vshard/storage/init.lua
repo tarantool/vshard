@@ -291,6 +291,22 @@ local function bucket_generation_increment()
     M.bucket_generation_cond:broadcast()
 end
 
+local function bucket_on_replace_f()
+    local f = bucket_generation_increment
+    local f_del = f
+    -- One transaction can affect many buckets. Do not create a trigger for each
+    -- bucket. Instead create it only first time. For that the trigger replaces
+    -- itself when installed not first time.
+    -- Although in case of hot reload during changing _bucket the function
+    -- pointer will change and more than one trigger could be installed.
+    -- Shouldn't matter anyway.
+    if not pcall(box.on_commit, f, f) then
+        box.on_commit(f)
+        f_del = nil
+    end
+    box.on_rollback(f, f_del)
+end
+
 local function bucket_generation_wait(timeout)
     return fiber_cond_wait(M.bucket_generation_cond, timeout)
 end
@@ -430,8 +446,8 @@ local function schema_install_triggers()
                      '_bucket: %s', err)
         end
     end
-    _bucket:on_replace(bucket_generation_increment)
-    M.bucket_on_replace = bucket_generation_increment
+    _bucket:on_replace(bucket_on_replace_f)
+    M.bucket_on_replace = bucket_on_replace_f
 end
 
 local function schema_install_on_replace(_, new)
