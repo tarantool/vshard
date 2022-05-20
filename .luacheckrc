@@ -14,16 +14,22 @@ ignore = {
 include_files = {
     'vshard/**/*.lua',
     'test/**/*_test.lua',
+    'test/luatest_helpers/vtest.lua',
+    'test/instances/*.lua',
 }
 
 exclude_files = {
     'test/var/*',
 }
 
-files['**/*_test.lua'] = {
+local test_rules = {
     ignore = {
         -- Accessing an undefined variable.
+        '113/fiber',
         '113/msgpack',
         '113/vshard',
     }
 }
+
+files['test/**/*_test.lua'] = test_rules
+files['test/luatest_helpers/vtest.lua'] = test_rules
