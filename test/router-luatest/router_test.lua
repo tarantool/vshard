@@ -28,30 +28,30 @@ local cfg_template = {
 local cluster_cfg = vtest.config_new(cfg_template)
 
 local function callrw_get_uuid(bid, timeout)
-    return vshard.router.callrw(bid, 'get_uuid', {}, {timeout = timeout})
+    return ivshard.router.callrw(bid, 'get_uuid', {}, {timeout = timeout})
 end
 
 local function callrw_session_get(bid, key, timeout)
-    return vshard.router.callrw(bid, 'session_get', {key},
-                                {timeout = timeout})
+    return ivshard.router.callrw(bid, 'session_get', {key},
+                                 {timeout = timeout})
 end
 
 local function callrw_session_set(bid, key, value, timeout)
-    return vshard.router.callrw(bid, 'session_set', {key, value},
-                                {timeout = timeout})
+    return ivshard.router.callrw(bid, 'session_set', {key, value},
+                                 {timeout = timeout})
 end
 
 g.before_all(function()
     vtest.storage_new(g, cluster_cfg)
 
     t.assert_equals(g.replica_1_a:exec(function()
-        return #vshard.storage.info().alerts
+        return #ivshard.storage.info().alerts
     end), 0, 'no alerts after boot')
 
     local router = vtest.router_new(g, 'router', cluster_cfg)
     g.router = router
     local res, err = router:exec(function(timeout)
-        return vshard.router.bootstrap({timeout = timeout})
+        return ivshard.router.bootstrap({timeout = timeout})
     end, {wait_timeout})
     t.assert(res and not err, 'bootstrap buckets')
 end)
@@ -63,7 +63,7 @@ end)
 g.test_basic = function(g)
     local router = g.router
     local res, err = router:exec(function(timeout)
-        return vshard.router.callrw(1, 'echo', {1}, {timeout = timeout})
+        return ivshard.router.callrw(1, 'echo', {1}, {timeout = timeout})
     end, {wait_timeout})
     t.assert(not err, 'no error')
     t.assert_equals(res, 1, 'good result')
@@ -76,8 +76,8 @@ g.test_msgpack_args = function(g)
     --
     local router = g.router
     local res, err = router:exec(function(timeout)
-        local args = msgpack.object({100})
-        return vshard.router.callrw(1, 'echo', args, {timeout = timeout})
+        local args = imsgpack.object({100})
+        return ivshard.router.callrw(1, 'echo', args, {timeout = timeout})
     end, {wait_timeout})
     t.assert(not err, 'no error')
     t.assert_equals(res, 100, 'good result')
@@ -85,8 +85,8 @@ g.test_msgpack_args = function(g)
     -- Normal call rw.
     --
     res, err = router:exec(function(timeout)
-        local args = msgpack.object({100})
-        return vshard.router.callro(1, 'echo', args, {timeout = timeout})
+        local args = imsgpack.object({100})
+        return ivshard.router.callro(1, 'echo', args, {timeout = timeout})
     end, {wait_timeout})
     t.assert(not err, 'no error')
     t.assert_equals(res, 100, 'good result')
@@ -94,8 +94,8 @@ g.test_msgpack_args = function(g)
     -- Direct call ro.
     --
     res, err = router:exec(function(timeout)
-        local args = msgpack.object({100})
-        local route = vshard.router.route(1)
+        local args = imsgpack.object({100})
+        local route = ivshard.router.route(1)
         return route:callro('echo', args, {timeout = timeout})
     end, {wait_timeout})
     t.assert(err == nil, 'no error')
@@ -104,8 +104,8 @@ g.test_msgpack_args = function(g)
     -- Direct call rw.
     --
     res, err = router:exec(function(timeout)
-        local args = msgpack.object({100})
-        local route = vshard.router.route(1)
+        local args = imsgpack.object({100})
+        local route = ivshard.router.route(1)
         return route:callrw('echo', args, {timeout = timeout})
     end, {wait_timeout})
     t.assert(err == nil, 'no error')
@@ -119,7 +119,7 @@ local function test_return_raw_template(g, mode)
     -- luacheck: ignore 113/add_details
     local router = g.router
     local res = router:exec(function(timeout, mode)
-        return add_details(vshard.router[mode](1, 'echo', {1, 2, 3},
+        return add_details(ivshard.router[mode](1, 'echo', {1, 2, 3},
                            {timeout = timeout, return_raw = true}))
     end, {wait_timeout, mode})
     t.assert_equals(res.val, {1, 2, 3}, 'value value')
@@ -130,7 +130,7 @@ local function test_return_raw_template(g, mode)
     -- Route call.
     --
     res = router:exec(function(timeout, mode)
-        local route = vshard.router.route(1)
+        local route = ivshard.router.route(1)
         return add_details(route[mode](route, 'echo', {1, 2, 3},
                            {timeout = timeout, return_raw = true}))
     end, {wait_timeout, mode})
@@ -142,7 +142,7 @@ local function test_return_raw_template(g, mode)
     -- Empty result set.
     --
     res = router:exec(function(timeout, mode)
-        return add_details(vshard.router[mode](1, 'echo', {},
+        return add_details(ivshard.router[mode](1, 'echo', {},
                            {timeout = timeout, return_raw = true}))
     end, {wait_timeout, mode})
     t.assert(not res.val, 'no value')
@@ -152,7 +152,7 @@ local function test_return_raw_template(g, mode)
     -- Error.
     --
     res = router:exec(function(timeout, mode)
-        return add_details(vshard.router[mode](1, 'box_error', {1, 2, 3},
+        return add_details(ivshard.router[mode](1, 'box_error', {1, 2, 3},
                            {timeout = timeout}))
     end, {wait_timeout, mode})
     t.assert(not res.val, 'no value')
@@ -164,7 +164,7 @@ local function test_return_raw_template(g, mode)
     -- Route error.
     --
     res = router:exec(function(timeout, mode)
-        local route = vshard.router.route(1)
+        local route = ivshard.router.route(1)
         return add_details(route[mode](route, 'box_error', {1, 2, 3},
                            {timeout = timeout}))
     end, {wait_timeout, mode})
@@ -211,9 +211,9 @@ g.test_map_callrw_raw = function(g)
     -- Successful map.
     --
     local res = g.router:exec(function(timeout)
-        local val, err = vshard.router.map_callrw('do_map', msgpack.object({3}),
-                                                  {timeout = timeout,
-                                                   return_raw = true})
+        local val, err = ivshard.router.map_callrw(
+            'do_map', imsgpack.object({3}), {timeout = timeout,
+            return_raw = true})
         local _, one_map = next(val)
         return {
             val = val,
@@ -239,8 +239,8 @@ g.test_map_callrw_raw = function(g)
         end
     end)
     res = g.router:exec(function(timeout)
-        return vshard.router.map_callrw('do_map', {}, {timeout = timeout,
-                                        return_raw = true})
+        return ivshard.router.map_callrw('do_map', {}, {timeout = timeout,
+                                         return_raw = true})
     end, {wait_timeout})
     expected = {
         [rs1_uuid] = {{1}},
@@ -256,8 +256,8 @@ g.test_map_callrw_raw = function(g)
     end)
     local err, err_uuid
     res, err, err_uuid = g.router:exec(function(timeout)
-        return vshard.router.map_callrw('do_map', {}, {timeout = timeout,
-                                        return_raw = true})
+        return ivshard.router.map_callrw('do_map', {}, {timeout = timeout,
+                                         return_raw = true})
     end, {wait_timeout})
     t.assert(res == nil, 'no result')
     t.assert_covers(err, {

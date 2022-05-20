@@ -25,9 +25,9 @@ exclude_files = {
 local test_rules = {
     ignore = {
         -- Accessing an undefined variable.
-        '113/fiber',
-        '113/msgpack',
-        '113/vshard',
+        '113/ifiber',
+        '113/imsgpack',
+        '113/ivshard',
     }
 }
 
