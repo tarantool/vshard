@@ -66,7 +66,6 @@ res, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
 res, util.portable_error(err)
 box.space._bucket:get{1}
 _ = test_run:switch('box_1_a')
-box.space._bucket:get{1}
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
 _ = test_run:switch('box_2_a')
