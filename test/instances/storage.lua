@@ -2,15 +2,19 @@
 local helpers = require('test.luatest_helpers')
 
 --
--- Commonly used libraries.
+-- Commonly used libraries. Use 'i' prefix as 'instance'. The purpose is to be
+-- able to use the libs in server:exec() calls and not get upvalue errors if the
+-- same lib is declared in the _test.lua file.
 --
-_G.fiber = require('fiber')
+_G.ifiber = require('fiber')
 
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.
 _G.vshard = {
     storage = require('vshard.storage'),
 }
+_G.ivshard = _G.vshard
+
 -- Somewhy shutdown hangs on new Tarantools even though the nodes do not seem to
 -- have any long requests running.
 if box.ctl.set_on_shutdown_timeout then

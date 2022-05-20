@@ -145,7 +145,7 @@ local function storage_new(g, cfg)
             local user = box.session.user()
             box.session.su('admin')
 
-            vshard.storage.cfg(cfg, box.info.uuid)
+            ivshard.storage.cfg(cfg, box.info.uuid)
             box.schema.user.grant('storage', 'super')
 
             box.session.su(user)
@@ -154,7 +154,7 @@ local function storage_new(g, cfg)
     for _, replica in pairs(replicas) do
         replica:wait_for_readiness()
         replica:exec(function(cfg)
-            vshard.storage.cfg(cfg, box.info.uuid)
+            ivshard.storage.cfg(cfg, box.info.uuid)
         end, {cfg})
     end
 end
@@ -174,7 +174,7 @@ local function storage_cfg(g, cfg)
         if storage.vtest and storage.vtest.is_storage then
             table.insert(storages, storage)
             table.insert(fids, storage:exec(function(cfg)
-                local f = fiber.new(vshard.storage.cfg, cfg, box.info.uuid)
+                local f = ifiber.new(ivshard.storage.cfg, cfg, box.info.uuid)
                 f:set_joinable(true)
                 return f:id()
             end, {cfg}))
@@ -183,7 +183,7 @@ local function storage_cfg(g, cfg)
     local errors = {}
     for i, storage in pairs(storages) do
         local ok, err = storage:exec(function(fid)
-            return fiber.find(fid):join()
+            return ifiber.find(fid):join()
         end, {fids[i]})
         if not ok then
             errors[storage.vtest.name] = err
@@ -208,7 +208,7 @@ end
 --
 local function router_cfg(router, cfg)
     router:exec(function(cfg)
-        vshard.router.cfg(cfg)
+        ivshard.router.cfg(cfg)
     end, {cfg})
 end
 
@@ -234,7 +234,7 @@ end
 --
 local function router_disconnect(router)
     router:exec(function()
-        local replicasets = vshard.router.static.replicasets
+        local replicasets = ivshard.router.static.replicasets
         for _, rs in pairs(replicasets) do
             for _, r in pairs(rs.replicas) do
                 local c = r.conn
