@@ -1,14 +1,14 @@
-std = "luajit"
-globals = {"box", "_TARANTOOL", "tonumber64", "utf8", "table"}
+std = 'luajit'
+globals = {'box', '_TARANTOOL', 'tonumber64', 'utf8', 'table'}
 ignore = {
     -- Unused argument <self>.
-    "212/self",
+    '212/self',
     -- Shadowing a local variable.
-    "421",
+    '421',
     -- Shadowing an upvalue.
-    "431",
+    '431',
     -- Shadowing an upvalue argument.
-    "432",
+    '432',
 }
 
 include_files = {
@@ -20,10 +20,10 @@ exclude_files = {
     'test/var/*',
 }
 
-files["**/*_test.lua"] = {
+files['**/*_test.lua'] = {
     ignore = {
         -- Accessing an undefined variable.
-        "113/msgpack",
-        "113/vshard",
+        '113/msgpack',
+        '113/vshard',
     }
 }
