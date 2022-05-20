@@ -71,8 +71,8 @@ local function config_new(templ)
                 replica.uri = creds..helpers.instance_uri(replica_name)
             else
                 local listen = table.new(port_count, 0)
-                for i = 1, port_count do
-                    listen[i] = creds..helpers.instance_uri(replica_name..i)
+                for j = 1, port_count do
+                    listen[j] = creds..helpers.instance_uri(replica_name..j)
                 end
                 replica.listen = listen
                 replica.uri = listen[replica_templ.port_uri]
