@@ -236,6 +236,14 @@ local function table_minus_yield(dst, src, interval)
     return dst
 end
 
+--
+-- Move all items of src to the end of dst. It is assumed both tables are
+-- arrays.
+--
+local function table_extend(dst, src)
+    return table.move(src, 1, #src, #dst + 1, dst)
+end
+
 local function fiber_cond_wait_xc(cond, timeout)
     -- Handle negative timeout specifically - otherwise wait() will throw an
     -- ugly usage error.
@@ -300,6 +308,7 @@ return {
     version_is_at_least = version_is_at_least,
     table_copy_yield = table_copy_yield,
     table_minus_yield = table_minus_yield,
+    table_extend = table_extend,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
     feature = feature,

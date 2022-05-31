@@ -95,3 +95,19 @@ g.test_uri_eq = function()
     t.assert_error(uri_eq, 1, luuid.new())
     t.assert_error(uri_eq, nil, 1)
 end
+
+g.test_table_extend = function()
+    local function test_extend(dst, src, res)
+        local orig_src = table.copy(src)
+        t.assert(vutil.table_extend(dst, src) == dst)
+        t.assert_equals(dst, res)
+        t.assert_equals(src, orig_src)
+    end
+    test_extend({}, {}, {})
+    test_extend({1}, {}, {1})
+    test_extend({}, {1}, {1})
+    test_extend({1, 2}, {3}, {1, 2, 3})
+    test_extend({1}, {2, 3}, {1, 2, 3})
+    test_extend({}, {1, 2, 3}, {1, 2, 3})
+    test_extend({1, 2, 3}, {}, {1, 2, 3})
+end
