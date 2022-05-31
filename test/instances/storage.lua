@@ -8,7 +8,10 @@ local helpers = require('test.luatest_helpers')
 --
 _G.ifiber = require('fiber')
 _G.ilt = require('luatest')
+_G.imsgpack = require('msgpack')
 _G.ivconst = require('vshard.consts')
+_G.ivutil = require('vshard.util')
+_G.ivtest = require('test.luatest_helpers.vtest')
 
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.

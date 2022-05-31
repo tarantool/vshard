@@ -2,6 +2,7 @@ local t = require('luatest')
 local helpers = require('test.luatest_helpers')
 local cluster = require('test.luatest_helpers.cluster')
 local fiber = require('fiber')
+local uuid = require('uuid')
 local vrepset = require('vshard.replicaset')
 
 local uuid_idx = 1
@@ -15,21 +16,30 @@ local uuid_idx = 1
 local replica_name_to_uuid_map = {}
 local replicaset_name_to_uuid_map = {}
 
+local function uuid_str_from_int(i)
+    i = tostring(i)
+    assert(#i <= 12)
+    return '00000000-0000-0000-0000-'..string.rep('0', 12 - #i)..i
+end
+
+local function uuid_from_int(i)
+    return uuid.fromstr(uuid_str_from_int(i))
+end
+
 --
 -- New UUID unique per this process. Generation is not random - for simplicity
 -- and reproducibility.
 --
-local function uuid_next()
-    local last = tostring(uuid_idx)
+local function uuid_str_next()
+    local i = uuid_idx
     uuid_idx = uuid_idx + 1
-    assert(#last <= 12)
-    return '00000000-0000-0000-0000-'..string.rep('0', 12 - #last)..last
+    return uuid_str_from_int(i)
 end
 
 local function name_to_uuid(map, name)
     local res = map[name]
     if not res then
-        res = uuid_next()
+        res = uuid_str_next()
         map[name] = res
     end
     return res
@@ -452,4 +462,5 @@ return {
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
+    uuid_from_int = uuid_from_int,
 }

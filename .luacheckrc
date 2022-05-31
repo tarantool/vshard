@@ -30,6 +30,8 @@ local test_rules = {
         '113/imsgpack',
         '113/ivconst',
         '113/ivshard',
+        '113/ivtest',
+        '113/ivutil',
     }
 }
 
