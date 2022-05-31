@@ -1,6 +1,7 @@
 local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
+local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
@@ -576,6 +577,72 @@ local function schema_downgrade_from_0_1_16_0()
     box.schema.func.drop(func, {if_exists = true})
 end
 
+--
+-- Make vshard.storage.bucket_recv() understand raw args as msgpack object. It
+-- doesn't necessarily make it faster, but is essential to preserve the original
+-- tuples as is, without their contortion through Lua tables. It would break
+-- field types like MP_BIN (varbinary).
+--
+local function schema_upgrade_bucket_recv_raw()
+    if not util.feature.msgpack_object then
+        return
+    end
+    if box.func == nil then
+        return
+    end
+    local name = 'vshard.storage.bucket_recv'
+    local func = box.func[name]
+    if func == nil then
+        return
+    end
+    if func.takes_raw_args then
+        return
+    end
+    log.info("Upgrade %s to accept args as msgpack", name)
+    box.begin()
+    local ok, err = pcall(function()
+        -- Preserve all the possible grants which could be given to the
+        -- function. Don't just drop and re-create.
+        local priv_space = box.space._priv
+        local func_space = box.space._func
+        local privs = priv_space.index.object:select{'function', func.id}
+        local priv_pk_parts = priv_space.index.primary.parts
+
+        -- Extract the old function.
+        for _, p in pairs(privs) do
+            priv_space:delete(util.tuple_extract_key(p, priv_pk_parts))
+        end
+        local tuple = func_space:delete(func.id)
+
+        -- Insert the updated version. Can't update it in-place, _func doesn't
+        -- support that.
+        tuple = tuple:update({{'=', 'opts.takes_raw_args', true}})
+        func_space:insert(tuple)
+        for _, p in pairs(privs) do
+            priv_space:insert(p)
+        end
+    end)
+    if ok then
+        ok, err = pcall(box.commit)
+        if ok then
+            return
+        end
+    end
+    box.rollback()
+    log.error("Couldn't upgrade %s to accept args as msgpack: %s", name, err)
+end
+
+--
+-- Upgrade schema features which depend on Tarantool version and are not bound
+-- to a certain vshard version.
+--
+local function schema_upgrade_core_features()
+    -- In future it could make sense to store core feature set version in
+    -- addition to vshard own schema version, but it would be an overkill while
+    -- the feature is just one.
+    schema_upgrade_bucket_recv_raw()
+end
+
 local function schema_current_version()
     local version = box.space._schema:get({'vshard_version'})
     if version == nil then
@@ -687,9 +754,15 @@ local function schema_upgrade_master(target_version, username, password)
     end
 end
 
-local function schema_upgrade(is_master, username, password)
+local function schema_upgrade(is_first_cfg, is_master, username, password)
     if is_master then
-        return schema_upgrade_master(schema_latest_version, username, password)
+        schema_upgrade_master(schema_latest_version, username, password)
+        -- Core features can only change with Tarantool exe update, which means
+        -- it won't happen on reconfig nor on hot reload. Enough to do it when
+        -- configured first time.
+        if is_first_cfg then
+            schema_upgrade_core_features()
+        end
     else
         return schema_upgrade_replica()
     end
@@ -1342,9 +1415,43 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
 end
 
 --
+-- Extract bucket_recv() args from an msgpack object. Only the tuples remain as
+-- msgpack objects to preserve their original content which could otherwise be
+-- altered by Lua.
+--
+local function bucket_recv_parse_raw_args(raw)
+    local it = raw:iterator()
+    local arg_count = it:decode_array_header()
+    local bucket_id = it:decode()
+    local from = it:decode()
+    local data_size = it:decode_array_header()
+    local data = table.new(data_size, 0)
+    for i = 1, data_size do
+        it:decode_array_header()
+        local space_name = it:decode()
+        local space_size = it:decode_array_header()
+        local space_data = table.new(space_size, 0)
+        for j = 1, space_size do
+            space_data[j] = it:take()
+        end
+        data[i] = {space_name, space_data}
+    end
+    local opts = arg_count >= 4 and it:decode() or nil
+    return bucket_id, from, data, opts
+end
+
+--
 -- Exception safe version of bucket_recv_xc.
 --
 local function bucket_recv(bucket_id, from, data, opts)
+    -- Can understand both msgpack and normal args. That is done because having
+    -- a separate bucket_recv_raw() function would mean the new vshard storages
+    -- wouldn't be able to send buckets to the old ones which have only
+    -- bucket_recv(). Or it would require some work on bucket_send() to try
+    -- bucket_recv_raw() and fallback to bucket_recv().
+    if util.feature.msgpack_object and lmsgpack.is_object(bucket_id) then
+        bucket_id, from, data, opts = bucket_recv_parse_raw_args(bucket_id)
+    end
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         lfiber.sleep(0.01)
     end
@@ -2636,6 +2743,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
+    local is_first_cfg = not M.current_cfg
     cfg = lcfg.check(cfg, M.current_cfg)
     local vshard_cfg, box_cfg = lcfg.split(cfg)
     if vshard_cfg.weights or vshard_cfg.zone then
@@ -2761,7 +2869,7 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     end
 
     local uri = luri.parse(this_replica.uri)
-    schema_upgrade(is_master, uri.login, uri.password)
+    schema_upgrade(is_first_cfg, is_master, uri.login, uri.password)
 
     -- Check for master specifically. On master _bucket space must exist.
     -- Because it should have done the schema bootstrap. Shall not ever try to
