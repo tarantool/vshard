@@ -19,9 +19,12 @@
 --
 
 local release_type_weight = {
-    alpha = 0,
-    beta = 1,
-    rc = 2,
+    -- This release type is an invention of tarantool, is not documented in
+    -- semver.
+    entrypoint = 10,
+    alpha = 20,
+    beta = 30,
+    rc = 40,
 }
 
 local function release_type_cmp(t1, t2)
