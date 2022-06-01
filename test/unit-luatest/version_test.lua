@@ -7,6 +7,34 @@ g.test_order = function()
     -- Example of a full version: 2.10.0-beta2-86-gc9981a567.
     local versions = {
         {
+            str = '1.2.3-entrypoint',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 0, 0),
+        },
+        {
+            str = '1.2.3-entrypoint-30',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 0, 30),
+        },
+        {
+            str = '1.2.3-entrypoint-45',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 0, 45),
+        },
+        {
+            str = '1.2.3-entrypoint1',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 1, 0),
+        },
+        {
+            str = '1.2.3-entrypoint1-45',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 1, 45),
+        },
+        {
+            str = '1.2.3-entrypoint2',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 2, 0),
+        },
+        {
+            str = '1.2.3-entrypoint2-45',
+            ver = lversion.new(1, 2, 3, 'entrypoint', 2, 45),
+        },
+        {
             str = '1.2.3-alpha',
             ver = lversion.new(1, 2, 3, 'alpha', 0, 0),
         },
@@ -99,6 +127,14 @@ g.test_order = function()
             ver = lversion.new(1, 2, 4, nil, 0, 0),
         },
         {
+            str = '1.2.5-entrypoint',
+            ver = lversion.new(1, 2, 5, 'entrypoint', 0, 0),
+        },
+        {
+            str = '1.2.5-entrypoint1-45-gc9981a567',
+            ver = lversion.new(1, 2, 5, 'entrypoint', 1, 45),
+        },
+        {
             str = '1.2.5-alpha',
             ver = lversion.new(1, 2, 5, 'alpha', 0, 0),
         },
@@ -109,6 +145,22 @@ g.test_order = function()
         {
             str = '1.2.6-',
             ver = lversion.new(1, 2, 6, nil, 0, 0),
+        },
+        {
+            str = '1.2.7-entrypoint-',
+            ver = lversion.new(1, 2, 7, 'entrypoint', 0, 0),
+        },
+        {
+            str = '1.2.7-entrypoint1-',
+            ver = lversion.new(1, 2, 7, 'entrypoint', 1, 0),
+        },
+        {
+            str = '1.2.7-entrypoint1-45',
+            ver = lversion.new(1, 2, 7, 'entrypoint', 1, 45),
+        },
+        {
+            str = '1.2.7-entrypoint1-46-',
+            ver = lversion.new(1, 2, 7, 'entrypoint', 1, 46),
         },
         {
             str = '1.2.7-alpha-',
@@ -125,6 +177,10 @@ g.test_order = function()
         {
             str = '1.2.7-alpha1-46-',
             ver = lversion.new(1, 2, 7, 'alpha', 1, 46),
+        },
+        {
+            str = '1.2.8-entrypoint',
+            ver = lversion.new(1, 2, 8, 'entrypoint', 0, 0),
         },
         {
             str = '1.2.8-alpha',
