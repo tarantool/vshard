@@ -127,11 +127,13 @@ local function version_parse(version_str)
     end
 
     -- Cut to '<num>-g<commit>'.
-    pos = version_str:find('-')
-    if not pos then
-        goto finish
+    if rel_type then
+        pos = version_str:find('-')
+        if not pos then
+            goto finish
+        end
+        version_str = version_str:sub(pos + 1)
     end
-    version_str = version_str:sub(pos + 1)
 
     -- Part 4 - commit count since latest release, might be absent.
     id_commit = version_str:match('^(%d+)')

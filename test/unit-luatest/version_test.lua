@@ -127,6 +127,14 @@ g.test_order = function()
             ver = lversion.new(1, 2, 4, nil, 0, 0),
         },
         {
+            str = '1.2.4-1',
+            ver = lversion.new(1, 2, 4, nil, 0, 1),
+        },
+        {
+            str = '1.2.4-2',
+            ver = lversion.new(1, 2, 4, nil, 0, 2),
+        },
+        {
             str = '1.2.5-entrypoint',
             ver = lversion.new(1, 2, 5, 'entrypoint', 0, 0),
         },
