@@ -83,6 +83,7 @@ if not M then
             ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_UPGRADE = false,
             ERRINJ_DISCOVERY = false,
+            ERRINJ_BUCKET_GC_PAUSE = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -292,8 +293,62 @@ local function bucket_generation_increment()
     M.bucket_generation_cond:broadcast()
 end
 
+local function bucket_commit_update(bucket)
+    local status = bucket.status
+    local bid = bucket.id
+    if status == consts.BUCKET.SENT or status == consts.BUCKET.GARBAGE then
+        local ref = M.bucket_refs[bid]
+        if ref ~= nil then
+            ref.ro_lock = true
+        end
+        return
+    end
+    if status == consts.BUCKET.RECEIVING then
+        -- It shouldn't have a ref, but prepare to anything. Could be, for
+        -- example, ACTIVE changed into RECEIVING manually via
+        -- _bucket:replace().
+        if M.bucket_refs[bid] ~= nil then
+            M.bucket_refs[bid] = nil
+        end
+        return
+    end
+    if status == consts.BUCKET.PINNED or status == consts.BUCKET.ACTIVE then
+        local ref = M.bucket_refs[bid]
+        if ref ~= nil then
+            -- Lock shouldn't be ever set here. But could be that an admin
+            -- decided to restore a SENT bucket back into ACTIVE state due to
+            -- any reason.
+            ref.ro_lock = false
+        end
+        return
+    end
+    -- Ignore unknown statuses. Could be set no idea how, but just ignore.
+end
+
+local function bucket_commit_delete(bucket)
+    M.bucket_refs[bucket.id] = nil
+end
+
+--
+-- Handle commit into _bucket space. The trigger not only processes normal
+-- changes, but also tries to repair abnormal ones into at least some detectable
+-- state. Throwing an error here is too late, would lead to a crash.
+--
+local function bucket_on_commit_f(row_pairs)
+    local bucket_space_id = box.space._bucket.id
+    for _, old, new, space_id in row_pairs() do
+        assert(space_id == bucket_space_id)
+        if new ~= nil then
+            bucket_commit_update(new)
+        elseif old ~= nil then
+            bucket_commit_delete(old)
+        end
+    end
+    bucket_generation_increment()
+end
+
 local function bucket_on_replace_f()
-    local f = bucket_generation_increment
+    local f = bucket_on_commit_f
     local f_del = f
     -- One transaction can affect many buckets. Do not create a trigger for each
     -- bucket. Instead create it only first time. For that the trigger replaces
@@ -1779,7 +1834,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return status, lerror.make(err)
     end
     _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
-    ref.ro_lock = true
     return true
 end
 
@@ -1915,10 +1969,9 @@ local function gc_bucket_drop_xc(status, route_map)
         if ref then
             assert(ref.rw == 0)
             if ref.ro ~= 0 then
-                ref.ro_lock = true
+                assert(ref.ro_lock)
                 goto continue
             end
-            M.bucket_refs[id] = nil
         end
         for _, space in pairs(sharded_spaces) do
             gc_bucket_in_space_xc(space, id, status)
@@ -1981,6 +2034,11 @@ local function gc_bucket_f()
     local route_map_deadline = 0
     local status, err
     while M.module_version == module_version do
+        if M.errinj.ERRINJ_BUCKET_GC_PAUSE then
+            M.errinj.ERRINJ_BUCKET_GC_PAUSE = 1
+            lfiber.sleep(0.01)
+            goto continue
+        end
         if bucket_generation_collected ~= bucket_generation_current then
             status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
             if status then
@@ -2037,6 +2095,7 @@ local function gc_bucket_f()
         if M.module_version == module_version then
             M.bucket_generation_cond:wait(sleep_time)
         end
+    ::continue::
     end
 end
 
