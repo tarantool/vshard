@@ -13,6 +13,8 @@ _G.ivconst = require('vshard.consts')
 _G.ivutil = require('vshard.util')
 _G.ivtest = require('test.luatest_helpers.vtest')
 
+_G.iwait_timeout = _G.ivtest.wait_timeout
+
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.
 _G.vshard = {
@@ -23,6 +25,7 @@ _G.ivshard = _G.vshard
 -- Get rid of luacheck warnings that _G members != variables.
 local vshard = _G.ivshard
 local vconst = _G.ivconst
+local wait_timeout = _G.iwait_timeout
 local t = _G.ilt
 
 -- Somewhy shutdown hangs on new Tarantools even though the nodes do not seem to
@@ -61,9 +64,9 @@ local function session_get(key)
     return box.session.storage[key]
 end
 
-local function bucket_gc_wait(timeout)
+local function bucket_gc_wait()
     local status_index = box.space._bucket.index.status
-    t.helpers.retrying({timeout = timeout}, function()
+    t.helpers.retrying({timeout = wait_timeout}, function()
         vshard.storage.garbage_collector_wakeup()
         if status_index:min({vconst.BUCKET.SENT}) ~= nil then
             error('Still have SENT buckets')

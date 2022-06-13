@@ -1,7 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
-local wait_timeout = 120
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -60,7 +59,7 @@ end)
 -- Fill a few buckets, "send" them, ensure they and their data are gone.
 --
 test_group.test_basic = function(g)
-    g.replica_1_a:exec(function(timeout)
+    g.replica_1_a:exec(function()
         local bucket_space = box.space._bucket
         local status_index = bucket_space.index.status
 
@@ -110,7 +109,7 @@ test_group.test_basic = function(g)
             ivshard.storage.internal.collect_bucket_garbage_fiber, nil)
 
         -- Bucket GC deletes the buckets eventually.
-        _G.bucket_gc_wait(timeout)
+        _G.bucket_gc_wait()
 
         -- Ensure both the sent buckets and their data are gone.
         for _, bid in pairs(sent_bids) do
@@ -141,7 +140,7 @@ test_group.test_basic = function(g)
             ivshard.storage.bucket_force_create(bid)
         end
         s:truncate()
-    end, {wait_timeout})
+    end)
 
     -- Ensure the replica received all that and didn't break in the middle.
     g.replica_1_b:wait_vclock_of(g.replica_1_a)
@@ -155,7 +154,7 @@ end
 test_group.test_yield_before_send_commit = function(g)
     t.run_only_if(cluster_cfg.memtx_use_mvcc_engine)
 
-    g.replica_1_a:exec(function(timeout)
+    g.replica_1_a:exec(function()
         local s = box.space.test
         local bucket_space = box.space._bucket
         local bid = _G.get_first_bucket()
@@ -188,13 +187,13 @@ test_group.test_yield_before_send_commit = function(g)
 
         -- Bucket GC should react on commit. Not wakeup on replace, notice no
         -- changes, and go to sleep.
-        _G.bucket_gc_wait(timeout)
+        _G.bucket_gc_wait()
         ilt.assert_equals(s:count(), 0, 'no garbage data')
 
         -- Restore the bucket for next tests.
         ivshard.storage.bucket_force_create(bid)
         s:truncate()
-    end, {wait_timeout})
+    end)
 
     -- Ensure the replica received all that and didn't break.
     g.replica_1_b:wait_vclock_of(g.replica_1_a)

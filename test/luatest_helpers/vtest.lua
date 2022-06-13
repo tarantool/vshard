@@ -439,8 +439,8 @@ end
 --
 -- Wait until the instance follows the master having the given instance ID.
 --
-local function storage_wait_follow_f(timeout, id)
-    local deadline = ifiber.clock() + timeout
+local function storage_wait_follow_f(id)
+    local deadline = ifiber.clock() + iwait_timeout
     local last_err
     while true do
         local info = box.info.replication[id]
@@ -484,8 +484,8 @@ end
 local function storage_wait_pairsync(s1, s2)
     s1:wait_vclock_of(s2)
     s2:wait_vclock_of(s1)
-    s1:exec(storage_wait_follow_f, {wait_timeout, s2:instance_id()})
-    s2:exec(storage_wait_follow_f, {wait_timeout, s1:instance_id()})
+    s1:exec(storage_wait_follow_f, {s2:instance_id()})
+    s2:exec(storage_wait_follow_f, {s1:instance_id()})
 end
 
 --
@@ -573,4 +573,5 @@ return {
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
     uuid_from_int = uuid_from_int,
+    wait_timeout = wait_timeout,
 }
