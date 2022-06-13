@@ -905,7 +905,7 @@ assert(lstorage.bucket_are_all_rw())
 ---
 - true
 ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 ---
 ...
 -- Let it stuck in the errinj.
@@ -932,7 +932,7 @@ assert(lstorage.bucket_are_all_rw())
 ---
 - true
 ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 ---
 ...
 --

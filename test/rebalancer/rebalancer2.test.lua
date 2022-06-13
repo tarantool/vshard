@@ -62,11 +62,11 @@ end
 -- wouldn't cover the issue.
 test_run:switch('fullbox_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
 test_run:switch('fullbox_3_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
 test_run:switch('default')
 command = "cfg.sharding[util.replicasets[1]].weight = 0 vshard.storage.cfg(cfg, util.name_to_uuid[NAME])"
@@ -79,12 +79,12 @@ end)
 
 test_run:switch('fullbox_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 vshard.storage.recovery_wakeup()
 
 test_run:switch('fullbox_3_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 vshard.storage.recovery_wakeup()
 
 test_run:switch('fullbox_1_a')

@@ -37,13 +37,13 @@ vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 ...
 -- Pause recovery. Otherwise it does its job too fast and does not allow to
 -- simulate the intermediate state.
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 ---
 ...
 _ = test_run:switch('storage_1_a')
 ---
 ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 ---
 ...
 _bucket = box.space._bucket
@@ -84,13 +84,13 @@ _bucket:get{1}
 ---
 - [1, 'active']
 ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 ---
 ...
 _ = test_run:switch('storage_1_a')
 ---
 ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 ---
 ...
 wait_bucket_is_collected(1)

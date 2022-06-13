@@ -116,7 +116,7 @@ test_run:switch('fullbox_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
  | ---
  | ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
  | ---
  | ...
 
@@ -127,7 +127,7 @@ test_run:switch('fullbox_3_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
  | ---
  | ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
  | ---
  | ...
 
@@ -160,7 +160,7 @@ test_run:switch('fullbox_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
  | ---
  | ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
  | ---
  | ...
 vshard.storage.recovery_wakeup()
@@ -174,7 +174,7 @@ test_run:switch('fullbox_3_a')
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
  | ---
  | ...
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
  | ---
  | ...
 vshard.storage.recovery_wakeup()

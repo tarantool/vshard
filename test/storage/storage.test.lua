@@ -282,7 +282,7 @@ assert(not ok and err.message)
 -- Bucket_are_all_rw() registry function.
 --
 assert(lstorage.bucket_are_all_rw())
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 -- Let it stuck in the errinj.
 vshard.storage.recovery_wakeup()
 vshard.storage.bucket_force_create(10)
@@ -290,7 +290,7 @@ box.space._bucket:update(10, {{'=', 2, vshard.consts.BUCKET.SENDING}})
 assert(not lstorage.bucket_are_all_rw())
 box.space._bucket:update(10, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 assert(lstorage.bucket_are_all_rw())
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 
 --
 -- Internal info function.

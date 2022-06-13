@@ -80,7 +80,7 @@ if not M then
             ERRINJ_LONG_RECEIVE = false,
             ERRINJ_LAST_RECEIVE_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
-            ERRINJ_NO_RECOVERY = false,
+            ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_UPGRADE = false,
             ERRINJ_DISCOVERY = false,
         },
@@ -928,8 +928,9 @@ local function recovery_f()
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
-        if M.errinj.ERRINJ_NO_RECOVERY then
-            lfiber.yield()
+        if M.errinj.ERRINJ_RECOVERY_PAUSE then
+            M.errinj.ERRINJ_RECOVERY_PAUSE = 1
+            lfiber.sleep(0.01)
             goto continue
         end
         is_all_recovered = true

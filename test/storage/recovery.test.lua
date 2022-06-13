@@ -12,11 +12,11 @@ util.push_rs_filters(test_run)
 _ = test_run:switch("storage_2_a")
 -- Pause until restart. Otherwise recovery does its job too fast and does not
 -- allow to simulate the intermediate state.
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 vshard.storage.rebalancer_disable()
 
 _ = test_run:switch("storage_1_a")
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
 -- Create buckets sending to rs2 and restart - recovery must
 -- garbage some of them and activate others. Receiving buckets
