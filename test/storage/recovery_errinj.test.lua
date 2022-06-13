@@ -16,10 +16,10 @@ _ = test_run:switch('storage_2_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 -- Pause recovery. Otherwise it does its job too fast and does not allow to
 -- simulate the intermediate state.
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
 _ = test_run:switch('storage_1_a')
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = true
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket = box.space._bucket
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[2]}
 ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
@@ -32,10 +32,10 @@ vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
 _bucket = box.space._bucket
 while _bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do fiber.sleep(0.01) end
 _bucket:get{1}
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 
 _ = test_run:switch('storage_1_a')
-vshard.storage.internal.errinj.ERRINJ_NO_RECOVERY = false
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 wait_bucket_is_collected(1)
 
 _ = test_run:switch("default")
