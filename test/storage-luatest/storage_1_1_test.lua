@@ -142,7 +142,7 @@ test_group.test_bucket_send_field_types = function(g)
 
     -- Cleanup.
     g.replica_1_a:exec(function(timeout)
-        _G.wait_bucket_gc(timeout)
+        _G.bucket_gc_wait(timeout)
     end, {wait_timeout})
 
     g.replica_2_a:exec(function(bid, timeout, dst)
@@ -151,7 +151,7 @@ test_group.test_bucket_send_field_types = function(g)
                                                     {timeout = timeout})
         ilt.assert_equals(err, nil, 'bucket_send no error')
         ilt.assert(ok, 'bucket_send ok')
-        _G.wait_bucket_gc()
+        _G.bucket_gc_wait(timeout)
     end, {bid, wait_timeout, g.replica_1_a:replicaset_uuid()})
 
     vtest.storage_exec_each_master(g, function()

@@ -61,7 +61,7 @@ local function session_get(key)
     return box.session.storage[key]
 end
 
-local function wait_bucket_gc(timeout)
+local function bucket_gc_wait(timeout)
     local status_index = box.space._bucket.index.status
     t.helpers.retrying({timeout = timeout}, function()
         vshard.storage.garbage_collector_wakeup()
@@ -80,6 +80,6 @@ _G.get_uuid = get_uuid
 _G.get_first_bucket = get_first_bucket
 _G.session_set = session_set
 _G.session_get = session_get
-_G.wait_bucket_gc = wait_bucket_gc
+_G.bucket_gc_wait = bucket_gc_wait
 
 _G.ready = true
