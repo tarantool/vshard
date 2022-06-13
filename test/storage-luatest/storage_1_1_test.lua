@@ -1,7 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
-local wait_timeout = 120
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -114,17 +113,17 @@ test_group.test_bucket_send_field_types = function(g)
     t.assert_equals(err, nil, 'space creation no error')
 
     -- Send the bucket with a complicated tuple.
-    local bid = g.replica_1_a:exec(function(timeout, dst)
+    local bid = g.replica_1_a:exec(function(dst)
         local bid = _G.get_first_bucket()
         local tuple = _G.test_tuple
         tuple[2] = bid
         box.space.test:replace(tuple)
         local ok, err = ivshard.storage.bucket_send(bid, dst,
-                                                    {timeout = timeout})
+                                                    {timeout = iwait_timeout})
         ilt.assert_equals(err, nil, 'bucket_send no error')
         ilt.assert(ok, 'bucket_send ok')
         return bid
-    end, {wait_timeout, g.replica_2_a:replicaset_uuid()})
+    end, {g.replica_2_a:replicaset_uuid()})
 
     -- Ensure the tuple is delivered as is and fits into the space's format.
     g.replica_2_a:exec(function(bid)
@@ -141,18 +140,18 @@ test_group.test_bucket_send_field_types = function(g)
     end, {bid})
 
     -- Cleanup.
-    g.replica_1_a:exec(function(timeout)
-        _G.bucket_gc_wait(timeout)
-    end, {wait_timeout})
+    g.replica_1_a:exec(function()
+        _G.bucket_gc_wait()
+    end)
 
-    g.replica_2_a:exec(function(bid, timeout, dst)
+    g.replica_2_a:exec(function(bid, dst)
         box.space.test:truncate()
         local ok, err = ivshard.storage.bucket_send(bid, dst,
-                                                    {timeout = timeout})
+                                                    {timeout = iwait_timeout})
         ilt.assert_equals(err, nil, 'bucket_send no error')
         ilt.assert(ok, 'bucket_send ok')
-        _G.bucket_gc_wait(timeout)
-    end, {bid, wait_timeout, g.replica_1_a:replicaset_uuid()})
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_1_a:replicaset_uuid()})
 
     vtest.storage_exec_each_master(g, function()
         box.space.test:drop()

@@ -7,6 +7,9 @@ local helpers = require('test.luatest_helpers')
 -- same lib is declared in the _test.lua file.
 --
 _G.imsgpack = require('msgpack')
+_G.ivtest = require('test.luatest_helpers.vtest')
+_G.iwait_timeout = _G.ivtest.wait_timeout
+
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.
 _G.vshard = {

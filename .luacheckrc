@@ -32,6 +32,7 @@ local test_rules = {
         '113/ivshard',
         '113/ivtest',
         '113/ivutil',
+        '113/iwait_timeout',
     }
 }
 
