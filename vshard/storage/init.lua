@@ -1189,8 +1189,8 @@ local function bucket_unrefro(bucket_id)
     local ref = M.bucket_refs[bucket_id]
     local count = ref and ref.ro or 0
     if count == 0 then
-        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
-                                  "no refs", nil)
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
+                                  "no ro refs on unref")
     end
     if count == 1 then
         ref.ro = 0
@@ -1244,8 +1244,8 @@ end
 local function bucket_unrefrw(bucket_id)
     local ref = M.bucket_refs[bucket_id]
     if not ref or ref.rw == 0 then
-        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
-                                  "no refs", nil)
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
+                                  "no rw refs on unref")
     end
     if ref.rw == 1 and ref.rw_lock then
         ref.rw = 0
