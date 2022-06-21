@@ -2685,16 +2685,27 @@ end
 -- @retval nil, err Error.
 -- @retval values Success.
 local function storage_call(bucket_id, mode, name, args)
-    local ret1, ret2, ret3, _
-    local ok, err = bucket_ref(bucket_id, mode)
-    if not ok then
-        return ok, err
+    local ok_ref, err = bucket_ref(bucket_id, mode)
+    if not ok_ref then
+        return nil, err
     end
-    ok, ret1, ret2, ret3 = local_call(name, args)
-    _, err = bucket_unref(bucket_id, mode)
-    assert(not err)
+    local ok, ret1, ret2, ret3 = local_call(name, args)
     if not ok then
         ret1 = lerror.make(ret1)
+    end
+    ok_ref, err = bucket_unref(bucket_id, mode)
+    if not ok_ref then
+        -- It should not normally happen. But the bucket could be deleted
+        -- manually or due to a bug. Then the read request could see
+        -- inconsistent data - the bucket could be half-deleted, for example.
+        -- Regardless of what user's function returns, treat it as an error.
+        if not ok then
+            -- User function could also fail, return it as a stack of errors.
+            -- Otherwise would be lost. Logs could produce too much garbage
+            -- under high RPS.
+            err.prev = ret1
+        end
+        return nil, err
     end
     -- Truncate nil values. Can't return them all because empty values turn into
     -- box.NULL. Even if user's function actually returned just 1 value, this
