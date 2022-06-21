@@ -170,6 +170,14 @@ local error_message_template = {
         msg = 'Storage is disabled: %s',
         args = {'reason'}
     },
+    [34] = {
+        -- That is similar to WRONG_BUCKET, but the latter is not critical. It
+        -- usually can be retried. Corruption is a critical error, it requires
+        -- more attention.
+        name = 'BUCKET_IS_CORRUPTED',
+        msg = 'Bucket %d is corrupted: %s',
+        args = {'bucket_id', 'reason'}
+    },
 }
 
 --

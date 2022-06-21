@@ -168,11 +168,11 @@ vshard.storage.bucket_unref(1, 'write') -- Error, no refs.
 ---
 - null
 - bucket_id: 1
-  reason: no refs
-  code: 1
+  reason: no rw refs on unref
+  code: 34
   type: ShardingError
-  message: 'Cannot perform action with bucket 1, reason: no refs'
-  name: WRONG_BUCKET
+  message: 'Bucket 1 is corrupted: no rw refs on unref'
+  name: BUCKET_IS_CORRUPTED
 ...
 vshard.storage.bucket_ref(1, 'read')
 ---
