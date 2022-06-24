@@ -310,6 +310,7 @@ local feature = {
         -- Backported into 2.10 since EE 2.10.0-2-g6b29095.
         return version_is_at_least(2, 10, 0, nil, 0, 2)
     end)(),
+    error_stack = version_is_at_least(2, 4, 0, nil, 0, 0),
 }
 
 return {
