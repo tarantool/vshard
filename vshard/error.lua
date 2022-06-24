@@ -201,9 +201,18 @@ end
 --   'ShardingError', one of codes below and optional
 --   message.
 --
-
+local box_error_mt = {__tostring = json.encode}
 local function box_error(original_error)
-    return setmetatable(original_error:unpack(), {__tostring = json.encode})
+    local res = setmetatable(original_error:unpack(), box_error_mt)
+    local pos = res
+    local prev = pos.prev
+    while prev ~= nil do
+        prev = setmetatable(prev:unpack(), box_error_mt)
+        pos.prev = prev
+        pos = prev
+        prev = pos.prev
+    end
+    return res
 end
 
 --
