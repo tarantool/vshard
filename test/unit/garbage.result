@@ -497,9 +497,9 @@ util.check_error(delete_garbage)
 - 'Usage: bucket_delete_garbage(bucket_id, opts)'
 ...
 -- Delete an existing garbage bucket.
-_bucket:replace{4, vshard.consts.BUCKET.SENT}
+_bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
 ---
-- [4, 'sent']
+- [4, 'garbage']
 ...
 s:replace{5, 4}
 ---

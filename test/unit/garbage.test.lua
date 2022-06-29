@@ -201,7 +201,7 @@ delete_garbage = vshard.storage._bucket_delete_garbage
 util.check_error(delete_garbage)
 
 -- Delete an existing garbage bucket.
-_bucket:replace{4, vshard.consts.BUCKET.SENT}
+_bucket:replace{4, vshard.consts.BUCKET.GARBAGE}
 s:replace{5, 4}
 s:replace{6, 4}
 delete_garbage(4)

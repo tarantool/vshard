@@ -400,16 +400,6 @@ local function bucket_is_transfer_in_progress(bucket)
 end
 
 --
--- Check if @a bucket is garbage. It is true for
--- * sent buckets;
--- * buckets explicitly marked to be a garbage.
---
-local function bucket_is_garbage(bucket)
-    return bucket.status == consts.BUCKET.SENT or
-           bucket.status == consts.BUCKET.GARBAGE
-end
-
---
 -- Check that a bucket with the specified id has the needed
 -- status.
 -- @param bucket_generation Generation since the last check.
@@ -860,17 +850,35 @@ local function rebalancing_is_in_progress()
 end
 
 --
--- Check if a local bucket can be deleted.
+-- Check if a local bucket which is SENDING has actually finished the transfer
+-- and can be made SENT.
+--
+local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
+    if local_bucket.status ~= consts.BUCKET.SENDING then
+        return false
+    end
+    if not remote_bucket then
+        return false
+    end
+    return bucket_is_writable(remote_bucket)
+end
+
+--
+-- Check if a local bucket is GARBAGE. Can be true only if it is RECEIVING and
+-- apparently wasn't fully received before the transfer failed. Other buckets
+-- can't turn to GARBAGE straight away because might have at least RO refs.
 --
 local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
+    if local_bucket.status ~= consts.BUCKET.RECEIVING then
+        return false
+    end
     if not remote_bucket then
         return false
     end
     if bucket_is_writable(remote_bucket) then
         return true
     end
-    if remote_bucket.status == consts.BUCKET.SENDING and
-       local_bucket.status == consts.BUCKET.RECEIVING then
+    if remote_bucket.status == consts.BUCKET.SENDING then
         assert(not remote_bucket.is_transfering)
         assert(not M.rebalancer_transfering_buckets[local_bucket.id])
         return true
@@ -882,7 +890,11 @@ end
 -- Check if a local bucket can become active.
 --
 local function recovery_local_bucket_is_active(_, remote_bucket)
-    return not remote_bucket or bucket_is_garbage(remote_bucket)
+    if not remote_bucket then
+        return true
+    end
+    local status = remote_bucket.status
+    return status == consts.BUCKET.SENT or status == consts.BUCKET.GARBAGE
 end
 
 --
@@ -946,7 +958,10 @@ local function recovery_step_by_type(type)
         if is_step_empty then
             log.info(start_format, type)
         end
-        if recovery_local_bucket_is_garbage(bucket, remote_bucket) then
+        if recovery_local_bucket_is_sent(bucket, remote_bucket) then
+            _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.SENT}})
+            recovered = recovered + 1
+        elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.GARBAGE}})
             recovered = recovered + 1
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
@@ -2122,12 +2137,13 @@ local function bucket_delete_garbage(bucket_id, opts)
     end
     opts = opts or {}
     local bucket = box.space._bucket:get({bucket_id})
-    if bucket ~= nil and not bucket_is_garbage(bucket) and not opts.force then
+    local bucket_status = bucket and bucket.status
+    if bucket ~= nil and bucket_status ~= consts.BUCKET.GARBAGE and
+       not opts.force then
         error('Can not delete not garbage bucket. Use "{force=true}" to '..
               'ignore this attention')
     end
     local sharded_spaces = find_sharded_spaces()
-    local bucket_status = bucket and bucket.status
     for _, space in pairs(sharded_spaces) do
         local status, err = gc_bucket_in_space(space, bucket_id, bucket_status)
         if not status then
