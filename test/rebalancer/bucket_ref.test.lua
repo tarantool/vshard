@@ -60,7 +60,7 @@ vshard.storage.buckets_info(1)
 _ = test_run:cmd("setopt delimiter ';'")
 while true do
 	local i = vshard.storage.buckets_info(1)[1]
-    if i.status == vshard.consts.BUCKET.GARBAGE and i.ro_lock then
+    if i.status == vshard.consts.BUCKET.SENT and i.ro_lock then
         break
     end
     fiber.sleep(0.01)
