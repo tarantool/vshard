@@ -28,6 +28,7 @@ local test_rules = {
         '113/ifiber',
         '113/ilt',
         '113/imsgpack',
+        '112/ivconst',
         '113/ivconst',
         '113/ivshard',
         '113/ivtest',
