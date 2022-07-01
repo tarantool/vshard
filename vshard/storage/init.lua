@@ -7,6 +7,7 @@ local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
+local fiber_yield = lfiber.yield
 local netbox_self = netbox.self
 local netbox_self_call = netbox_self.call
 
@@ -1541,6 +1542,35 @@ local function bucket_recv(bucket_id, from, data, opts)
     return nil, err
 end
 
+local function bucket_test_gc(bids)
+    local refs = M.bucket_refs
+    local bids_not_ok = table.new(consts.BUCKET_CHUNK_SIZE, 0)
+    -- +1 because the expected count is exactly the chunk size. No need to yield
+    -- on the last one. But if somewhy more is received, then do the yields.
+    local limit = consts.BUCKET_CHUNK_SIZE + 1
+    local _bucket = box.space._bucket
+    for i, bid in ipairs(bids) do
+        local bucket = _bucket:get(bid)
+        if bucket == nil or bucket.status ~= consts.BUCKET.SENT then
+            return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid, nil,
+                                      'bucket was expected to be "sent"')
+        end
+        local ref = refs[bid]
+        if ref ~= nil then
+            if ref.ro ~= 0 then
+                table.insert(bids_not_ok, bid)
+            else
+                assert(ref.rw == 0)
+                assert(ref.ro_lock)
+            end
+        end
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    return {bids_not_ok = bids_not_ok}
+end
+
 --
 -- Find spaces with index having the specified (in cfg) name.
 -- The function result is cached using `schema_version`.
@@ -2011,8 +2041,102 @@ local function gc_bucket_drop(status, route_map)
     status, err = pcall(gc_bucket_drop_xc, status, route_map)
     if not status then
         box.rollback()
+        return nil, err
     end
-    return status, err
+    return true
+end
+
+local function gc_bucket_process_sent_one_batch(batch)
+    log.info('---- gc_bucket_process_sent_one_batch')
+    log.info(batch)
+
+    local rs = M.this_replicaset
+    local map_res, err, err_uuid = rs:map_call_raw(
+        'vshard.storage._call', {'bucket_test_gc', batch},
+        {timeout = consts.CALL_TIMEOUT_MAX})
+    if map_res == nil then
+        log.error('Could not test sent buckets on replica %s: %s',
+                  err_uuid, err)
+        error(err)
+    end
+    log.info('---- map res: ')
+    log.info(map_res)
+    if M.this_replicaset ~= rs then
+        log.info('Detected reconfig during sent buckets gc')
+        return false
+    end
+    local bids_ok_map = table.new(0, consts.BUCKET_CHUNK_SIZE)
+    for _, bid in pairs(batch) do
+        bids_ok_map[bid] = true
+    end
+    for uuid, res in pairs(map_res) do
+        res, err = res[1], res[2]
+        if res == nil then
+            log.error('Failed to test sent buckets on replica %s: %s',
+                      uuid, err)
+            error(err)
+        end
+        local bids_not_ok = res.bids_not_ok
+        for _, bid in pairs(bids_not_ok) do
+            bids_ok_map[bid] = nil
+        end
+    end
+    box.begin()
+    local _bucket = box.space._bucket
+    for bid, _ in pairs(bids_ok_map) do
+        local bucket = _bucket:get(bid)
+        if bucket ~= nil and bucket.status == consts.BUCKET.SENT then
+            _bucket:update({bid}, {{'=', 2, consts.BUCKET.GARBAGE}})
+        end
+    end
+    box.commit()
+    return true
+end
+
+local function gc_bucket_process_sent_xc()
+    log.info('---- gc_bucket_process_sent_xc 1')
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local _bucket = box.space._bucket
+    local batch = table.new(limit, 0)
+    local i = 0
+    log.info('---- gc_bucket_process_sent_xc 2')
+    for _, b in _bucket.index.status:pairs(consts.BUCKET.SENT) do
+        log.info('---- gc_bucket_process_sent_xc 3')
+        i = i + 1
+        local bid = b.id
+        local ref = M.bucket_refs[bid]
+        if ref ~= nil then
+            assert(ref.rw == 0)
+            if ref.ro ~= 0 then
+                goto continue
+            end
+        end
+        table.insert(batch, bid)
+        if #batch < limit then
+            goto continue
+        end
+        if not gc_bucket_process_sent_one_batch(batch) then
+            return false
+        end
+        batch = table.new(limit, 0)
+    ::continue::
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    if next(batch) and not gc_bucket_process_sent_one_batch(batch) then
+        return false
+    end
+    return true
+end
+
+local function gc_bucket_process_sent()
+    local ok, res = pcall(gc_bucket_process_sent_xc)
+    if not ok then
+        box.rollback()
+        return false, nil, res
+    end
+    return true, res
 end
 
 --
@@ -2056,14 +2180,15 @@ local function gc_bucket_f()
             goto continue
         end
         if bucket_generation_collected ~= bucket_generation_current then
+            local is_done
             status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
             if status then
-                status, err = gc_bucket_drop(consts.BUCKET.SENT, route_map)
+                status, is_done, err = gc_bucket_process_sent()
             end
             if not status then
                 box.rollback()
                 log.error('Error during garbage collection step: %s', err)
-            else
+            elseif is_done then
                 -- Don't use global generation. During the collection it could
                 -- already change. Instead, remember the generation known before
                 -- the collection has started.
@@ -2803,6 +2928,7 @@ end
 
 service_call_api = setmetatable({
     bucket_recv = bucket_recv,
+    bucket_test_gc = bucket_test_gc,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     storage_ref = storage_ref,
