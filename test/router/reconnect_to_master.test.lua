@@ -25,7 +25,7 @@ while _bucket:count() ~= 10 do fiber.sleep(0.1) end
 _ = test_run:cmd('stop server storage_1_a')
 
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
-_ = test_run:cmd("start server router_1")
+_ = test_run:cmd("start server router_1 with args='discovery_disable'")
 
 _ = test_run:switch('router_1')
 util = require('util')
@@ -49,6 +49,7 @@ function count_known_buckets()
 end;
 _ = test_run:cmd("setopt delimiter ''");
 count_known_buckets()
+vshard.router.discovery_set('on')
 fiber = require('fiber')
 -- Use replica to find buckets.
 while count_known_buckets() ~= 10 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
