@@ -34,6 +34,7 @@ local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local fiber_cond_wait = util.fiber_cond_wait
+local index_has = util.index_has
 local bucket_ref_new
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -265,10 +266,10 @@ end
 local function bucket_are_all_rw_not_cache()
     local status_index = box.space._bucket.index.status
     local status = consts.BUCKET
-    local res = not status_index:min(status.SENDING) and
-       not status_index:min(status.SENT) and
-       not status_index:min(status.RECEIVING) and
-       not status_index:min(status.GARBAGE)
+    local res = not index_has(status_index, status.SENDING) and
+       not index_has(status_index, status.SENT) and
+       not index_has(status_index, status.RECEIVING) and
+       not index_has(status_index, status.GARBAGE)
 
     M.bucket_are_all_rw_cache = res
     bucket_are_all_rw = bucket_are_all_rw_cache

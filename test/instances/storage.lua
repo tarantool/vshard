@@ -24,10 +24,14 @@ _G.vshard = {
 _G.ivshard = _G.vshard
 
 -- Get rid of luacheck warnings that _G members != variables.
-local vshard = _G.ivshard
-local vconst = _G.ivconst
-local wait_timeout = _G.iwait_timeout
 local t = _G.ilt
+local vconst = _G.ivconst
+local vshard = _G.ivshard
+local vutil = _G.ivutil
+local wait_timeout = _G.iwait_timeout
+
+local index_has = vutil.index_has
+local index_min = vutil.index_min
 
 -- Somewhy shutdown hangs on new Tarantools even though the nodes do not seem to
 -- have any long requests running.
@@ -61,7 +65,7 @@ local function get_uuid()
 end
 
 local function get_first_bucket()
-    local res = box.space._bucket.index.status:min(vconst.BUCKET.ACTIVE)
+    local res = index_min(box.space._bucket.index.status, vconst.BUCKET.ACTIVE)
     return res ~= nil and res.id or nil
 end
 
@@ -78,10 +82,10 @@ local function bucket_gc_wait()
     local status_index = box.space._bucket.index.status
     t.helpers.retrying({timeout = wait_timeout}, function()
         vshard.storage.garbage_collector_wakeup()
-        if status_index:min({vconst.BUCKET.SENT}) ~= nil then
+        if index_has(status_index, vconst.BUCKET.SENT) then
             error('Still have SENT buckets')
         end
-        if status_index:min({vconst.BUCKET.GARBAGE}) ~= nil then
+        if index_has(status_index, vconst.BUCKET.GARBAGE) then
             error('Still have GARBAGE buckets')
         end
     end)
