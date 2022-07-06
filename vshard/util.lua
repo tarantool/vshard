@@ -287,6 +287,37 @@ local function fiber_is_self_canceled()
 end
 
 --
+-- Get min tuple from the index with the given key.
+--
+local index_min
+
+if version_is_at_least(2, 1, 0, nil, 0, 0) then
+
+index_min = function(idx, key)
+    return idx:min(key)
+end
+
+else -- < 2.1.0
+
+-- At 1.10 index:min(key) works like 'get first tuple >= key', while at newer
+-- versions it works as 'get tuple having exactly the given key'. Need this
+-- workaround to simulate new behaviour.
+local limit_1 = {limit = 1}
+index_min = function(idx, key)
+    local _, v = next(idx:select(key, limit_1))
+    return v
+end
+
+end
+
+--
+-- Check if the index has any tuple matching the key.
+--
+local function index_has(idx, key)
+    return index_min(idx, key) ~= nil
+end
+
+--
 -- Dictionary of supported core features on the given instance. Try to use it
 -- in all the other code rather than direct version check.
 --
@@ -326,5 +357,7 @@ return {
     table_extend = table_extend,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
+    index_min = index_min,
+    index_has = index_has,
     feature = feature,
 }
