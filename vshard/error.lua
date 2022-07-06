@@ -178,6 +178,11 @@ local error_message_template = {
         msg = 'Bucket %d is corrupted: %s',
         args = {'bucket_id', 'reason'}
     },
+    [35] = {
+        name = 'ROUTER_IS_DISABLED',
+        msg = 'Router is disabled: %s',
+        args = {'reason'}
+    },
 }
 
 --

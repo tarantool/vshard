@@ -444,3 +444,104 @@ g.test_ssl = function(g)
     vtest.router_cfg(g.router, cluster_cfg)
     vtest.storage_wait_fullsync(g)
 end
+
+g.test_enable_disable = function(g)
+    --
+    -- gh-291: router enable/disable
+    --
+    local router = vtest.router_new(g, 'router_1')
+    -- do not allow router's configuration to complete
+    router:exec(function()
+        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
+    end)
+    router:exec(function(cfg)
+        rawset(_G, 'fiber_static', ifiber.new(ivshard.router.cfg, cfg))
+        rawset(_G, 'fiber_new', ifiber.new(ivshard.router.new,
+                                           'new_router', cfg))
+        _G.fiber_static:set_joinable(true)
+        _G.fiber_new:set_joinable(true)
+    end, {cluster_cfg})
+
+    -- emulate unconfigured box
+    router:exec(function()
+        rawset(_G, 'old_box_cfg', box.cfg)
+        box.cfg = function(...) return _G.old_box_cfg(...) end
+    end)
+
+    -- check whether errors are not nil and their messages are equal to str
+    local assert_errors_equals = function(err1, err2, str)
+        t.assert(err1 and err2)
+        t.assert_equals(err1.message, err2.message)
+        t.assert_str_contains(err1.message, str)
+    end
+
+    local err1, err2 = router:exec(function()
+        rawset(_G, 'static_router', ivshard.router.internal.routers._static_router)
+        rawset(_G, 'new_router', ivshard.router.internal.routers.new_router)
+        local _, err_1 = pcall(_G.static_router.info, _G.static_router)
+        local _, err_2 = pcall(_G.new_router.info, _G.new_router)
+        return err_1, err_2
+    end)
+    assert_errors_equals(err1, err2, 'box seems not to be configured')
+
+    -- set box status to loading
+    router:exec(function()
+        box.cfg = _G.old_box_cfg
+        rawset(_G, 'old_box_info', box.info)
+        box.info = {status = 'loading'}
+    end)
+
+    local echo_func = function()
+        return router:exec(function(timeout)
+            local echo = function(router)
+                return pcall(router.callrw, router, 1, 'echo', {1},
+                             {timeout = timeout})
+            end
+            local _, ret_val_1 = echo(_G.static_router)
+            local _, ret_val_2 = echo(_G.new_router)
+            return ret_val_1, ret_val_2
+        end, {vtest.wait_timeout})
+    end
+
+    err1, err2 = echo_func()
+    assert_errors_equals(err1, err2, 'instance status is "loading"')
+
+    -- restore proper box configuration
+    router:exec(function()
+        box.info = _G.old_box_info
+    end)
+
+    err1, err2 = echo_func()
+    assert_errors_equals(err1, err2, 'router is not configured')
+
+    -- unblock router's configuration and wait until it's finished
+    router:exec(function()
+        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = false
+        _G.fiber_static:join()
+        _G.fiber_new:join()
+    end)
+
+    -- finally a success
+    local ret1, ret2 = echo_func()
+    t.assert_equals(ret1, ret2)
+    t.assert_equals(ret1, 1)
+
+    -- manual api disabling and enabling
+    router:exec(function()
+        _G.static_router:disable()
+        _G.new_router:disable()
+    end)
+    err1, err2 = echo_func()
+    assert_errors_equals(err1, err2, 'router is disabled explicitly')
+
+    router:exec(function()
+        _G.static_router:enable()
+        _G.new_router:enable()
+    end)
+    ret1, ret2 = echo_func()
+    t.assert_equals(ret1, ret2)
+    t.assert_equals(ret1, 1)
+
+    -- we don't want this server to interfere with subsequent tests
+    g.router_1:drop()
+end

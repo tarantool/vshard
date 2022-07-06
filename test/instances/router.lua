@@ -6,6 +6,7 @@ local helpers = require('test.luatest_helpers')
 -- able to use the libs in server:exec() calls and not get upvalue errors if the
 -- same lib is declared in the _test.lua file.
 --
+_G.ifiber = require('fiber')
 _G.imsgpack = require('msgpack')
 _G.ivtest = require('test.luatest_helpers.vtest')
 _G.iwait_timeout = _G.ivtest.wait_timeout
