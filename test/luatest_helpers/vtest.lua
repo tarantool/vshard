@@ -524,6 +524,7 @@ end
 
 --
 -- Create a new router in the cluster.
+-- If no cfg was passed configuration should be done manually with server:exec
 --
 local function router_new(g, name, cfg)
     if not g.cluster then
@@ -535,7 +536,9 @@ local function router_new(g, name, cfg)
     g[name] = server
     g.cluster:add_server(server)
     server:start()
-    router_cfg(server, cfg)
+    if cfg then
+        router_cfg(server, cfg)
+    end
     return server
 end
 

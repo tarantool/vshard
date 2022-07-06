@@ -39,6 +39,7 @@ if not M then
         ---------------- Common module attributes ----------------
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_CFG_DELAY = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -52,6 +53,8 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
+        -- Flag whether box.info.status is acceptable.
+        is_loaded = false,
 
         ----------------------- Map-Reduce -----------------------
         -- Storage Ref ID. It must be unique for each ref request
@@ -95,6 +98,16 @@ local ROUTER_TEMPLATE = {
         -- when no timeout is specified.
         --
         sync_timeout = consts.DEFAULT_SYNC_TIMEOUT,
+        -- Flag whether router_cfg() is finished.
+        is_configured = false,
+        -- Flag whether the instance is enabled manually. It is true by default
+        -- for backward compatibility with old vshard.
+        is_enabled = true,
+        -- Reference to the function-proxy to most of the public functions. It
+        -- allows to avoid 'if's in each function by adding expensive
+        -- conditional checks in one rarely used version of the wrapper and no
+        -- checks into the other almost always used wrapper.
+        api_call_cache = nil,
 }
 
 local STATIC_ROUTER_NAME = '_static_router'
@@ -1211,6 +1224,9 @@ local function router_cfg(router, cfg, is_reload)
     if not is_reload then
         box.cfg(box_cfg)
         log.info("Box has been configured")
+        while M.errinj.ERRINJ_CFG_DELAY do
+            lfiber.sleep(0.01)
+        end
     end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
@@ -1248,6 +1264,7 @@ local function router_cfg(router, cfg, is_reload)
     end
     discovery_set(router, vshard_cfg.discovery_mode)
     master_search_set(router)
+    router.is_configured = true
 end
 
 --------------------------------------------------------------------------------
@@ -1573,6 +1590,60 @@ local function router_sync(router, timeout)
     return true
 end
 
+--------------------------------------------------------------------------------
+-- Public API protection
+--------------------------------------------------------------------------------
+
+local function router_api_call_safe(func, router, ...)
+    return func(router, ...)
+end
+
+--
+-- Unsafe proxy is loaded with protections. But it is used rarely and only in
+-- the beginning of instance's lifetime.
+--
+local function router_api_call_unsafe(func, router, ...)
+    -- box.info is quite expensive. Avoid calling it again when the instance
+    -- is finally loaded.
+    if not M.is_loaded then
+        if type(box.cfg) == 'function' then
+            local msg = 'box seems not to be configured'
+            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+        end
+        local status = box.info.status
+        if status ~= 'running' then
+            local msg = ('instance status is "%s"'):format(status)
+            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+        end
+        M.is_loaded = true
+    end
+    if not router.is_configured then
+        local msg = 'router is not configured'
+        return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+    end
+    if not router.is_enabled then
+        local msg = 'router is disabled explicitly'
+        return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+    end
+    router.api_call_cache = router_api_call_safe
+    return func(router, ...)
+end
+
+local function router_make_api(func)
+    return function(router, ...)
+        return router.api_call_cache(func, router, ...)
+    end
+end
+
+local function router_enable(router)
+    router.is_enabled = true
+end
+
+local function router_disable(router)
+    router.is_enabled = false
+    router.api_call_cache = router_api_call_unsafe
+end
+
 if M.errinj.ERRINJ_RELOAD then
     error('Error injection: reload')
 end
@@ -1584,29 +1655,31 @@ end
 local router_mt = {
     __index = {
         cfg = function(router, cfg) return router_cfg(router, cfg, false) end,
-        info = router_info;
-        buckets_info = router_buckets_info;
-        call = router_call;
-        callro = router_callro;
-        callbro = router_callbro;
-        callrw = router_callrw;
-        callre = router_callre;
-        callbre = router_callbre;
-        map_callrw = router_map_callrw,
-        route = router_route;
-        routeall = router_routeall;
-        bucket_id = router_bucket_id,
-        bucket_id_strcrc32 = router_bucket_id_strcrc32,
-        bucket_id_mpcrc32 = router_bucket_id_mpcrc32,
-        bucket_count = router_bucket_count;
-        sync = router_sync;
-        bootstrap = cluster_bootstrap;
-        bucket_discovery = bucket_discovery;
-        discovery_wakeup = discovery_wakeup;
-        master_search_wakeup = master_search_wakeup,
-        discovery_set = discovery_set,
-        _route_map_clear = route_map_clear,
-        _bucket_reset = bucket_reset,
+        info = router_make_api(router_info),
+        buckets_info = router_make_api(router_buckets_info),
+        call = router_make_api(router_call),
+        callro = router_make_api(router_callro),
+        callbro = router_make_api(router_callbro),
+        callrw = router_make_api(router_callrw),
+        callre = router_make_api(router_callre),
+        callbre = router_make_api(router_callbre),
+        map_callrw = router_make_api(router_map_callrw),
+        route = router_make_api(router_route),
+        routeall = router_make_api(router_routeall),
+        bucket_id = router_make_api(router_bucket_id),
+        bucket_id_strcrc32 = router_make_api(router_bucket_id_strcrc32),
+        bucket_id_mpcrc32 = router_make_api(router_bucket_id_mpcrc32),
+        bucket_count = router_make_api(router_bucket_count),
+        sync = router_make_api(router_sync),
+        bootstrap = router_make_api(cluster_bootstrap),
+        bucket_discovery = router_make_api(bucket_discovery),
+        discovery_wakeup = router_make_api(discovery_wakeup),
+        master_search_wakeup = router_make_api(master_search_wakeup),
+        discovery_set = router_make_api(discovery_set),
+        _route_map_clear = router_make_api(route_map_clear),
+        _bucket_reset = router_make_api(bucket_reset),
+        disable = router_disable,
+        enable = router_enable,
     }
 }
 
@@ -1650,6 +1723,7 @@ local function router_new(name, cfg)
     end
     local router = table.deepcopy(ROUTER_TEMPLATE)
     setmetatable(router, router_mt)
+    router.api_call_cache = router_api_call_unsafe
     router.name = name
     M.routers[name] = router
     local ok, err = pcall(router_cfg, router, cfg)
