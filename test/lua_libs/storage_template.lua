@@ -91,6 +91,8 @@ function bootstrap_storage(engine)
         box.schema.role.grant('public', 'execute', 'function', 'space_get')
         box.schema.func.create('space_insert')
         box.schema.role.grant('public', 'execute', 'function', 'space_insert')
+        box.schema.func.create('space_truncate', {setuid = true})
+        box.schema.role.grant('public', 'execute', 'function', 'space_truncate')
         box.schema.func.create('do_replace')
         box.schema.role.grant('public', 'execute', 'function', 'do_replace')
         box.schema.func.create('do_select')
@@ -118,6 +120,10 @@ end
 
 function space_insert(space_name, tuple)
     return box.space[space_name]:insert(tuple)
+end
+
+function space_truncate(space_name)
+    return box.space[space_name]:truncate()
 end
 
 function do_replace(...)

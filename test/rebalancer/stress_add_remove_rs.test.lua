@@ -94,6 +94,7 @@ check_consistency()
 -- out.
 --
 test_run:switch('router_1')
+util.truncate_everywhere_space('test')
 util.start_loading()
 test_run:switch('box_3_a')
 remove_replicaset_first_stage()
@@ -152,6 +153,7 @@ check_consistency()
 -- When buckets are moved out from third replicaset, remove it
 -- from config.
 test_run:switch('router_1')
+util.truncate_everywhere_space('test')
 util.start_loading()
 test_run:switch('box_2_a')
 remove_replicaset_second_stage()

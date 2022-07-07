@@ -239,6 +239,9 @@ test_run:switch('router_1')
 ---
 - true
 ...
+util.truncate_everywhere_space('test')
+---
+...
 util.start_loading()
 ---
 ...
@@ -392,6 +395,9 @@ check_consistency()
 test_run:switch('router_1')
 ---
 - true
+...
+util.truncate_everywhere_space('test')
+---
 ...
 util.start_loading()
 ---

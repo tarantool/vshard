@@ -70,8 +70,18 @@ local function check_loading_result()
 	return true
 end
 
+local function truncate_everywhere_space(space_name)
+	for _, replicaset in pairs(vshard.router.static.replicasets) do
+		local replica = replicaset.replica
+		if replica ~= nil and replica:is_connected() then
+			replica.conn:call('space_truncate', {space_name}, {timeout = 100})
+		end
+	end
+end
+
 return {
 	stop_loading = stop_loading,
 	start_loading = start_loading,
 	check_loading_result = check_loading_result,
+	truncate_everywhere_space = truncate_everywhere_space,
 }
