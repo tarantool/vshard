@@ -6,12 +6,16 @@ local read_iterations = 0
 local write_fiber = 'none'
 local read_fiber = 'none'
 local bucket_count = 200
+-- Set just any limit to ensure it is at least not infinite. We want our disk to
+-- have space even if the test runs too long somewhy.
+local primary_key_max = 10000
 
 local function do_write_load()
 	while true do
 		local bucket = write_iterations % bucket_count + 1
+		local pk = write_iterations % primary_key_max
 		while not vshard.router.call(bucket, 'write', 'do_replace',
-					     {{write_iterations, bucket}}) do
+					     {{pk, bucket}}) do
 			fiber.testcancel()
 		end
 		write_iterations = write_iterations + 1
@@ -25,6 +29,7 @@ local function do_read_load()
 			fiber.sleep(0.1)
 		end
 		local bucket = read_iterations % bucket_count + 1
+		local pk = read_iterations % primary_key_max
 		local tuples = {}
 		local err = nil
 		-- Read requests are repeated on replicaset level,
@@ -32,8 +37,7 @@ local function do_read_load()
 		while #tuples == 0 do
 			tuples, err =
 				vshard.router.call(bucket, 'read', 'do_select',
-						   {{read_iterations}},
-						   {timeout = 100})
+						   {{pk}}, {timeout = 100})
 			if not tuples then
 				log.info('Error during read loading: %s', err)
 				tuples = {}
