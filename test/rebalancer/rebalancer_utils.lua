@@ -1,16 +1,18 @@
+local fiber = require('fiber')
+local log = require('log')
+
 local write_iterations = 0
 local read_iterations = 0
 local write_fiber = 'none'
 local read_fiber = 'none'
 local bucket_count = 200
 
-local log = require('log')
-
 local function do_write_load()
 	while true do
 		local bucket = write_iterations % bucket_count + 1
 		while not vshard.router.call(bucket, 'write', 'do_replace',
 					     {{write_iterations, bucket}}) do
+			fiber.testcancel()
 		end
 		write_iterations = write_iterations + 1
 		fiber.sleep(0.05)
@@ -36,6 +38,7 @@ local function do_read_load()
 				log.info('Error during read loading: %s', err)
 				tuples = {}
 			end
+			fiber.testcancel()
 		end
 		assert(tuples[1][1] == read_iterations)
 		assert(tuples[1][2] == bucket)
