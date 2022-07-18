@@ -23,16 +23,63 @@ jobs:
           - '2.8'
           - '2.9'
           - '2.10'
+          - 'debug-master'
+
+    env:
+      TNT_DEBUG_PATH: /home/runner/tnt-debug
 
     runs-on: ubuntu-latest
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
+        if: startsWith(matrix.tarantool, 'debug') != true
         uses: tarantool/setup-tarantool@v1
         with:
           tarantool-version: ${{ matrix.tarantool }}
 
+      - name: Create variables for Tarantool ${{ matrix.tarantool }}
+        if: startsWith(matrix.tarantool, 'debug')
+        run: |
+          branch=$(echo ${{ matrix.tarantool }} | cut -d- -f2)
+          commit_hash=$(git ls-remote https://github.com/tarantool/tarantool.git --branch ${branch} | head -c 8)
+          echo "TNT_BRANCH=${branch}" >> $GITHUB_ENV
+          echo "VERSION_POSTFIX=-${commit_hash}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Cache tarantool build
+        if: startsWith(matrix.tarantool, 'debug')
+        id: cache-tnt-debug
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.TNT_DEBUG_PATH }}
+          key: cache-tnt-${{ matrix.tarantool }}${{ env.VERSION_POSTFIX }}
+
+      - name: Clone tarantool ${{ matrix.tarantool }}
+        if: startsWith(matrix.tarantool, 'debug') && steps.cache-tnt-debug.outputs.cache-hit != 'true'
+        uses: actions/checkout@v3
+        with:
+          repository: tarantool/tarantool
+          ref: ${{ env.TNT_BRANCH }}
+          path: tarantool
+          fetch-depth: 0
+          submodules: true
+
+      - name: Build tarantool ${{ matrix.tarantool }}
+        if: startsWith(matrix.tarantool, 'debug') && steps.cache-tnt-debug.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get -y install zlib1g-dev libreadline-dev libncurses5-dev \
+            libicu-dev python3-yaml python3-six python3-gevent
+          cd ${GITHUB_WORKSPACE}/tarantool
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_DIST=ON
+          make
+          make DESTDIR=${TNT_DEBUG_PATH} install
+
+      - name: Install tarantool ${{ matrix.tarantool }}
+        if: startsWith(matrix.tarantool, 'debug')
+        run: sudo cp -rvP ${TNT_DEBUG_PATH}/usr/local/* /usr/local/
+
       - name: Clone the module
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           # Fetch the entire history for all branches and tags. It is needed for
           # upgrade testing.
