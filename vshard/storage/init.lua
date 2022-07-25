@@ -7,6 +7,7 @@ local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
+local fiber_yield = lfiber.yield
 local netbox_self = netbox.self
 local netbox_self_call = netbox_self.call
 
@@ -1541,6 +1542,35 @@ local function bucket_recv(bucket_id, from, data, opts)
     return nil, err
 end
 
+local function bucket_test_gc(bids)
+    local refs = M.bucket_refs
+    local bids_not_ok = table.new(consts.BUCKET_CHUNK_SIZE, 0)
+    -- +1 because the expected count is exactly the chunk size. No need to yield
+    -- on the last one. But if somewhy more is received, then do the yields.
+    local limit = consts.BUCKET_CHUNK_SIZE + 1
+    local _bucket = box.space._bucket
+    for i, bid in ipairs(bids) do
+        local bucket = _bucket:get(bid)
+        if bucket == nil or bucket.status ~= consts.BUCKET.SENT then
+            return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
+                                      'bucket was expected to be "sent"', nil)
+        end
+        local ref = refs[bid]
+        if ref ~= nil then
+            if ref.ro ~= 0 then
+                table.insert(bids_not_ok, bid)
+            else
+                assert(ref.rw == 0)
+                assert(ref.ro_lock)
+            end
+        end
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    return {bids_not_ok = bids_not_ok}
+end
+
 --
 -- Find spaces with index having the specified (in cfg) name.
 -- The function result is cached using `schema_version`.
@@ -2803,6 +2833,7 @@ end
 
 service_call_api = setmetatable({
     bucket_recv = bucket_recv,
+    bucket_test_gc = bucket_test_gc,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     storage_ref = storage_ref,
