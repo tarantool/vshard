@@ -8,6 +8,8 @@ local yaml = require('yaml')
 local vrepset = require('vshard.replicaset')
 
 local wait_timeout = 120
+-- Use it in busy-loops like `while !cond do fiber.sleep(busy_step) end`.
+local busy_step = 0.005
 local uuid_idx = 1
 --
 -- The maps help to preserve the same UUID for replicas and replicasets during
@@ -59,6 +61,17 @@ end
 
 local function replicaset_name_to_uuid(name)
     return name_to_uuid(replicaset_name_to_uuid_map, name)
+end
+
+--
+-- Timeout error can be a ClientError with ER_TIMEOUT code or a TimedOut error
+-- which is ER_SYSTEM. They also have different messages. Same public APIs can
+-- return both errors depending on core version and/or error cause. This func
+-- helps not to care.
+--
+local function error_is_timeout(err)
+    return err.type == 'ClientError' and err.code == box.error.TIMEOUT or
+           err.type == 'TimedOut'
 end
 
 --
@@ -514,6 +527,26 @@ local function cluster_wait_fullsync(g)
 end
 
 --
+-- Stop data node. Wrapped into a one-line function in case in the future would
+-- want to do something more here.
+--
+local function storage_stop(storage)
+    storage:stop()
+end
+
+--
+-- Start a data node + cfg it right away. Usually this is what is really wanted,
+-- not an unconfigured instance.
+--
+local function storage_start(storage, cfg)
+    storage:start()
+    local _, err = storage:exec(function(cfg)
+        return ivshard.storage.cfg(cfg, box.info.uuid)
+    end, {cfg})
+    t.assert_equals(err, nil, 'storage cfg on start')
+end
+
+--
 -- Apply the config on the given router.
 --
 local function router_cfg(router, cfg)
@@ -560,10 +593,12 @@ local function router_disconnect(router)
 end
 
 return {
+    error_is_timeout = error_is_timeout,
     config_new = config_new,
     cluster_new = cluster_new,
     cluster_cfg = cluster_cfg,
     cluster_for_each = cluster_for_each,
+    cluster_exec_each = cluster_exec_each,
     cluster_for_each_master = cluster_for_each_master,
     cluster_exec_each_master = cluster_exec_each_master,
     cluster_bootstrap = cluster_bootstrap,
@@ -572,9 +607,12 @@ return {
     cluster_wait_vclock_all = cluster_wait_vclock_all,
     cluster_wait_fullsync = cluster_wait_fullsync,
     storage_first_bucket = storage_first_bucket,
+    storage_stop = storage_stop,
+    storage_start = storage_start,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
     uuid_from_int = uuid_from_int,
     wait_timeout = wait_timeout,
+    busy_step = busy_step,
 }
