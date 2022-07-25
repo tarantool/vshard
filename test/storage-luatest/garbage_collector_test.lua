@@ -573,10 +573,14 @@ test_group.test_unit_bucket_delete_garbage = function(g)
 
         -- Fail to delete a not garbage bucket.
         data_prepare()
+        ilt.assert_equals(s:count(), 4)
         _bucket:replace{bid2, ivconst.BUCKET.ACTIVE}
         ilt.assert_error_msg_contains('Can not delete not garbage bucket',
                                       delete_garbage, bid2)
-        ilt.assert_equals(s:count(), 4)
+        -- tarantool/gh-7394: space:count() is broken here when mvcc is used. It
+        -- gets broken right after _bucket:replace() above. Not always - depends
+        -- on something unknown.
+        ilt.assert_equals(#s:select{}, 4)
 
         -- 'Force' option ignores the error.
         delete_garbage(bid2, {force = true})
