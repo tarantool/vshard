@@ -232,6 +232,29 @@ local function replicaset_wait_connected(replicaset, timeout)
 end
 
 --
+-- Wait until all instances are connected.
+--
+local function replicaset_wait_connected_all(replicaset, timeout)
+    local are_all_connected, err
+    repeat
+        are_all_connected = true
+        for uuid, replica in pairs(replicaset.replicas) do
+            local conn = replicaset_connect_to_replica(replicaset, replica)
+            if not conn:is_connected() then
+                timeout, err = netbox_wait_connected(conn, timeout)
+                if not timeout then
+                    return nil, err, uuid
+                end
+                -- While was waiting for this connection, another could break.
+                -- Need to re-check all of them.
+                are_all_connected = false
+            end
+        end
+    until are_all_connected
+    return timeout
+end
+
+--
 -- Create net.box connections to all replicas and master.
 --
 local function replicaset_connect_all(replicaset)
@@ -605,6 +628,65 @@ local function replicaset_template_multicallro(prefer_replica, balance)
 end
 
 --
+-- Parallel call on all instances in the replicaset. Fails if couldn't be done
+-- on at least one instance.
+--
+-- @return In case of success - a map with replica UUID keys and values being
+--     what the function returned from each replica.
+--
+-- @return In case of an error - nil, error object, UUID of the replica where
+--     the error happened.
+--
+local function replicaset_map_call(replicaset, func, args, opts)
+    local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    local deadline = fiber_clock() + timeout
+    local _, res, err, err_uuid, map
+    local replica_count = 0
+    local futures = {}
+    local opts_call = {is_async = true, timeout = 0}
+    --
+    -- Wait all connections. Sending any request if at least one connection is
+    -- completely dead would only produce unnecessary workload.
+    --
+    timeout, err, err_uuid = replicaset_wait_connected_all(replicaset, timeout)
+    if not timeout then
+        goto fail
+    end
+    --
+    -- Send requests.
+    --
+    for uuid, replica in pairs(replicaset.replicas) do
+        _, res, err = replica_call(replica, func, args, opts_call)
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        futures[uuid] = res
+        replica_count = replica_count + 1
+    end
+    --
+    -- Collect results
+    --
+    map = table.new(0, replica_count)
+    for uuid, future in pairs(futures) do
+        res, err = future:wait_result(timeout)
+        if res == nil then
+            err_uuid = uuid
+            goto fail
+        end
+        map[uuid] = res
+        timeout = deadline - fiber_clock()
+    end
+    do return map end
+
+::fail::
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, lerror.make(err), err_uuid
+end
+
+--
 -- Nice formatter for replicaset
 --
 local function replicaset_tostring(replicaset)
@@ -855,12 +937,14 @@ local replicaset_mt = {
         down_replica_priority = replicaset_down_replica_priority;
         up_replica_priority = replicaset_up_replica_priority;
         wait_connected = replicaset_wait_connected,
+        wait_connected_all = replicaset_wait_connected_all,
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);
         callbro = replicaset_template_multicallro(false, true);
         callre = replicaset_template_multicallro(true, false);
         callbre = replicaset_template_multicallro(true, true);
+        map_call = replicaset_map_call,
         update_master = replicaset_update_master,
     };
     __tostring = replicaset_tostring;
