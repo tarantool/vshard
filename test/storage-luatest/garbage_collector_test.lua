@@ -1,6 +1,7 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local fiber = require('fiber')
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -357,6 +358,216 @@ test_group.test_huge_bucket_count = function(g)
         end
         box.commit()
     end, {g.params.engine})
+end
+
+--
+-- Bucket GC can not delete buckets which still have refs on a replica.
+--
+test_group.test_replica_ref_replica_basic = function(g)
+    --
+    -- Ref some buckets on a replica.
+    --
+    local bids_part1 = {1, 3, 5}
+    local bids_part2 = {2, 4}
+    local bids = {}
+    vutil.table_extend(bids, bids_part1)
+    vutil.table_extend(bids, bids_part2)
+
+    g.replica_1_b:exec(function(bids)
+        local _bucket = box.space._bucket
+        for _, bid in ipairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.ACTIVE)
+            local ok, err = ivshard.storage.bucket_refro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids})
+    g.replica_1_a:exec(function(bids)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        box.begin()
+        for _, bid in ipairs(bids) do
+            s:replace{bid, bid}
+        end
+        box.commit()
+        box.begin()
+        for _, bid in ipairs(bids) do
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+        --
+        -- Attempt to GC but nothing is deleted.
+        --
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            ilt.assert_equals(s:get{bid}, {bid, bid})
+        end
+    end, {bids})
+    --
+    -- Free some refs but not all.
+    --
+    g.replica_1_b:exec(function(bids_part1)
+        for _, bid in ipairs(bids_part1) do
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids_part1})
+    --
+    -- These buckets can be deleted now.
+    --
+    g.replica_1_a:exec(function(bids_part1, bids_part2)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids_part1) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_equals(bucket, nil)
+            ilt.assert_equals(s:get{bid}, nil)
+        end
+        for _, bid in ipairs(bids_part2) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            ilt.assert_equals(s:get{bid}, {bid, bid})
+        end
+    end, {bids_part1, bids_part2})
+    --
+    -- Unref the rest, they can be deleted too now.
+    --
+    g.replica_1_b:exec(function(bids_part2)
+        for _, bid in ipairs(bids_part2) do
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids_part2})
+    g.replica_1_a:exec(function(bids)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        _G.bucket_gc_wait()
+        for _, bid in ipairs(bids) do
+            ilt.assert_equals(_bucket:get{bid}, nil)
+            -- Cleanup.
+            ivshard.storage.bucket_force_create(bid)
+        end
+        ilt.assert_equals(s:count(), 0)
+    end, {bids})
+    vtest.cluster_wait_vclock_all(g)
+end
+
+--
+-- Master can't delete a SENT bucket if it is not SENT on replica. Can happen if
+-- the data was desynchronized but vshard connection between the nodes has
+-- survived.
+--
+test_group.test_replica_ref_bucket_status_desync = function(g)
+    local bids_part1 = {1, 3, 5}
+    local bids_part2 = {2, 4}
+    local bids = {}
+    vutil.table_extend(bids, bids_part1)
+    vutil.table_extend(bids, bids_part2)
+    --
+    -- Make replica refs.
+    --
+    g.replica_1_b:exec(function(bids)
+        local _bucket = box.space._bucket
+        for _, bid in pairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.ACTIVE)
+            local ok, err = ivshard.storage.bucket_refro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids})
+    --
+    -- Make some of the buckets SENT.
+    --
+    g.replica_1_a:exec(function(bids, bids_part1)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        box.begin()
+        for _, bid in pairs(bids) do
+            s:replace{bid, bid}
+        end
+        box.commit()
+
+        box.begin()
+        for _, bid in pairs(bids_part1) do
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+    end, {bids, bids_part1})
+    --
+    -- Replica sees the SENT buckets and unrefs all buckets. But
+    -- it looses replication.
+    --
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(function(bids)
+        rawset(_G, 'old_replication', box.cfg.replication)
+        box.cfg{replication = {}}
+
+        for _, bid in pairs(bids) do
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids})
+    --
+    -- Master doesn't delete anything - replica returns a critical
+    -- error that some of its to-GC buckets are not SENT.
+    --
+    g.replica_1_a:exec(function(bids, bids_part2)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        box.begin()
+        for _, bid in pairs(bids_part2) do
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+        for i = 1, 5 do
+            _G.bucket_gc_once()
+        end
+        for _, bid in pairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            ilt.assert_equals(s:get{bid}, {bid, bid})
+        end
+    end, {bids, bids_part2})
+    --
+    -- The replication is restored.
+    --
+    g.replica_1_b:exec(function()
+        box.cfg{replication = _G.old_replication}
+        _G.old_replication = nil
+    end)
+    --
+    -- Now the SENT buckets are deleted.
+    --
+    g.replica_1_a:exec(function(bids)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        _G.bucket_gc_wait()
+        for _, bid in pairs(bids) do
+            ilt.assert_equals(_bucket:get{bid}, nil)
+            -- Cleanup.
+            ivshard.storage.bucket_force_create(bid)
+        end
+        ilt.assert_equals(s:count(), 0)
+    end, {bids})
 end
 
 --

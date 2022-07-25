@@ -108,6 +108,18 @@ local function bucket_gc_continue()
     vshard.storage.garbage_collector_wakeup()
 end
 
+local function bucket_gc_once()
+    -- +2 because it takes 2 iterations to delete a SENT bucket.
+    local count = vshard.storage.internal.bucket_gc_count + 2
+    t.helpers.retrying({timeout = wait_timeout}, function()
+        if vshard.storage.internal.bucket_gc_count >= count then
+            return
+        end
+        vshard.storage.garbage_collector_wakeup()
+        error('Bucket GC still did not happen')
+    end)
+end
+
 local function bucket_recovery_pause()
     local errinj = vshard.storage.internal.errinj
     errinj.ERRINJ_RECOVERY_PAUSE = true
@@ -138,6 +150,7 @@ _G.get_first_bucket = get_first_bucket
 _G.session_set = session_set
 _G.session_get = session_get
 _G.bucket_gc_wait = bucket_gc_wait
+_G.bucket_gc_once = bucket_gc_once
 _G.bucket_gc_pause = bucket_gc_pause
 _G.bucket_gc_continue = bucket_gc_continue
 _G.bucket_recovery_pause = bucket_recovery_pause

@@ -153,6 +153,8 @@ if not M then
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
         collect_bucket_garbage_fiber = nil,
+        -- How many times the GC fiber performed the garbage collection.
+        bucket_gc_count = 0,
 
         -------------------- Bucket recovery ---------------------
         recovery_fiber = nil,
@@ -208,6 +210,9 @@ else
     -- It is not set when reloaded from an old vshard version.
     if M.is_enabled == nil then
         M.is_enabled = true
+    end
+    if M.bucket_gc_count == nil then
+        M.bucket_gc_count = 0
     end
 end
 
@@ -2041,8 +2046,98 @@ local function gc_bucket_drop(status, route_map)
     status, err = pcall(gc_bucket_drop_xc, status, route_map)
     if not status then
         box.rollback()
+        return nil, err
     end
-    return status, err
+    return true
+end
+
+--
+-- Try to turn a pack of SENT buckets to GARBAGE.
+--
+local function gc_bucket_process_sent_one_batch_xc(batch)
+    local rs = M.this_replicaset
+    local map_res, err, err_uuid = rs:map_call(
+        'vshard.storage._call', {'bucket_test_gc', batch},
+        {timeout = consts.CALL_TIMEOUT_MAX})
+    if map_res == nil then
+        error(err)
+    end
+    local bids_ok_map = table.new(0, consts.BUCKET_CHUNK_SIZE)
+    -- By default all buckets ok to be deleted. Then if a bucket appears not to
+    -- be ok on at least one replica, it is deleted from the map. The rest are
+    -- approved by each replica.
+    for _, bid in ipairs(batch) do
+        bids_ok_map[bid] = true
+    end
+    for uuid, res in pairs(map_res) do
+        res, err = res[1], res[2]
+        if res == nil then
+            local err2 = lerror.vshard(lerror.code.BUCKET_GC_ERROR,
+                                       ('Failed to test sent buckets on '..
+                                        'replica %s'):format(uuid))
+            err2.prev = err
+            error(err2)
+        end
+        local bids_not_ok = res.bids_not_ok
+        for _, bid in ipairs(bids_not_ok) do
+            bids_ok_map[bid] = nil
+        end
+    end
+    box.begin()
+    local _bucket = box.space._bucket
+    for bid, _ in pairs(bids_ok_map) do
+        local bucket = _bucket:get(bid)
+        if bucket ~= nil and bucket.status == consts.BUCKET.SENT then
+            _bucket:update({bid}, {{'=', 2, consts.BUCKET.GARBAGE}})
+        end
+    end
+    box.commit()
+end
+
+--
+-- Try to turn all SENT buckets to GARBAGE. Returns a flag whether it managed to
+-- get rid of all SENT buckets. Might be blocked by some of them having RO refs
+-- on replicas or by the replicas being not available.
+--
+local function gc_bucket_process_sent_xc()
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local _bucket = box.space._bucket
+    local batch = table.new(limit, 0)
+    local i = 0
+    for _, b in _bucket.index.status:pairs(consts.BUCKET.SENT) do
+        i = i + 1
+        local bid = b.id
+        local ref = M.bucket_refs[bid]
+        if ref ~= nil then
+            assert(ref.rw == 0)
+            if ref.ro ~= 0 then
+                goto continue
+            end
+        end
+        table.insert(batch, bid)
+        if #batch < limit then
+            goto continue
+        end
+        gc_bucket_process_sent_one_batch_xc(batch)
+        batch = table.new(limit, 0)
+    ::continue::
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    if next(batch) then
+        gc_bucket_process_sent_one_batch_xc(batch)
+    end
+    return not util.index_has(_bucket.index.status, consts.BUCKET.SENT)
+end
+
+local function gc_bucket_process_sent()
+    local ok, res = pcall(gc_bucket_process_sent_xc)
+    if not ok then
+        box.rollback()
+        return false, nil, res
+    end
+    return true, res
 end
 
 --
@@ -2050,8 +2145,10 @@ end
 -- state of any bucket changes.
 -- After wakeup it follows the plan:
 -- 1) Check if state of any bucket has really changed. If not, then sleep again;
--- 2) Delete all GARBAGE and SENT buckets along with their data in chunks of
---    limited size.
+-- 2) Delete all GARBAGE buckets along with their data in chunks of limited
+--    size.
+-- 3) Turn those SENT buckets to GARBAGE, which are not used on any instance in
+--    the replicaset.
 -- 3) Bucket destinations are saved into a global route_map to reroute incoming
 --    requests from routers in case they didn't notice the buckets being moved.
 --    The saved routes are scheduled for deletion after a timeout, which is
@@ -2078,7 +2175,7 @@ local function gc_bucket_f()
     local route_map = M.route_map
     local route_map_old = {}
     local route_map_deadline = 0
-    local status, err
+    local status, err, is_done
     while M.module_version == module_version do
         if M.errinj.ERRINJ_BUCKET_GC_PAUSE then
             M.errinj.ERRINJ_BUCKET_GC_PAUSE = 1
@@ -2088,12 +2185,12 @@ local function gc_bucket_f()
         if bucket_generation_collected ~= bucket_generation_current then
             status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
             if status then
-                status, err = gc_bucket_drop(consts.BUCKET.SENT, route_map)
+                status, is_done, err = gc_bucket_process_sent()
             end
             if not status then
                 box.rollback()
                 log.error('Error during garbage collection step: %s', err)
-            else
+            elseif is_done then
                 -- Don't use global generation. During the collection it could
                 -- already change. Instead, remember the generation known before
                 -- the collection has started.
@@ -2102,6 +2199,10 @@ local function gc_bucket_f()
                 -- second iteration it should not find any buckets to collect,
                 -- and then the collected generation matches the global one.
                 bucket_generation_collected = bucket_generation_current
+            else
+                -- Needs a retry. Can happen if not all SENT buckets were able
+                -- to turn into GARBAGE.
+                status = false
             end
         else
             status = true
@@ -2131,13 +2232,14 @@ local function gc_bucket_f()
             else
                 -- An error happened during the collection. Does not make sense
                 -- to retry on each iteration of the event loop. The most likely
-                -- errors are either a WAL error or a transaction abort - both
-                -- look like an issue in the user's code and can't be fixed
-                -- quickly anyway. Backoff.
+                -- errors are either a WAL error, or a transaction abort, or
+                -- SENT buckets are still RO-refed on a replica - all these
+                -- issues are not going to be fixed quickly anyway. Backoff.
                 sleep_time = consts.GC_BACKOFF_INTERVAL
             end
         end
 
+        M.bucket_gc_count = M.bucket_gc_count + 1
         if M.module_version == module_version then
             M.bucket_generation_cond:wait(sleep_time)
         end
