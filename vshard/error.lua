@@ -183,6 +183,11 @@ local error_message_template = {
         msg = 'Router is disabled: %s',
         args = {'reason'}
     },
+    [36] = {
+        name = 'BUCKET_GC_ERROR',
+        msg = 'Error during bucket GC: %s',
+        args = {'reason'},
+    },
 }
 
 --

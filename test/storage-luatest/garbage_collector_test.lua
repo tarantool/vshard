@@ -357,6 +357,194 @@ test_group.test_huge_bucket_count = function(g)
         end
         box.commit()
     end, {g.params.engine})
+    vtest.cluster_wait_vclock_all(g)
+end
+
+--
+-- Bucket GC can not delete buckets which still have refs on a replica.
+--
+test_group.test_replica_ref_basic = function(g)
+    local bids_part1 = {1, 3, 5}
+    local bids_part2 = {2, 4}
+    local bids = {}
+    vutil.table_extend(bids, bids_part1)
+    vutil.table_extend(bids, bids_part2)
+    --
+    -- Ref some buckets on a replica.
+    --
+    g.replica_1_b:exec(function(bids)
+        local _bucket = box.space._bucket
+        for _, bid in ipairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.ACTIVE)
+            local ok, err = ivshard.storage.bucket_refro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids})
+    --
+    -- Master tries to GC the buckets, but it can't.
+    --
+    g.replica_1_a:exec(function(bids)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        box.begin()
+        for _, bid in ipairs(bids) do
+            s:replace{bid, bid}
+        end
+        box.commit()
+        box.begin()
+        for _, bid in ipairs(bids) do
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            ilt.assert_equals(s:get{bid}, {bid, bid})
+        end
+    end, {bids})
+    --
+    -- Free some refs on the replica but not all.
+    --
+    g.replica_1_b:exec(function(bids_part1)
+        for _, bid in ipairs(bids_part1) do
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids_part1})
+    --
+    -- These buckets can be deleted now.
+    --
+    g.replica_1_a:exec(function(bids_part1, bids_part2)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids_part1) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_equals(bucket, nil)
+            ilt.assert_equals(s:get{bid}, nil)
+        end
+        for _, bid in ipairs(bids_part2) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            ilt.assert_equals(s:get{bid}, {bid, bid})
+        end
+    end, {bids_part1, bids_part2})
+    --
+    -- Unref the rest, they can be deleted too now.
+    --
+    g.replica_1_b:exec(function(bids_part2)
+        for _, bid in ipairs(bids_part2) do
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+    end, {bids_part2})
+    g.replica_1_a:exec(function(bids)
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        _G.bucket_gc_wait()
+        for _, bid in ipairs(bids) do
+            ilt.assert_equals(_bucket:get{bid}, nil)
+            -- Cleanup.
+            ivshard.storage.bucket_force_create(bid)
+        end
+        ilt.assert_equals(s:count(), 0)
+    end, {bids})
+    vtest.cluster_wait_vclock_all(g)
+end
+
+--
+-- If a bucket was changed while the master was asking replicas about buckets,
+-- then the GC can't safely delete the bucket. Shouldn't happen, but the code
+-- should be ready.
+--
+test_group.test_local_changes_during_replicas_check = function(g)
+    g.replica_1_a:exec(function()
+        local _bucket = box.space._bucket
+        local bids_part1 = {1, 3, 5}
+        local bids_part2 = {2, 4}
+        local bids_part3 = {6, 7}
+        local bids = {}
+        ivutil.table_extend(bids, bids_part1)
+        ivutil.table_extend(bids, bids_part2)
+        ivutil.table_extend(bids, bids_part3)
+
+        local errinj = ivshard.storage.internal.errinj
+        errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = true
+        box.begin()
+        for _, bid in ipairs(bids) do
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+        ivshard.storage.garbage_collector_wakeup()
+        ifiber.yield()
+        --
+        -- The map-call to replicas is in fly. Now some of the SENT buckets on
+        -- the master come back to life: get new refs or change status. They
+        -- should remain.
+        --
+        box.begin()
+        for _, bid in ipairs(bids_part2) do
+            _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+        end
+        for _, bid in ipairs(bids_part3) do
+            _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+            local ok, err = ivshard.storage.bucket_refro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+            _bucket:replace{bid, ivconst.BUCKET.SENT}
+        end
+        box.commit()
+        errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false
+        ivshard.storage.garbage_collector_wakeup()
+        -- Run GC twice - first time to end the current run. Second time to
+        -- re-try the GC.
+        _G.bucket_gc_once()
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids_part2) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.ACTIVE)
+        end
+        for _, bid in ipairs(bids_part3) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+            local ok, err = ivshard.storage.bucket_unrefro(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert(ok)
+        end
+        -- Drop the just unreferenced SENT buckets.
+        _G.bucket_gc_once()
+        for _, bid in ipairs(bids_part2) do
+            local bucket = _bucket:get{bid}
+            ilt.assert_not_equals(bucket, nil)
+            ilt.assert_equals(bucket.status, ivconst.BUCKET.ACTIVE)
+        end
+        for _, bid in ipairs(bids_part3) do
+            ilt.assert_equals(_bucket:get{bid}, nil)
+        end
+        --
+        -- Cleanup.
+        --
+        box.begin()
+        for _, bid in ipairs(bids) do
+            _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+        end
+        box.commit()
+    end)
+    vtest.cluster_wait_vclock_all(g)
 end
 
 --
