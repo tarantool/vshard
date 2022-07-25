@@ -62,6 +62,17 @@ local function replicaset_name_to_uuid(name)
 end
 
 --
+-- Timeout error can be a ClientError with ER_TIMEOUT code or a TimedOut error
+-- which is ER_SYSTEM. They also have different messages. Same public APIs can
+-- return both errors depending on core version and/or error cause. This func
+-- helps not to care.
+--
+local function error_is_timeout(err)
+    return err.type == 'ClientError' and err.code == box.error.TIMEOUT or
+           err.type == 'TimedOut'
+end
+
+--
 -- Build a valid vshard config by a template. A template does not specify
 -- anything volatile such as URIs, UUIDs - these are installed at runtime.
 --
@@ -305,6 +316,15 @@ local function cluster_exec_each_master(g, func, args)
     end)
 end
 
+--
+-- Execute storage:exec(func, args) in parallel for all storages.
+--
+local function cluster_exec_each(g, func, args)
+    return cluster_for_each(g, function(storage)
+        return storage:exec(func, args)
+    end)
+end
+
 local function storage_boot_one_f(first, count)
     return ivshard.storage.bucket_force_create(first, count)
 end
@@ -514,6 +534,26 @@ local function cluster_wait_fullsync(g)
 end
 
 --
+-- Stop data node. Wrapped into a one-line function in case in the
+-- future would want to do something more here.
+--
+local function storage_stop(storage)
+    storage:stop()
+end
+
+--
+-- Start a data node + cfg it right away. Usually this is what is
+-- really wanted, not a unconfigured instance.
+--
+local function storage_start(storage, cfg)
+    storage:start()
+    local _, err = storage:exec(function(cfg)
+        return ivshard.storage.cfg(cfg, box.info.uuid)
+    end, {cfg})
+    t.assert_equals(err, nil, 'storage cfg on start')
+end
+
+--
 -- Apply the config on the given router.
 --
 local function router_cfg(router, cfg)
@@ -560,10 +600,12 @@ local function router_disconnect(router)
 end
 
 return {
+    error_is_timeout = error_is_timeout,
     config_new = config_new,
     cluster_new = cluster_new,
     cluster_cfg = cluster_cfg,
     cluster_for_each = cluster_for_each,
+    cluster_exec_each = cluster_exec_each,
     cluster_for_each_master = cluster_for_each_master,
     cluster_exec_each_master = cluster_exec_each_master,
     cluster_bootstrap = cluster_bootstrap,
@@ -572,6 +614,8 @@ return {
     cluster_wait_vclock_all = cluster_wait_vclock_all,
     cluster_wait_fullsync = cluster_wait_fullsync,
     storage_first_bucket = storage_first_bucket,
+    storage_stop = storage_stop,
+    storage_start = storage_start,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
