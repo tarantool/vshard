@@ -342,6 +342,7 @@ local feature = {
         return version_is_at_least(2, 10, 0, nil, 0, 2)
     end)(),
     error_stack = version_is_at_least(2, 4, 0, nil, 0, 0),
+    csw = fiber.self().csw ~= nil,
 }
 
 return {

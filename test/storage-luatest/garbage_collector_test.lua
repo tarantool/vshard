@@ -597,3 +597,132 @@ test_group.test_unit_bucket_delete_garbage = function(g)
         _G.bucket_gc_continue()
     end, {g.params.engine})
 end
+
+--
+-- Unit tests for vshard.storage._call('bucket_test_gc').
+--
+test_group.test_unit_bucket_test_gc = function(g)
+    g.replica_1_a:exec(function()
+        local bucket_count = ivshard.storage.internal.total_bucket_count
+        local _bucket = box.space._bucket
+        local _bucket_status = _bucket.index.status
+        local _bucket_pk = _bucket.index.pk
+        -- Ensure the buckets {1..20} exist so as could hardcode some bids for
+        -- test code simplicity.
+        ilt.assert_equals(_bucket_status:count(ivconst.BUCKET.ACTIVE), bucket_count)
+        ilt.assert_equals(_bucket_pk:min().id, 1)
+        ilt.assert_equals(_bucket_pk:max().id, bucket_count)
+        ilt.assert_equals(bucket_count, 20)
+
+        _G.bucket_gc_pause()
+        _G.bucket_recovery_pause()
+
+        local test_gc = function(bids)
+            local res, err = ivshard.storage._call('bucket_test_gc', bids)
+            if not res then
+                return nil, err
+            end
+            return res.bids_not_ok
+        end
+
+        local garbage_bids = {2, 3, 18}
+        local sent_bids = {1, 5, 15, 16, 17}
+        local sent_ro_bids = {5, 16, 17}
+        local receiving_bids = {8, 11, 12, 20}
+        local active_bids = {4, 6, 7, 9, 10}
+        local test_bids = {}
+        ivutil.table_extend(test_bids, garbage_bids)
+        ivutil.table_extend(test_bids, sent_bids)
+        ivutil.table_extend(test_bids, receiving_bids)
+        ivutil.table_extend(test_bids, active_bids)
+        local not_ok_bids = {}
+        ivutil.table_extend(not_ok_bids, sent_ro_bids)
+        ivutil.table_extend(not_ok_bids, receiving_bids)
+        ivutil.table_extend(not_ok_bids, active_bids)
+
+        box.begin()
+        for _, bid in ipairs(sent_ro_bids) do
+            ilt.assert(ivshard.storage.bucket_refro(bid))
+        end
+        for _, bid in ipairs(sent_bids) do
+            _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.SENT}})
+        end
+        for _, bid in ipairs(garbage_bids) do
+            _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        end
+        for _, bid in ipairs(receiving_bids) do
+            _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
+        end
+        box.commit()
+        --
+        -- All is available for GC.
+        --
+        ilt.assert_equals(test_gc({}), {})
+        ilt.assert_equals(test_gc({1}), {})
+        ilt.assert_equals(test_gc({1, 3, 15, 18}), {})
+        --
+        -- Not all is available.
+        --
+        ilt.assert_equals(test_gc(test_bids), not_ok_bids)
+        --
+        -- Cleanup.
+        --
+        box.begin()
+        for _, bid in ipairs(sent_ro_bids) do
+            ilt.assert(ivshard.storage.bucket_unrefro(bid))
+        end
+        for _, bid in ipairs(test_bids) do
+            _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        end
+        box.commit()
+        --
+        -- Long bucket list iteration should yield.
+        --
+        -- Reduce the chunk size to speed the test up.
+        local old_chunk_size = ivconst.BUCKET_CHUNK_SIZE
+        ivconst.BUCKET_CHUNK_SIZE = 100
+        local bucket_count_new = ivconst.BUCKET_CHUNK_SIZE * 4 + 10
+        ilt.assert_gt(bucket_count_new, bucket_count)
+        sent_bids = {}
+        sent_ro_bids = {}
+        box.begin()
+        for i = 1, bucket_count_new do
+            _bucket:replace({i, ivconst.BUCKET.ACTIVE})
+            if i % 2 == 0 then
+                table.insert(sent_bids, i)
+                if i % 3 == 0 then
+                    table.insert(sent_ro_bids, i)
+                    ilt.assert(ivshard.storage.bucket_refro(i))
+                end
+                _bucket:replace({i, ivconst.BUCKET.SENT})
+            end
+        end
+        box.commit()
+        if ivutil.feature.csw then
+            local csw1 = ifiber.self():csw()
+            ilt.assert_equals(test_gc(sent_bids), sent_ro_bids)
+            local csw2 = ifiber.self():csw()
+            ilt.assert_equals(csw2, csw1 + 2)
+        else
+            ilt.assert_equals(test_gc(sent_bids), sent_ro_bids)
+        end
+        --
+        -- Cleanup
+        --
+        ivconst.BUCKET_CHUNK_SIZE = old_chunk_size
+        for _, bid in ipairs(sent_ro_bids) do
+            ilt.assert(ivshard.storage.bucket_unrefro(bid))
+        end
+        box.begin()
+        for bid = 1, bucket_count do
+            _bucket:replace({bid, ivconst.BUCKET.ACTIVE})
+        end
+        for bid = bucket_count + 1, bucket_count_new do
+            _bucket:delete({bid})
+        end
+        box.commit()
+        _G.bucket_recovery_continue()
+        _G.bucket_gc_continue()
+    end)
+    vtest.storage_wait_vclock_all(g)
+end
