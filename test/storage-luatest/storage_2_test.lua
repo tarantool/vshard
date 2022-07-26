@@ -26,16 +26,16 @@ local cfg_template = {
     },
     bucket_count = 20
 }
-local cluster_cfg
+local global_cfg
 
 test_group.before_all(function(g)
     cfg_template.memtx_use_mvcc_engine = g.params.memtx_use_mvcc_engine
-    cluster_cfg = vtest.config_new(cfg_template)
+    global_cfg = vtest.config_new(cfg_template)
 
-    vtest.storage_new(g, cluster_cfg)
-    vtest.storage_bootstrap(g, cluster_cfg)
-    vtest.storage_wait_vclock_all(g)
-    vtest.storage_rebalancer_disable(g)
+    vtest.cluster_new(g, global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_wait_vclock_all(g)
+    vtest.cluster_rebalancer_disable(g)
     g.replica_1_a:exec(function()
         _G.bucket_recovery_pause()
     end)
@@ -334,8 +334,8 @@ local function test_storage_callro_refrw_loss(g, user_err)
     local rs1_replicas = new_cfg_template.sharding[1].replicas
     rs1_replicas.replica_1_a.master = false
     rs1_replicas.replica_1_b.master = true
-    local new_cluster_cfg = vtest.config_new(new_cfg_template)
-    vtest.storage_cfg(g, new_cluster_cfg)
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
 
     -- The bucket becomes deleted on the new master due to any reason.
     rep_b:exec(bucket_force_drop, {bid})
@@ -358,7 +358,7 @@ local function test_storage_callro_refrw_loss(g, user_err)
     rep_a:exec(bucket_check_no_ref, {bid})
 
     -- Restore.
-    vtest.storage_cfg(g, cluster_cfg)
+    vtest.cluster_cfg(g, global_cfg)
     rep_a:exec(bucket_gc_wait)
     rep_a:exec(bucket_force_create, {bid})
     rep_b:wait_vclock_of(rep_a)

@@ -24,7 +24,7 @@ local cfg_template = {
     },
     bucket_count = 100
 }
-local cluster_cfg = vtest.config_new(cfg_template)
+local global_cfg = vtest.config_new(cfg_template)
 
 local function callrw_get_uuid(bid, timeout)
     timeout = timeout ~= nil and timeout or iwait_timeout
@@ -42,13 +42,13 @@ local function callrw_session_set(bid, key, value)
 end
 
 g.before_all(function()
-    vtest.storage_new(g, cluster_cfg)
+    vtest.cluster_new(g, global_cfg)
 
     t.assert_equals(g.replica_1_a:exec(function()
         return #ivshard.storage.info().alerts
     end), 0, 'no alerts after boot')
 
-    local router = vtest.router_new(g, 'router', cluster_cfg)
+    local router = vtest.router_new(g, 'router', global_cfg)
     g.router = router
     local res, err = router:exec(function()
         return ivshard.router.bootstrap({timeout = iwait_timeout})
@@ -307,7 +307,7 @@ g.test_uri_compare_and_reuse = function(g)
     t.assert_equals(res, 10, 'get session key')
 
     -- Restore the globals back.
-    vtest.router_cfg(g.router, cluster_cfg)
+    vtest.router_cfg(g.router, global_cfg)
 end
 
 g.test_multilisten = function(g)
@@ -322,8 +322,8 @@ g.test_multilisten = function(g)
     rep_1_a_templ.port_count = 2
     -- Clients should use the first port.
     rep_1_a_templ.port_uri = 1
-    local new_storage_cfg = vtest.config_new(new_cfg_template)
-    vtest.storage_cfg(g, new_storage_cfg)
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_cluster_cfg)
 
     -- Router connects to the first port.
     local new_router_cfg = vtest.config_new(new_cfg_template)
@@ -363,8 +363,8 @@ g.test_multilisten = function(g)
     -- storage. The router won't be able to reconnect.
     rep_1_a_templ.port_count = 1
     rep_1_a_templ.port_uri = 1
-    new_storage_cfg = vtest.config_new(new_cfg_template)
-    vtest.storage_cfg(g, new_storage_cfg)
+    new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_cluster_cfg)
     -- Force router reconnect. Otherwise the router would use the old still
     -- alive connection even though the original listening socket is closed
     -- above.
@@ -386,8 +386,8 @@ g.test_multilisten = function(g)
     t.assert_equals(res, rep_1_a_uuid, 'went to 1_a again')
 
     -- Restore everything back.
-    vtest.storage_cfg(g, cluster_cfg)
-    vtest.router_cfg(g.router, cluster_cfg)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.router_cfg(g.router, global_cfg)
 end
 
 g.test_ssl = function(g)
@@ -406,9 +406,9 @@ g.test_ssl = function(g)
     rs_1_templ.is_ssl = true
     rs_2_templ.is_ssl = true
 
-    local new_cluster_cfg = vtest.config_new(new_cfg_template)
-    vtest.storage_cfg(g, new_cluster_cfg)
-    vtest.router_cfg(g.router, new_cluster_cfg)
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.router_cfg(g.router, new_global_cfg)
 
     local rep_1_a_uuid = g.replica_1_a:instance_uuid()
     local res, err = g.router:exec(callrw_get_uuid, {bid1})
@@ -422,15 +422,15 @@ g.test_ssl = function(g)
 
     -- Ensure that non-encrypted connection won't work.
     rs_2_templ.is_ssl = nil
-    new_cluster_cfg = vtest.config_new(new_cfg_template)
-    vtest.router_cfg(g.router, new_cluster_cfg)
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_global_cfg)
 
     res, err = g.router:exec(callrw_get_uuid, {bid2, 0.01})
     t.assert_equals(res, nil, 'rw failed on non-encrypted connection')
     t.assert_covers(err, {code = box.error.NO_CONNECTION}, 'got error')
 
     -- Works again when the replicaset also disables SSL.
-    vtest.storage_cfg(g, new_cluster_cfg)
+    vtest.cluster_cfg(g, new_global_cfg)
 
     -- Force a reconnect right now instead of waiting until it happens
     -- automatically.
@@ -440,9 +440,9 @@ g.test_ssl = function(g)
     t.assert_equals(res, rep_2_a_uuid, 'went to 2_a')
 
     -- Restore everything back.
-    vtest.storage_cfg(g, cluster_cfg)
-    vtest.router_cfg(g.router, cluster_cfg)
-    vtest.storage_wait_fullsync(g)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.router_cfg(g.router, global_cfg)
+    vtest.cluster_wait_fullsync(g)
 end
 
 g.test_enable_disable = function(g)
@@ -460,7 +460,7 @@ g.test_enable_disable = function(g)
                                            'new_router', cfg))
         _G.fiber_static:set_joinable(true)
         _G.fiber_new:set_joinable(true)
-    end, {cluster_cfg})
+    end, {global_cfg})
 
     -- emulate unconfigured box
     router:exec(function()
