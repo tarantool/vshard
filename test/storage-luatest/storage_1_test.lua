@@ -27,15 +27,15 @@ local cfg_template = {
     },
     bucket_count = 10
 }
-local cluster_cfg
+local global_cfg
 
 test_group.before_all(function(g)
     cfg_template.memtx_use_mvcc_engine = g.params.memtx_use_mvcc_engine
-    cluster_cfg = vtest.config_new(cfg_template)
+    global_cfg = vtest.config_new(cfg_template)
 
-    vtest.storage_new(g, cluster_cfg)
-    vtest.storage_bootstrap(g, cluster_cfg)
-    vtest.storage_rebalancer_disable(g)
+    vtest.cluster_new(g, global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_rebalancer_disable(g)
 end)
 
 test_group.after_all(function(g)

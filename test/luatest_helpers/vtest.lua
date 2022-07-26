@@ -130,7 +130,7 @@ end
 --
 -- Build new cluster by a given config.
 --
-local function storage_new(g, cfg)
+local function cluster_new(g, cfg)
     if not g.cluster then
         g.cluster = cluster:new({})
     end
@@ -206,7 +206,7 @@ end
 --
 -- Find all vshard storages in the cluster.
 --
-local function storage_find_all(g)
+local function cluster_find_all(g)
     local result = {}
     for _, storage in pairs(g.cluster.servers) do
         if storage.vtest and storage.vtest.is_storage then
@@ -219,7 +219,7 @@ end
 --
 -- Execute func(storage) in parallel for all the given storages.
 --
-local function storage_for_each_in(storages, func)
+local function cluster_for_each_in(storages, func)
     local fibers = table.new(0, #storages)
     -- Map-reduce. Parallel execution not only is faster but also helps not to
     -- depend on which order would be non-blocking. For example, at storage
@@ -251,15 +251,15 @@ end
 --
 -- Execute func(storage) in parallel for all storages.
 --
-local function storage_for_each(g, func)
-    return storage_for_each_in(storage_find_all(g), func)
+local function cluster_for_each(g, func)
+    return cluster_for_each_in(cluster_find_all(g), func)
 end
 
 --
 -- Execute storage:exec(func, args) in parallel for all storages.
 --
-local function storage_exec_each(g, func, args)
-    return storage_for_each(g, function(storage)
+local function cluster_exec_each(g, func, args)
+    return cluster_for_each(g, function(storage)
         return storage:exec(func, args)
     end)
 end
@@ -267,8 +267,8 @@ end
 --
 -- Find all vshard storage masters in the cluster.
 --
-local function storage_find_all_masters(g)
-    local res, err = storage_for_each(g, function(storage)
+local function cluster_find_all_masters(g)
+    local res, err = cluster_for_each(g, function(storage)
         return storage:call('vshard.storage._call', {'info'}).is_master
     end)
     if not res then
@@ -288,19 +288,19 @@ end
 --
 -- Execute func(storage) in parallel for all master storages.
 --
-local function storage_for_each_master(g, func)
-    local masters, err = storage_find_all_masters(g)
+local function cluster_for_each_master(g, func)
+    local masters, err = cluster_find_all_masters(g)
     if not masters then
         return nil, err
     end
-    return storage_for_each_in(masters, func)
+    return cluster_for_each_in(masters, func)
 end
 
 --
 -- Execute storage:exec(func, args) in parallel for all master storages.
 --
-local function storage_exec_each_master(g, func, args)
-    return storage_for_each_master(g, function(storage)
+local function cluster_exec_each_master(g, func, args)
+    return cluster_for_each_master(g, function(storage)
         return storage:exec(func, args)
     end)
 end
@@ -314,7 +314,7 @@ end
 -- config could be fetched from the storages, but it would force to check its
 -- consistency.
 --
-local function storage_bootstrap(g, cfg)
+local function cluster_bootstrap(g, cfg)
     local masters = {}
     local etalon_balance = {}
     local replicaset_count = 0
@@ -372,9 +372,9 @@ end
 --
 -- Apply the config to all vshard storages in the cluster.
 --
-local function storage_cfg(g, cfg)
+local function cluster_cfg(g, cfg)
     -- No support yet for dynamic node addition and removal. Only reconfig.
-    local _, err = storage_exec_each(g, function(cfg)
+    local _, err = cluster_exec_each(g, function(cfg)
         return ivshard.storage.cfg(cfg, box.info.uuid)
     end, {cfg})
     t.assert_equals(err, nil, 'storage reconfig')
@@ -393,8 +393,8 @@ end
 --
 -- Disable rebalancer on all storages.
 --
-local function storage_rebalancer_disable(g)
-    local _, err =  storage_exec_each(g, function()
+local function cluster_rebalancer_disable(g)
+    local _, err =  cluster_exec_each(g, function()
         ivshard.storage.rebalancer_disable()
     end)
     t.assert_equals(err, nil, 'rebalancer disable')
@@ -403,8 +403,8 @@ end
 --
 -- Enable rebalancer on all storages.
 --
-local function storage_rebalancer_enable(g)
-    local _, err =  storage_exec_each(g, function()
+local function cluster_rebalancer_enable(g)
+    local _, err =  cluster_exec_each(g, function()
         ivshard.storage.rebalancer_enable()
     end)
     t.assert_equals(err, nil, 'rebalancer enable')
@@ -413,9 +413,9 @@ end
 --
 -- Wait vclock sync in each replicaset between all its replicas.
 --
-local function storage_wait_vclock_all(g)
+local function cluster_wait_vclock_all(g)
     local replicasets = {}
-    for _, storage in pairs(storage_find_all(g)) do
+    for _, storage in pairs(cluster_find_all(g)) do
         local uuid = storage:replicaset_uuid()
         local replicaset = replicasets[uuid]
         if not replicaset then
@@ -492,9 +492,9 @@ end
 -- Wait full synchronization between all nodes in each replication of the
 -- cluster.
 --
-local function storage_wait_fullsync(g)
+local function cluster_wait_fullsync(g)
     local replicasets = {}
-    for _, storage in pairs(storage_find_all(g)) do
+    for _, storage in pairs(cluster_find_all(g)) do
         local uuid = storage:replicaset_uuid()
         local replicaset = replicasets[uuid]
         if not replicaset then
@@ -561,17 +561,17 @@ end
 
 return {
     config_new = config_new,
-    storage_new = storage_new,
-    storage_cfg = storage_cfg,
-    storage_for_each = storage_for_each,
-    storage_for_each_master = storage_for_each_master,
-    storage_exec_each_master = storage_exec_each_master,
-    storage_bootstrap = storage_bootstrap,
+    cluster_new = cluster_new,
+    cluster_cfg = cluster_cfg,
+    cluster_for_each = cluster_for_each,
+    cluster_for_each_master = cluster_for_each_master,
+    cluster_exec_each_master = cluster_exec_each_master,
+    cluster_bootstrap = cluster_bootstrap,
+    cluster_rebalancer_disable = cluster_rebalancer_disable,
+    cluster_rebalancer_enable = cluster_rebalancer_enable,
+    cluster_wait_vclock_all = cluster_wait_vclock_all,
+    cluster_wait_fullsync = cluster_wait_fullsync,
     storage_first_bucket = storage_first_bucket,
-    storage_rebalancer_disable = storage_rebalancer_disable,
-    storage_rebalancer_enable = storage_rebalancer_enable,
-    storage_wait_vclock_all = storage_wait_vclock_all,
-    storage_wait_fullsync = storage_wait_fullsync,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
