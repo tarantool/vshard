@@ -28,15 +28,15 @@ local cfg_template = {
     },
     bucket_count = 20
 }
-local cluster_cfg
+local global_cfg
 
 test_group.before_all(function(g)
     cfg_template.memtx_use_mvcc_engine = g.params.memtx_use_mvcc_engine
-    cluster_cfg = vtest.config_new(cfg_template)
+    global_cfg = vtest.config_new(cfg_template)
 
-    vtest.storage_new(g, cluster_cfg)
-    vtest.storage_bootstrap(g, cluster_cfg)
-    vtest.storage_exec_each_master(g, function(engine)
+    vtest.cluster_new(g, global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_exec_each_master(g, function(engine)
         local s = box.schema.create_space('test', {
             engine = engine,
             format = {
@@ -47,8 +47,8 @@ test_group.before_all(function(g)
         s:create_index('pk')
         s:create_index('bucket_id', {unique = false, parts = {2}})
     end, {g.params.engine})
-    vtest.storage_wait_vclock_all(g)
-    vtest.storage_rebalancer_disable(g)
+    vtest.cluster_wait_vclock_all(g)
+    vtest.cluster_rebalancer_disable(g)
 end)
 
 test_group.after_all(function(g)
@@ -152,7 +152,7 @@ test_group.test_basic = function(g)
 end
 
 test_group.test_yield_before_send_commit = function(g)
-    t.run_only_if(cluster_cfg.memtx_use_mvcc_engine)
+    t.run_only_if(global_cfg.memtx_use_mvcc_engine)
 
     g.replica_1_a:exec(function()
         local s = box.space.test

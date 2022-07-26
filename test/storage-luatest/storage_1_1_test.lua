@@ -34,15 +34,15 @@ local cfg_template = {
     },
     bucket_count = 10
 }
-local cluster_cfg
+local global_cfg
 
 test_group.before_all(function(g)
     cfg_template.memtx_use_mvcc_engine = g.params.memtx_use_mvcc_engine
-    cluster_cfg = vtest.config_new(cfg_template)
+    global_cfg = vtest.config_new(cfg_template)
 
-    vtest.storage_new(g, cluster_cfg)
-    vtest.storage_bootstrap(g, cluster_cfg)
-    vtest.storage_rebalancer_disable(g)
+    vtest.cluster_new(g, global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_rebalancer_disable(g)
 end)
 
 test_group.after_all(function(g)
@@ -55,7 +55,7 @@ end)
 test_group.test_bucket_send_field_types = function(g)
     -- Make a space with all the field types whose msgpack representation is
     -- nontrivial.
-    local _, err = vtest.storage_exec_each_master(g, function(engine)
+    local _, err = vtest.cluster_exec_each_master(g, function(engine)
         local format = {
             {'id', 'unsigned'},
             {'bid', 'unsigned'},
@@ -153,7 +153,7 @@ test_group.test_bucket_send_field_types = function(g)
         _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_uuid()})
 
-    vtest.storage_exec_each_master(g, function()
+    vtest.cluster_exec_each_master(g, function()
         box.space.test:drop()
     end)
 end
