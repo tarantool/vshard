@@ -46,7 +46,9 @@ vshard.router.cfg(cfg)
 f7 = vshard.router.static.discovery_fiber
 vshard.router.static.discovery_fiber:status()
 
-f1:status(), f2, f3:status(), f4:status(), f5, f6:status(), f7:status()
+while f6:status() ~= 'dead' do fiber.sleep(0.01) end
+f1:status(), f2, f3:status(), f4:status(), f5, f6:status()
+assert(f7:status() == 'suspended' or vshard.router.info().bucket.unknown == 0)
 
 -- Errored discovery continued successfully after errors are gone.
 vshard.router.bootstrap()
