@@ -232,13 +232,18 @@ local function replicaset_wait_connected(replicaset, timeout)
 end
 
 --
--- Wait until all instances are connected.
+-- Wait until all instances are connected (with an optional exception).
 --
-local function replicaset_wait_connected_all(replicaset, timeout)
+local function replicaset_wait_connected_all(replicaset, opts)
+    local timeout = opts.timeout
+    local except = opts.except
     local are_all_connected, err
     repeat
         are_all_connected = true
         for uuid, replica in pairs(replicaset.replicas) do
+            if uuid == except then
+                goto next_check
+            end
             local conn = replicaset_connect_to_replica(replicaset, replica)
             if not conn:is_connected() then
                 timeout, err = netbox_wait_connected(conn, timeout)
@@ -249,6 +254,7 @@ local function replicaset_wait_connected_all(replicaset, timeout)
                 -- Need to re-check all of them.
                 are_all_connected = false
             end
+        ::next_check::
         end
     until are_all_connected
     return timeout
@@ -639,6 +645,7 @@ end
 --
 local function replicaset_map_call(replicaset, func, args, opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    local except = opts.except
     local deadline = fiber_clock() + timeout
     local _, res, err, err_uuid, map
     local replica_count = 0
@@ -648,7 +655,10 @@ local function replicaset_map_call(replicaset, func, args, opts)
     -- Wait all connections. Sending any request if at least one connection is
     -- completely dead would only produce unnecessary workload.
     --
-    timeout, err, err_uuid = replicaset_wait_connected_all(replicaset, timeout)
+    timeout, err, err_uuid = replicaset_wait_connected_all(replicaset, {
+        timeout = timeout,
+        except = except,
+    })
     if not timeout then
         goto fail
     end
@@ -656,6 +666,9 @@ local function replicaset_map_call(replicaset, func, args, opts)
     -- Send requests.
     --
     for uuid, replica in pairs(replicaset.replicas) do
+        if uuid == except then
+            goto next_call
+        end
         _, res, err = replica_call(replica, func, args, opts_call)
         if res == nil then
             err_uuid = uuid
@@ -663,6 +676,7 @@ local function replicaset_map_call(replicaset, func, args, opts)
         end
         futures[uuid] = res
         replica_count = replica_count + 1
+    ::next_call::
     end
     --
     -- Collect results
