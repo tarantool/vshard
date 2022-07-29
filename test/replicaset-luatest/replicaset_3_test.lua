@@ -43,7 +43,7 @@ test_group.test_wait_connected_all = function(g)
     --
     -- Basic.
     --
-    local timeout, err, err_uuid = rs:wait_connected_all(vtest.wait_timeout)
+    local timeout, err, err_uuid = rs:wait_connected_all(timeout_opts)
     t.assert_equals(err, nil)
     t.assert_equals(err_uuid, nil)
     t.assert_not_equals(timeout, nil)
@@ -57,15 +57,29 @@ test_group.test_wait_connected_all = function(g)
     end)
     rs.replicas[uuid_a].conn:close()
     rs.replicas[uuid_a].conn = nil
-    timeout, err, err_uuid = rs:wait_connected_all(small_timeout_opts.timeout)
+    timeout, err, err_uuid = rs:wait_connected_all(small_timeout_opts)
     t.assert_not_equals(err, nil)
     t.assert_equals(err_uuid, uuid_a)
     t.assert_equals(timeout, nil)
+    --
+    -- Exception.
+    --
+    timeout, err, err_uuid = rs:wait_connected_all({
+        timeout = vtest.wait_timeout,
+        except = uuid_a,
+    })
+    t.assert_equals(err, nil)
+    t.assert_equals(err_uuid, nil)
+    t.assert_not_equals(timeout, nil)
+    t.assert_le(timeout, vtest.wait_timeout)
+    --
+    -- Restore the connection - normal wait works again.
+    --
     g.replica_1_a:exec(function()
         box.cfg{listen = _G.test_listen}
         _G.test_listen = nil
     end)
-    timeout = rs:wait_connected_all(vtest.wait_timeout)
+    timeout = rs:wait_connected_all(timeout_opts)
     t.assert_not_equals(timeout, nil)
     --
     -- Another is dead.
@@ -76,7 +90,7 @@ test_group.test_wait_connected_all = function(g)
     end)
     rs.replicas[uuid_b].conn:close()
     rs.replicas[uuid_b].conn = nil
-    timeout, err, err_uuid = rs:wait_connected_all(small_timeout_opts.timeout)
+    timeout, err, err_uuid = rs:wait_connected_all(small_timeout_opts)
     t.assert_not_equals(err, nil)
     t.assert_equals(err_uuid, uuid_b)
     t.assert_equals(timeout, nil)
@@ -84,7 +98,7 @@ test_group.test_wait_connected_all = function(g)
     -- Connection established during the waiting is fine.
     --
     local f = fiber.new(function()
-        return rs:wait_connected_all(vtest.wait_timeout)
+        return rs:wait_connected_all(timeout_opts)
     end)
     f:set_joinable(true)
     fiber.sleep(0.01)
@@ -170,6 +184,18 @@ test_group.test_map_call = function(g)
         replica_1_a = true,
         replica_1_b = true,
         replica_1_c = true,
+    })
+    --
+    -- Option 'except'.
+    --
+    res, err = rs:map_call('test_err_a', {}, {
+        timeout = vtest.wait_timeout,
+        except = uuid_a,
+    })
+    t.assert_equals(err, nil)
+    t.assert_equals(res, {
+        [uuid_b] = {true},
+        [uuid_c] = {true},
     })
     --
     -- Cleanup.

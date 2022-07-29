@@ -2067,9 +2067,13 @@ end
 --
 local function gc_bucket_process_sent_one_batch_xc(batch)
     local rs = M.this_replicaset
-    local map_res, err = rs:map_call(
-        'vshard.storage._call', {'bucket_test_gc', batch},
-        {timeout = consts.GC_MAP_CALL_TIMEOUT})
+    local opts = {
+        timeout = consts.GC_MAP_CALL_TIMEOUT,
+        -- Skip self - local buckets are already validated.
+        except = M.this_replica.uuid,
+    }
+    local map_res, err = rs:map_call('vshard.storage._call',
+                                     {'bucket_test_gc', batch}, opts)
     while M.errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST do
         lfiber.sleep(0.01)
     end
