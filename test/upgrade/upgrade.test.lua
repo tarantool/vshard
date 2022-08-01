@@ -56,6 +56,7 @@ vshard.storage._call ~= nil
 vshard.storage._call('test_api', 1, 2, 3)
 
 test_run:switch('storage_1_b')
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
 box.space._schema:get({'vshard_version'})
 vshard.storage.internal.schema_current_version()
 vshard.storage.internal.schema_latest_version
