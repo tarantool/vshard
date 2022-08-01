@@ -33,14 +33,15 @@ _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
 
 _ = test_run:cmd('stop server storage_1_a')
 _ = test_run:cmd('start server storage_1_a')
+
 _ = test_run:switch('storage_1_a')
-vshard.storage.recovery_wakeup()
 _bucket = box.space._bucket
-_bucket:select{}
+while _bucket:count() ~= 0 do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
+
 _ = test_run:switch('storage_2_a')
 _bucket:select{}
+
 _ = test_run:switch('storage_1_a')
-while _bucket:count() ~= 0 do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
 
 --
 -- Test a case, when a bucket is sending on one replicaset,
