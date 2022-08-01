@@ -179,6 +179,9 @@ test_run:switch('storage_1_b')
  | ---
  | - true
  | ...
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+ | ---
+ | ...
 box.space._schema:get({'vshard_version'})
  | ---
  | - ['vshard_version', 0, 1, 16, 0]
