@@ -1090,15 +1090,9 @@ local function vclock_lesseq(vc1, vc2)
     return lesseq
 end
 
-local function sync(timeout)
-    if timeout ~= nil and type(timeout) ~= 'number' then
-        error('Usage: vshard.storage.sync([timeout: number])')
-    end
-
-    log.debug("Synchronizing replicaset...")
-    timeout = timeout or M.sync_timeout
+local function wait_lsn(timeout, interval)
     local vclock = box.info.vclock
-    local tstart = fiber_clock()
+    local deadline = fiber_clock() + timeout
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
@@ -1110,13 +1104,18 @@ local function sync(timeout)
             end
         end
         if done then
-            log.debug("Replicaset has been synchronized")
             return true
         end
-        lfiber.sleep(0.001)
-    until fiber_clock() > tstart + timeout
-    log.warn("Timed out during synchronizing replicaset")
+        lfiber.sleep(interval)
+    until fiber_clock() > deadline
     return nil, lerror.timeout()
+end
+
+local function sync(timeout)
+    if timeout ~= nil and type(timeout) ~= 'number' then
+        error('Usage: vshard.storage.sync([timeout: number])')
+    end
+    return wait_lsn(timeout or M.sync_timeout, 0.001)
 end
 
 --------------------------------------------------------------------------------
@@ -2066,14 +2065,24 @@ end
 -- were approved for deletion.
 --
 local function gc_bucket_process_sent_one_batch_xc(batch)
+    local ok, err = wait_lsn(consts.GC_WAIT_LSN_TIMEOUT,
+                             consts.GC_WAIT_LSN_STEP)
+    if not ok then
+        local msg = 'Failed to delete sent buckets - could not sync '..
+                    'with replicas'
+        local err2 = lerror.vshard(lerror.code.BUCKET_GC_ERROR, msg)
+        err2.prev = err
+        error(err2)
+    end
     local rs = M.this_replicaset
     local opts = {
         timeout = consts.GC_MAP_CALL_TIMEOUT,
         -- Skip self - local buckets are already validated.
         except = M.this_replica.uuid,
     }
-    local map_res, err = rs:map_call('vshard.storage._call',
-                                     {'bucket_test_gc', batch}, opts)
+    local map_res
+    map_res, err = rs:map_call('vshard.storage._call',
+                               {'bucket_test_gc', batch}, opts)
     while M.errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST do
         lfiber.sleep(0.01)
     end

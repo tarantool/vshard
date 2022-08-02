@@ -465,6 +465,60 @@ test_group.test_replica_ref_basic = function(g)
 end
 
 --
+-- Master can't delete buckets if has no connection to a replica.
+--
+test_group.test_replica_ref_bucket_wait_lsn = function(g)
+    --
+    -- Break replication.
+    --
+    g.replica_1_b:exec(function()
+        rawset(_G, 'old_replication', box.cfg.replication)
+        box.cfg{replication = {}}
+    end)
+    --
+    -- Make a SENT bucket. Its deletion won't work even though the replica has
+    -- no RO refs and vshard connection is alive.
+    --
+    local bid = g.replica_1_a:exec(function()
+        local bid = _G.get_first_bucket();
+        local _bucket = box.space._bucket
+        local s = box.space.test
+
+        s:replace{bid, bid}
+        _bucket:replace{bid, ivconst.BUCKET.SENT}
+        ivshard.storage.garbage_collector_wakeup()
+        ifiber.sleep(0.1)
+
+        ilt.assert_equals(s:get{bid}, {bid, bid})
+        local bucket = _bucket:get{bid}
+        ilt.assert_not_equals(bucket, nil)
+        ilt.assert_equals(bucket.status, ivconst.BUCKET.SENT)
+        return bid
+    end)
+    --
+    -- Restore the replication.
+    --
+    g.replica_1_b:exec(function()
+        box.cfg{replication = _G.old_replication}
+        _G.old_replication = nil
+    end)
+    --
+    -- Now the bucket can be deleted.
+    --
+    g.replica_1_a:exec(function(bid)
+        ivshard.storage.garbage_collector_wakeup()
+        _G.bucket_gc_wait()
+        ilt.assert_equals(box.space.test:count(), 0)
+        ilt.assert_equals(box.space._bucket:get{bid}, nil)
+        --
+        -- Cleanup.
+        --
+        ivshard.storage.bucket_force_create(bid)
+    end, {bid})
+    vtest.cluster_wait_vclock_all(g)
+end
+
+--
 -- If a bucket was changed while the master was asking replicas about buckets,
 -- then the GC can't safely delete the bucket. Shouldn't happen, but the code
 -- should be ready.
