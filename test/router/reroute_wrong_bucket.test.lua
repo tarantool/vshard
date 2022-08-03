@@ -77,7 +77,9 @@ test_run:cmd("setopt delimiter ''");
 f = fiber.create(do_call, 1)
 while not err do fiber.sleep(0.1) end
 test_run:grep_log('router_1', 'please update configuration')
-err
+assert(err.name == 'WRONG_BUCKET')
+assert(err.code == vshard.error.code.WRONG_BUCKET)
+assert(err.bucket_id == 100)
 
 --
 -- Now try again, but update configuration during call(). It must
