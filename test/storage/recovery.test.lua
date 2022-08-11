@@ -58,6 +58,7 @@ while _bucket:count() ~= 2 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) 
 -- must restore buckets, when the destination is up.
 --
 _ = test_run:switch('storage_1_a')
+vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _ = test_run:switch('storage_2_a')
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
