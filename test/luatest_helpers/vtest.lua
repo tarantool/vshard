@@ -7,7 +7,7 @@ local uuid = require('uuid')
 local yaml = require('yaml')
 local vrepset = require('vshard.replicaset')
 
-local wait_timeout = 120
+local wait_timeout = 50
 -- Use it in busy-loops like `while !cond do fiber.sleep(busy_step) end`.
 local busy_step = 0.005
 local uuid_idx = 1
