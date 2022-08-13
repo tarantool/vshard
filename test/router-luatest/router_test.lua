@@ -545,3 +545,34 @@ g.test_enable_disable = function(g)
     -- we don't want this server to interfere with subsequent tests
     g.router_1:drop()
 end
+
+g.test_explicit_fiber_kill = function(g)
+    local bids = vtest.cluster_exec_each_master(g, function()
+        return _G.get_first_bucket()
+    end)
+
+    -- Kill worker fibers of connections to masters
+    g.router:exec(function()
+        for _, rs in ipairs(ivshard.router.static.replicasets) do
+            -- Explicitly kill the connection's worker fiber.
+            -- Callback for pushes is executed inside this fiber.
+            pcall(function()
+                rs.master.conn:eval([[
+                    box.session.push(nil)
+                ]], {}, {on_push = function()
+                    ifiber.self():cancel()
+                end})
+            end)
+        end
+    end)
+
+    -- Check that the replicaset is still accessible
+    g.router:exec(function(bids)
+        for _, bid in ipairs(bids) do
+            local res, err = ivshard.router.callrw(bid, 'echo', {1},
+                                                   {timeout = iwait_timeout})
+            ilt.assert(res, 1)
+            ilt.assert(err, nil)
+        end
+    end, {bids})
+end

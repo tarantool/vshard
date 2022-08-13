@@ -145,6 +145,40 @@ local function netbox_wait_connected(conn, timeout)
 end
 
 --
+-- Check if the connection is dead and it won't be restored automatically.
+-- Even though replicaset's connections are initialized with the option
+-- 'reconnect_after', there's cases, when no reconnect will be done (e.g.
+-- if the conn was explicitly cancelled or the connection's worker fiber
+-- was killed). In these situations we need to reestablish it manually as
+-- the missing connection to some replicaset is a critical problem which
+-- leads to the inability of the user to access some part of a data via the
+-- router.
+--
+-- Note: the function expects the conn to be non-nil.
+--
+local function netbox_is_conn_dead(conn)
+    -- Fast path - conn is almost always 'active'.
+    if conn.state == 'active' then
+        return false
+    end
+    if conn.state == 'error' or conn.state == 'closed' then
+        return true
+    end
+    if conn.state ~= 'error_reconnect' then
+        -- The connection is fetching schema or doing auth, which
+        -- means it is not dead and shoudn't be reinitialized.
+        return false
+    end
+    if not conn._fiber then
+        -- The fiber field is not present in old netbox, which correctly
+        -- reports state as 'error' when its fiber got killed. It would
+        -- be filtered out above then.
+        return false
+    end
+    return conn._fiber:status() ~= "dead"
+end
+
+--
 -- Check if the replica is not in backoff. It also serves as an update - if the
 -- replica still has an old backoff timestamp, it is cleared. This way of
 -- backoff update does not require any fibers to perform background updates.
@@ -170,7 +204,7 @@ end
 --
 local function replicaset_connect_to_replica(replicaset, replica)
     local conn = replica.conn
-    if not conn or conn.state == 'closed' then
+    if not conn or netbox_is_conn_dead(conn) then
         conn = netbox.connect(replica.uri, {
             reconnect_after = consts.RECONNECT_TIMEOUT,
             wait_connected = false
