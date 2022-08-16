@@ -97,3 +97,29 @@ test_group.test_sharded_spaces = function(g)
         s1:drop()
     end, {g.params.engine})
 end
+
+test_group.test_simultaneous_cfg = function(g)
+    g.replica_1_a:exec(function(cfg)
+        ivshard.storage.internal.errinj.ERRINJ_CFG_DELAY = true
+        rawset(_G, 'fiber_cfg', ifiber.new(ivshard.storage.cfg, cfg, _G.get_uuid()))
+        _G.fiber_cfg:set_joinable(true)
+    end, {global_cfg})
+
+    local function storage_cfg()
+        return g.replica_1_a:exec(function(cfg)
+            local _, err = pcall(ivshard.storage.cfg, cfg, _G.get_uuid())
+            return err
+        end, {global_cfg})
+    end
+
+    local err = storage_cfg()
+    t.assert_str_contains(err.message, 'storage is in progress')
+
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_CFG_DELAY = false
+        _G.fiber_cfg:join()
+    end)
+
+    err = storage_cfg()
+    t.assert_equals(err, nil)
+end
