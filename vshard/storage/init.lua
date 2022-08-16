@@ -137,6 +137,8 @@ if not M then
         -- help routers find a new location for sent and deleted buckets without
         -- whole cluster scan.
         route_map = {},
+        -- Flag whether vshard.storage.cfg() is in progress.
+        is_cfg_in_progress = false,
         -- Flag whether vshard.storage.cfg() is finished.
         is_configured = false,
         -- Flag whether box.info.status is acceptable. For instance, 'loading'
@@ -3184,6 +3186,19 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     collectgarbage()
 end
 
+local function storage_cfg_fiber_safe(cfg, this_replica_uuid, is_reload)
+    if M.is_cfg_in_progress then
+        return error(lerror.vshard(lerror.code.STORAGE_CFG_IS_IN_PROGRESS))
+    end
+
+    M.is_cfg_in_progress = true
+    local ok, err = pcall(storage_cfg, cfg, this_replica_uuid, is_reload)
+    M.is_cfg_in_progress = false
+    if not ok then
+        error(err)
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Monitoring
 --------------------------------------------------------------------------------
@@ -3465,7 +3480,7 @@ if not rawget(_G, MODULE_INTERNALS) then
 else
     reload_evolution.upgrade(M)
     if M.current_cfg then
-        storage_cfg(M.current_cfg, M.this_replica.uuid, true)
+        storage_cfg_fiber_safe(M.current_cfg, M.this_replica.uuid, true)
     end
     M.module_version = M.module_version + 1
     -- Background fibers could sleep waiting for bucket changes.
@@ -3563,7 +3578,7 @@ return {
     call = storage_make_api(storage_call),
     _call = storage_make_api(service_call),
     sync = storage_make_api(sync),
-    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
+    cfg = function(cfg, uuid) return storage_cfg_fiber_safe(cfg, uuid, false) end,
     on_master_enable = storage_make_api(on_master_enable),
     on_master_disable = storage_make_api(on_master_disable),
     enable = storage_enable,

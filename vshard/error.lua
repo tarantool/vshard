@@ -188,6 +188,10 @@ local error_message_template = {
         msg = 'Error during bucket GC: %s',
         args = {'reason'},
     },
+    [37] = {
+        name = 'STORAGE_CFG_IS_IN_PROGRESS',
+        msg = 'Configuration of the storage is in progress',
+    },
 }
 
 --
