@@ -192,6 +192,11 @@ local error_message_template = {
         name = 'STORAGE_CFG_IS_IN_PROGRESS',
         msg = 'Configuration of the storage is in progress',
     },
+    [38] = {
+        name = 'ROUTER_CFG_IS_IN_PROGRESS',
+        msg = 'Configuration of the router with name %s is in progress',
+        args = {'name'}
+    },
 }
 
 --
