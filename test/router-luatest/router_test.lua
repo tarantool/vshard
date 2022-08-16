@@ -543,7 +543,7 @@ g.test_enable_disable = function(g)
     t.assert_equals(ret1, 1)
 
     -- we don't want this server to interfere with subsequent tests
-    g.router_1:drop()
+    vtest.drop_instance(g, router)
 end
 
 g.test_explicit_fiber_kill = function(g)
