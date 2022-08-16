@@ -41,6 +41,13 @@ local function callrw_session_set(bid, key, value)
                                  {timeout = iwait_timeout})
 end
 
+-- Check whether errors are the same and their messages contain str
+local function assert_errors_equals(err1, err2, str)
+    t.assert_equals(err1, err2)
+    t.assert_not_equals(err1, nil)
+    t.assert_str_contains(err1.message, str)
+end
+
 g.before_all(function()
     vtest.cluster_new(g, global_cfg)
 
@@ -468,13 +475,6 @@ g.test_enable_disable = function(g)
         box.cfg = function(...) return _G.old_box_cfg(...) end
     end)
 
-    -- check whether errors are not nil and their messages are equal to str
-    local assert_errors_equals = function(err1, err2, str)
-        t.assert(err1 and err2)
-        t.assert_equals(err1.message, err2.message)
-        t.assert_str_contains(err1.message, str)
-    end
-
     local err1, err2 = router:exec(function()
         rawset(_G, 'static_router', ivshard.router.internal.routers._static_router)
         rawset(_G, 'new_router', ivshard.router.internal.routers.new_router)
@@ -575,4 +575,46 @@ g.test_explicit_fiber_kill = function(g)
             ilt.assert(err, nil)
         end
     end, {bids})
+end
+
+g.test_simultaneous_cfg = function()
+    local router = vtest.router_new(g, 'router_1')
+
+    router:exec(function(cfg)
+        ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
+        rawset(_G, 'fiber_cfg_static', ifiber.new(ivshard.router.cfg, cfg))
+        rawset(_G, 'fiber_cfg_new', ifiber.new(ivshard.router.new,
+                                               'new_router', cfg))
+        _G.fiber_cfg_static:set_joinable(true)
+        _G.fiber_cfg_new:set_joinable(true)
+    end, {global_cfg})
+
+    local function routers_cfg()
+        return router:exec(function(cfg)
+            local static_router = ivshard.router.internal.routers._static_router
+            local new_router = ivshard.router.internal.routers.new_router
+            local _, err1 = pcall(ivshard.router.cfg, cfg)
+            local _, err2 = pcall(static_router.cfg, static_router, cfg)
+            local _, err3 = pcall(new_router.cfg, new_router, cfg)
+            return err1, err2, err3
+        end, {global_cfg})
+    end
+
+    local err1, err2, err3 = routers_cfg()
+    assert_errors_equals(err1, err2, '_static_router is in progress')
+    t.assert_str_contains(err3.message, 'new_router is in progress')
+
+    router:exec(function()
+        ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = false
+        _G.fiber_cfg_static:join()
+        _G.fiber_cfg_new:join()
+    end)
+
+    -- As soon as configuration is done router's reconfiguration is allowed
+    err1, err2, err3 = routers_cfg()
+    t.assert_equals(err1, err2)
+    t.assert_equals(err2, err3)
+    t.assert_equals(err1, nil)
+
+    vtest.drop_instance(g, router)
 end

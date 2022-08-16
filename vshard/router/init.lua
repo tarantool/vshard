@@ -98,6 +98,8 @@ local ROUTER_TEMPLATE = {
         -- when no timeout is specified.
         --
         sync_timeout = consts.DEFAULT_SYNC_TIMEOUT,
+        -- Flag whether router_cfg() is in progress.
+        is_cfg_in_progress = false,
         -- Flag whether router_cfg() is finished.
         is_configured = false,
         -- Flag whether the instance is enabled manually. It is true by default
@@ -1267,6 +1269,20 @@ local function router_cfg(router, cfg, is_reload)
     router.is_configured = true
 end
 
+local function router_cfg_fiber_safe(router, cfg, is_reload)
+    if router.is_cfg_in_progress then
+        error(lerror.vshard(lerror.code.ROUTER_CFG_IS_IN_PROGRESS, router.name))
+    end
+
+    router.is_cfg_in_progress = true
+    local ok, err = pcall(router_cfg, router, cfg, is_reload)
+    router.is_cfg_in_progress = false
+    if not ok then
+        error(err)
+    end
+end
+
+
 --------------------------------------------------------------------------------
 -- Bootstrap
 --------------------------------------------------------------------------------
@@ -1654,7 +1670,7 @@ end
 
 local router_mt = {
     __index = {
-        cfg = function(router, cfg) return router_cfg(router, cfg, false) end,
+        cfg = function(router, cfg) return router_cfg_fiber_safe(router, cfg, false) end,
         info = router_make_api(router_info),
         buckets_info = router_make_api(router_buckets_info),
         call = router_make_api(router_call),
@@ -1726,7 +1742,7 @@ local function router_new(name, cfg)
     router.api_call_cache = router_api_call_unsafe
     router.name = name
     M.routers[name] = router
-    local ok, err = pcall(router_cfg, router, cfg)
+    local ok, err = pcall(router_cfg_fiber_safe, router, cfg)
     if not ok then
         M.routers[name] = nil
         error(err)
@@ -1739,10 +1755,8 @@ end
 -- static `vshard.router.cfg()` API.
 --
 local function legacy_cfg(cfg)
-    if M.static_router then
-        -- Reconfigure.
-        router_cfg(M.static_router, cfg, false)
-    else
+    local router = M.routers[STATIC_ROUTER_NAME]
+    if not router then
         -- Create new static instance.
         local router, err = router_new(STATIC_ROUTER_NAME, cfg)
         if router then
@@ -1752,6 +1766,9 @@ local function legacy_cfg(cfg)
         else
             return nil, err
         end
+    else
+        -- Reconfigure
+        router_cfg_fiber_safe(router, cfg, false)
     end
 end
 
@@ -1773,7 +1790,7 @@ else
         M.ref_id = 0
     end
     for _, router in pairs(M.routers) do
-        router_cfg(router, router.current_cfg, true)
+        router_cfg_fiber_safe(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
     if M.static_router then
