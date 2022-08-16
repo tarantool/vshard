@@ -592,6 +592,15 @@ local function router_disconnect(router)
     end)
 end
 
+local function drop_instance(g, instance)
+    if g.cluster then
+        g.cluster:delete_server(instance.id)
+    end
+
+    instance:drop()
+    g[instance.alias] = nil
+end
+
 return {
     error_is_timeout = error_is_timeout,
     config_new = config_new,
@@ -615,4 +624,5 @@ return {
     uuid_from_int = uuid_from_int,
     wait_timeout = wait_timeout,
     busy_step = busy_step,
+    drop_instance = drop_instance,
 }
