@@ -1093,17 +1093,27 @@ local function vclock_lesseq(vc1, vc2)
 end
 
 local function wait_lsn(timeout, interval)
-    local vclock = box.info.vclock
+    local info = box.info
+    local current_id = info.id
+    local vclock = info.vclock
     local deadline = fiber_clock() + timeout
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
+            -- We should not check the current instance as there's
+            -- no downstream. Moreover, it's not guaranteed that the
+            -- first replica is the same as the current one, so ids
+            -- have to be compared.
+            if replica.id == current_id then
+                goto continue
+            end
             local down = replica.downstream
-            if down and (down.status == 'stopped' or
-                         not vclock_lesseq(vclock, down.vclock)) then
+            if not down or (down.status == 'stopped' or
+                            not vclock_lesseq(vclock, down.vclock)) then
                 done = false
                 break
             end
+            ::continue::
         end
         if done then
             return true
