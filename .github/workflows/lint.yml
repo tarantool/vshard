@@ -1,0 +1,57 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  luacheck:
+    # We want to run on external PRs, but not on our own internal
+    # PRs as they'll be run by the push to the branch.
+    #
+    # The main trick is described here:
+    # https://github.com/Dart-Code/Dart-Code/pull/2375
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install deps
+        run: |
+          sudo apt-get -y -f install lua5.1 luarocks
+          sudo luarocks install luacheck 0.26.1
+      - name: Luacheck
+        run: luacheck --codes --config .luacheckrc .
+
+  checkpatch:
+    if: github.event_name == 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install deps
+        uses: actions/checkout@v2
+        with:
+          repository: tarantool/checkpatch
+          path: 'checkpatch'
+
+      - name: Check patch
+        run: |
+          checkpatch/checkpatch.pl --color=always --show-types \
+            --ignore NO_CHANGELOG \
+            --git HEAD~${{ github.event.pull_request.commits }}..HEAD
