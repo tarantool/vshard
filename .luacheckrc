@@ -31,6 +31,7 @@ local test_rules = {
         '112/ivconst',
         '113/ivconst',
         '113/iverror',
+        '112/ivshard',
         '113/ivshard',
         '113/ivtest',
         '113/ivutil',
@@ -40,3 +41,9 @@ local test_rules = {
 
 files['test/**/*_test.lua'] = test_rules
 files['test/luatest_helpers/vtest.lua'] = test_rules
+files['test/unit-luatest/version_test.lua'] = {
+    ignore = {
+        -- Replace comparison sign
+        '581'
+    }
+}
