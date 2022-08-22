@@ -22,21 +22,21 @@ jobs:
           - '2.7'
           - '2.8'
           - '2.10'
-          - 'debug-master'
+          - 'release-master'
 
     env:
-      TNT_DEBUG_PATH: /home/runner/tnt-debug
+      TNT_RELEASE_PATH: /home/runner/tnt-release
 
     runs-on: ubuntu-latest
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'debug') != true
+        if: startsWith(matrix.tarantool, 'release') != true
         uses: tarantool/setup-tarantool@v1
         with:
           tarantool-version: ${{ matrix.tarantool }}
 
       - name: Create variables for Tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'debug')
+        if: startsWith(matrix.tarantool, 'release')
         run: |
           branch=$(echo ${{ matrix.tarantool }} | cut -d- -f2)
           commit_hash=$(git ls-remote https://github.com/tarantool/tarantool.git --branch ${branch} | head -c 8)
@@ -45,15 +45,15 @@ jobs:
         shell: bash
 
       - name: Cache tarantool build
-        if: startsWith(matrix.tarantool, 'debug')
-        id: cache-tnt-debug
+        if: startsWith(matrix.tarantool, 'release')
+        id: cache-tnt-release
         uses: actions/cache@v3
         with:
-          path: ${{ env.TNT_DEBUG_PATH }}
+          path: ${{ env.TNT_RELEASE_PATH}}
           key: cache-tnt-${{ matrix.tarantool }}${{ env.VERSION_POSTFIX }}
 
       - name: Clone tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'debug') && steps.cache-tnt-debug.outputs.cache-hit != 'true'
+        if: startsWith(matrix.tarantool, 'release') && steps.cache-tnt-release.outputs.cache-hit != 'true'
         uses: actions/checkout@v3
         with:
           repository: tarantool/tarantool
@@ -63,19 +63,19 @@ jobs:
           submodules: true
 
       - name: Build tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'debug') && steps.cache-tnt-debug.outputs.cache-hit != 'true'
+        if: startsWith(matrix.tarantool, 'release') && steps.cache-tnt-release.outputs.cache-hit != 'true'
         run: |
           sudo apt-get -y install zlib1g-dev libreadline-dev libncurses5-dev \
             libicu-dev python3-yaml python3-six python3-gevent
           cd ${GITHUB_WORKSPACE}/tarantool
           mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_DIST=ON
-          make
-          make DESTDIR=${TNT_DEBUG_PATH} install
+          cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_DIST=ON
+          make && make DESTDIR=${TNT_RELEASE_PATH} install
 
       - name: Install tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'debug')
-        run: sudo cp -rvP ${TNT_DEBUG_PATH}/usr/local/* /usr/local/
+        if: startsWith(matrix.tarantool, 'release')
+        # Workaround as actions/cache cannot restore data to /usr/local
+        run: sudo cp -rvP ${TNT_RELEASE_PATH}/usr/local/* /usr/local/
 
       - name: Clone the module
         uses: actions/checkout@v3
