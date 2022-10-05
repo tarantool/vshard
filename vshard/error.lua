@@ -109,7 +109,7 @@ local error_message_template = {
     [21] = {
         name = 'ROUTER_ALREADY_EXISTS',
         msg = 'Router with name %s already exists',
-        args = {'name'},
+        args = {'router_name'},
     },
     [22] = {
         name = 'BUCKET_IS_LOCKED',
@@ -195,7 +195,7 @@ local error_message_template = {
     [38] = {
         name = 'ROUTER_CFG_IS_IN_PROGRESS',
         msg = 'Configuration of the router with name %s is in progress',
-        args = {'name'}
+        args = {'router_name'}
     },
 }
 

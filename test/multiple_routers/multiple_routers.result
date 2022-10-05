@@ -176,10 +176,11 @@ util = require('util')
 util.check_error(vshard.router.new, 'router_2', configs.cfg_2)
 ---
 - null
-- type: ShardingError
-  code: 21
+- code: 21
+  type: ShardingError
   name: ROUTER_ALREADY_EXISTS
   message: Router with name router_2 already exists
+  router_name: router_2
 ...
 -- Reload router module.
 _, old_rs_1 = next(vshard.router.static.replicasets)
