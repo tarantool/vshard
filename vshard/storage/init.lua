@@ -36,6 +36,7 @@ local lsched = require('vshard.storage.sched')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
+local BSTATE = consts.BUCKET
 local bucket_ref_new
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -99,6 +100,9 @@ if not M then
         -- References to a parent replicaset and self in it.
         this_replicaset = nil,
         this_replica = nil,
+        -- Control whether _bucket changes should be validated and rejected if
+        -- are invalid.
+        is_bucket_protected = true,
         --
         -- Incremental generation of the _bucket space. It is
         -- incremented on each _bucket change and is used to
@@ -108,16 +112,16 @@ if not M then
         -- Condition variable fired on generation update.
         bucket_generation_cond = lfiber.cond(),
         --
-        -- Reference to the function used as on_replace trigger on
-        -- _bucket space. It is used to replace the trigger with
-        -- a new function when reload happens. It is kept
-        -- explicitly because the old function is deleted on
-        -- reload from the global namespace. On the other hand, it
-        -- is still stored in _bucket:on_replace() somewhere, but
-        -- it is not known where. The only 100% way to be able to
-        -- replace the old function is to keep its reference.
+        -- References to the functions used as on_replace triggers on spaces.
+        -- They are used to replace the triggers with new functions when reload
+        -- happens. They are kept explicitly because the old functions are
+        -- deleted on reload from the global namespace. On the other hand, they
+        -- are still stored in space:on_replace() somewhere, but it is not known
+        -- where. The only 100% way to be able to replace the old functions is
+        -- to keep their references.
         --
         bucket_on_replace = nil,
+        bucket_on_truncate = nil,
         --
         -- Reference to the function used as on_replace trigger on
         -- _schema space. Saved explicitly by the same reason as
@@ -217,6 +221,9 @@ else
     if M.bucket_gc_count == nil then
         M.bucket_gc_count = 0
     end
+    if M.is_bucket_protected == nil then
+        M.is_bucket_protected = true
+    end
 end
 
 --
@@ -303,6 +310,20 @@ local function bucket_generation_increment()
     M.bucket_generation_cond:broadcast()
 end
 
+--
+-- Handle a bad update of _bucket space.
+--
+local function bucket_reject_update(bid, message, ...)
+    if not M.is_bucket_protected then
+        return
+    end
+    error(lerror.vshard(lerror.code.BUCKET_INVALID_UPDATE, bid,
+                        message:format(...)))
+end
+
+--
+-- Make _bucket-related data up to date with the committed changes.
+--
 local function bucket_commit_update(bucket)
     local status = bucket.status
     local bid = bucket.id
@@ -340,6 +361,47 @@ local function bucket_commit_delete(bucket)
 end
 
 --
+-- Validate whether _bucket update is possible. Bad ones need to be rejected for
+-- the sake of keeping data consistency. Ideally it should never throw. But
+-- there sure are bugs and this trigger should help to catch them from time to
+-- time.
+--
+local function bucket_prepare_update(old_bucket, new_bucket)
+    local new_status = new_bucket.status
+    local bid = new_bucket.id
+    local ref = M.bucket_refs[bid]
+    if old_bucket == nil and ref ~= nil then
+        bucket_reject_update(bid, "new bucket can't have a ref object")
+    end
+    if new_status == BSTATE.PINNED or new_status == BSTATE.ACTIVE then
+        return
+    end
+    if new_status == BSTATE.SENDING or new_status == BSTATE.SENT then
+        if ref ~= nil and ref.rw > 0 then
+            bucket_reject_update(bid, "'%s' bucket can't have rw refs",
+                                 new_status)
+        end
+        return
+    end
+    if new_status == BSTATE.GARBAGE or new_status == BSTATE.RECEIVING then
+        if ref ~= nil and (ref.rw > 0 or ref.ro > 0) then
+            bucket_reject_update(bid, "'%s' bucket can't have any refs",
+                                 new_status)
+        end
+        return
+    end
+    bucket_reject_update(bid, "unknown bucket status: '%s'", new_status)
+end
+
+local function bucket_prepare_delete(bucket)
+    local bid = bucket.id
+    local ref = M.bucket_refs[bid]
+    if ref ~= nil and (ref.ro > 0 or ref.rw > 0) then
+        bucket_reject_update(bid, "can't delete a bucket with refs")
+    end
+end
+
+--
 -- Handle commit into _bucket space. The trigger not only processes normal
 -- changes, but also tries to repair abnormal ones into at least some detectable
 -- state. Throwing an error here is too late, would lead to a crash.
@@ -357,7 +419,13 @@ local function bucket_on_commit_f(row_pairs)
     bucket_generation_increment()
 end
 
-local function bucket_on_replace_f()
+local function bucket_on_replace_f(old_bucket, new_bucket)
+    if new_bucket == nil then
+        assert(old_bucket ~= nil)
+        bucket_prepare_delete(old_bucket)
+    else
+        bucket_prepare_update(old_bucket, new_bucket)
+    end
     local f = bucket_on_commit_f
     local f_del = f
     -- One transaction can affect many buckets. Do not create a trigger for each
@@ -371,6 +439,44 @@ local function bucket_on_replace_f()
         f_del = nil
     end
     box.on_rollback(f, f_del)
+end
+
+--
+-- Make _bucket-related data up to date with the committed changes.
+--
+local function bucket_on_truncate_commit_f(row_pairs)
+    local bucket_space_id = box.space._bucket.id
+    local truncate_space_id = box.space._truncate.id
+    for _, _, new, space_id in row_pairs() do
+        if space_id == truncate_space_id and new ~= nil and
+           new[1] == bucket_space_id then
+            M.bucket_refs = {}
+            bucket_generation_increment()
+        end
+    end
+end
+
+--
+-- Validate truncation of _bucket. It works not via _bucket triggers, have to
+-- attach to _truncate space.
+--
+local function bucket_on_truncate_f(_, new_tuple)
+    if new_tuple[1] ~= box.space._bucket.id then
+        return
+    end
+    -- There is no a valid truncation of _bucket. Because it would require to
+    -- walk all the ref objects and check that they are all empty. There might
+    -- be millions. Yielding during iteration isn't possible - it would break
+    -- truncation without MVCC. Easier to just ban the truncation.
+    if M.is_bucket_protected then
+        box.error(box.error.UNSUPPORTED, 'vshard', '_bucket truncation')
+        return
+    end
+    -- Same hack as with _bucket commit trigger.
+    local f = bucket_on_truncate_commit_f
+    if not pcall(box.on_commit, f, f) then
+        box.on_commit(f)
+    end
 end
 
 local function bucket_generation_wait(timeout)
@@ -504,6 +610,18 @@ local function schema_install_triggers()
     end
     _bucket:on_replace(bucket_on_replace_f)
     M.bucket_on_replace = bucket_on_replace_f
+
+    local _truncate = box.space._truncate
+    if M.bucket_on_truncate then
+        local ok, err = pcall(_truncate.on_replace, _truncate, nil,
+            M.bucket_on_truncate)
+        if not ok then
+            log.warn('Could not drop old trigger from '..
+                     '_truncate: %s', err)
+        end
+    end
+    _truncate:on_replace(bucket_on_truncate_f)
+    M.bucket_on_truncate = bucket_on_truncate_f
 end
 
 local function schema_install_on_replace(_, new)

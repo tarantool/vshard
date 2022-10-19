@@ -114,12 +114,35 @@ test_run:switch('box_2_a')
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---
 ...
+test_run:switch('default')
+---
+- true
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
 test_run:switch('box_1_a')
 ---
 - true
 ...
 _bucket:truncate()
 ---
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:wait_lsn('box_1_b', 'box_1_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+---
+...
+test_run:switch('box_1_a')
+---
+- true
 ...
 vshard.storage.rebalancer_enable()
 ---
@@ -168,11 +191,30 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 ---
 ...
+test_run:switch('default')
+---
+- true
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
 test_run:switch('box_2_a')
 ---
 - true
 ...
 _bucket:truncate()
+---
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:wait_lsn('box_2_b', 'box_2_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
 ---
 ...
 test_run:switch('box_1_a')
@@ -479,8 +521,8 @@ test_run:cmd("setopt delimiter ';'")
 - true
 ...
 while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 200 do
-	fiber.sleep(0.1)
-	vshard.storage.rebalancer_wakeup()
+    fiber.sleep(0.1)
+    vshard.storage.rebalancer_wakeup()
 end;
 ---
 ...

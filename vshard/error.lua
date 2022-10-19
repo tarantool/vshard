@@ -197,6 +197,11 @@ local error_message_template = {
         msg = 'Configuration of the router with name %s is in progress',
         args = {'router_name'}
     },
+    [39] = {
+        name = 'BUCKET_INVALID_UPDATE',
+        msg = 'Bucket %s update is invalid: %s',
+        args = {'bucket_id', 'reason'},
+    },
 }
 
 --

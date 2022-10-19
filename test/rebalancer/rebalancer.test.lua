@@ -66,8 +66,17 @@ vshard.storage.rebalancer_disable()
 test_run:switch('box_2_a')
 for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
 
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
 test_run:switch('box_1_a')
 _bucket:truncate()
+test_run:switch('default')
+test_run:wait_lsn('box_1_b', 'box_1_a')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+
+test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
 vshard.storage.rebalancer_wakeup()
 wait_rebalancer_state("Rebalance routes are sent", test_run)
@@ -90,8 +99,17 @@ cfg.rebalancer_disbalance_threshold = 300
 vshard.storage.rebalancer_disable()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
 test_run:switch('box_2_a')
 _bucket:truncate()
+test_run:switch('default')
+test_run:wait_lsn('box_2_b', 'box_2_a')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+
 test_run:switch('box_1_a')
 -- The cluster is balanced with maximal disbalance = 100% < 300%,
 -- set above.
@@ -222,8 +240,8 @@ vshard.storage.rebalancer_wakeup()
 _bucket = box.space._bucket
 test_run:cmd("setopt delimiter ';'")
 while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 200 do
-	fiber.sleep(0.1)
-	vshard.storage.rebalancer_wakeup()
+    fiber.sleep(0.1)
+    vshard.storage.rebalancer_wakeup()
 end;
 test_run:cmd("setopt delimiter ''");
 
