@@ -63,6 +63,10 @@ local function bucket_check_no_ref(bid)
     ilt.assert_equals(ivshard.storage.internal.bucket_refs[bid], nil)
 end
 
+local function bucket_set_protection(value)
+    ivshard.storage.internal.is_bucket_protected = value
+end
+
 local function call_long_start(storage, bid, mode, err)
      local f = fiber.new(storage.exec, storage, function(bid, mode, err)
         rawset(_G, 'do_wait', true)
@@ -107,9 +111,12 @@ local function test_storage_callro_refro_loss(g, user_err)
     -- Start an RO request on the replica.
     local f = call_long_start(rep_b, bid, 'read', user_err)
 
-    -- The bucket becomes deleted on the master due to any reason.
+    -- The bucket becomes deleted on the master due to any reason. Need to pause
+    -- the protection. Otherwise the replica would reject the bucket drop.
+    rep_b:exec(bucket_set_protection, {false})
     rep_a:exec(bucket_force_drop, {bid})
     rep_b:wait_vclock_of(rep_a)
+    rep_b:exec(bucket_set_protection, {true})
     rep_b:exec(bucket_check_no_ref, {bid})
 
     -- The replica should fail to complete the RO request.
@@ -158,9 +165,13 @@ local function test_storage_callro_refrw_loss(g, user_err)
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
 
-    -- The bucket becomes deleted on the new master due to any reason.
+    -- The bucket becomes deleted on the new master due to any reason. Need to
+    -- pause the protection. Otherwise the old master would reject the bucket
+    -- drop.
+    rep_a:exec(bucket_set_protection, {false})
     rep_b:exec(bucket_force_drop, {bid})
     rep_a:wait_vclock_of(rep_a)
+    rep_a:exec(bucket_set_protection, {true})
     rep_a:exec(bucket_check_no_ref, {bid})
 
     -- The old master should fail to complete the RW request.
