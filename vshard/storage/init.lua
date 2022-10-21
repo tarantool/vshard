@@ -402,13 +402,19 @@ local function bucket_prepare_delete(bucket)
 end
 
 --
--- Handle commit into _bucket space. The trigger not only processes normal
--- changes, but also tries to repair abnormal ones into at least some detectable
--- state. Throwing an error here is too late, would lead to a crash.
+-- Handle commit or rollback in _bucket space. The trigger not only processes
+-- normal changes, but also tries to repair abnormal ones into at least some
+-- detectable state. Throwing an error here is too late, would lead to a crash.
 --
-local function bucket_on_commit_f(row_pairs)
+local function bucket_on_commit_or_rollback_f(row_pairs, is_commit)
     local bucket_space_id = box.space._bucket.id
-    for _, old, new, space_id in row_pairs() do
+    for _, t1, t2, space_id in row_pairs() do
+        local old, new
+        if is_commit then
+            old, new = t1, t2
+        else
+            old, new = t2, t1
+        end
         assert(space_id == bucket_space_id)
         if new ~= nil then
             bucket_commit_update(new)
@@ -419,6 +425,14 @@ local function bucket_on_commit_f(row_pairs)
     bucket_generation_increment()
 end
 
+local function bucket_on_commit_f(row_pairs)
+    bucket_on_commit_or_rollback_f(row_pairs, true)
+end
+
+local function bucket_on_rollback_f(row_pairs)
+    bucket_on_commit_or_rollback_f(row_pairs, false)
+end
+
 local function bucket_on_replace_f(old_bucket, new_bucket)
     if new_bucket == nil then
         assert(old_bucket ~= nil)
@@ -426,19 +440,17 @@ local function bucket_on_replace_f(old_bucket, new_bucket)
     else
         bucket_prepare_update(old_bucket, new_bucket)
     end
-    local f = bucket_on_commit_f
-    local f_del = f
+    local f_commit = bucket_on_commit_f
     -- One transaction can affect many buckets. Do not create a trigger for each
     -- bucket. Instead create it only first time. For that the trigger replaces
     -- itself when installed not first time.
     -- Although in case of hot reload during changing _bucket the function
     -- pointer will change and more than one trigger could be installed.
     -- Shouldn't matter anyway.
-    if not pcall(box.on_commit, f, f) then
-        box.on_commit(f)
-        f_del = nil
+    if not pcall(box.on_commit, f_commit, f_commit) then
+        box.on_commit(f_commit)
+        box.on_rollback(bucket_on_rollback_f)
     end
-    box.on_rollback(f, f_del)
 end
 
 --
