@@ -259,6 +259,40 @@ test_group.test_bucket_space_commit_trigger_receiving = function(g)
     rep_b:wait_vclock_of(rep_a)
 end
 
+test_group.test_bucket_space_rollback_trigger = function(g)
+    local rep_a = g.replica_1_a
+    local rep_b = g.replica_1_b
+    local bid = vtest.storage_first_bucket(rep_a)
+    rep_a:exec(bucket_refro, {bid})
+    rep_a:exec(bucket_unrefro, {bid})
+    rep_a:exec(bucket_check_has_ref, {bid})
+    rep_a:exec(function(bid)
+        --
+        -- Rollback won't do anything if no manual changes were made to refs.
+        --
+        box.begin()
+        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        local ref = ivshard.storage.internal.bucket_refs[bid]
+        local old_ro_lock = ref.ro_lock
+        box.rollback()
+        -- Wasn't locked because it wasn't committed.
+        ilt.assert(not old_ro_lock)
+        -- Should stay not locked then.
+        ilt.assert(not ref.ro_lock)
+        --
+        -- Rollback fixes refs like commit does, if manual changes were made.
+        --
+        box.begin()
+        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        ref.ro_lock = true
+        box.rollback()
+        -- Restored. In other words, the _bucket transactions include some of
+        -- the ref object changes. They are committed and rolled back together.
+        ilt.assert(not ref.ro_lock)
+    end, {bid})
+    rep_b:wait_vclock_of(rep_a)
+end
+
 --
 -- Protection against illegal changes in _bucket.
 --
