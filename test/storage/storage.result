@@ -955,8 +955,7 @@ vshard.storage._call('info')
 _ = test_run:cmd('stop server storage_1_a')
 ---
 ...
-_ = test_run:cmd('start server storage_1_a with wait=False, '..                 \
-                 'args="boot_before_cfg"')
+_ = test_run:cmd('start server storage_1_a with args="boot_before_cfg"')
 ---
 ...
 _ = test_run:switch('storage_1_a')
