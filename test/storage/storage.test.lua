@@ -303,8 +303,7 @@ vshard.storage._call('info')
 -- gh-123, gh-298: storage auto-enable/disable depending on instance state.
 --
 _ = test_run:cmd('stop server storage_1_a')
-_ = test_run:cmd('start server storage_1_a with wait=False, '..                 \
-                 'args="boot_before_cfg"')
+_ = test_run:cmd('start server storage_1_a with args="boot_before_cfg"')
 _ = test_run:switch('storage_1_a')
 -- Leaving box.cfg() not called won't work because at 1.10 test-run somewhy
 -- raises an error when try to start an instance without box.cfg(). It can only
