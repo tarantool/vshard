@@ -38,7 +38,7 @@ vshard.router.cfg(cfg)
 test_run:switch('fullbox_1_a')
 vshard.storage.rebalancer_disable()
 log.info(string.rep('a', 1000))
-for i = 1, 200 do box.space._bucket:replace({i, vshard.consts.BUCKET.ACTIVE}) end
+vshard.storage.bucket_force_create(1, 200)
 
 test_run:switch('router_1')
 for i = 1, 4 do vshard.router.discovery_wakeup() end

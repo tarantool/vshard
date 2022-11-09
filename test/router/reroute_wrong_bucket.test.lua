@@ -14,13 +14,13 @@ test_run:switch('storage_1_a')
 vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 vshard.storage.rebalancer_disable()
-for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('storage_2_a')
 vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
 vshard.storage.rebalancer_disable()
-for i = 101, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('router_1')
 util = require('util')
@@ -30,7 +30,7 @@ test_run:switch('storage_1_a')
 box.space._bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.SENT}, {'=', 3, util.replicasets[2]}})
 
 test_run:switch('storage_2_a')
-box.space._bucket:replace{100, vshard.consts.BUCKET.ACTIVE}
+vshard.storage.bucket_force_create(100, 1)
 box.space.test:insert{1, 100}
 
 test_run:switch('router_1')

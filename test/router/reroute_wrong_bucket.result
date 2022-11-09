@@ -46,8 +46,9 @@ vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
 vshard.storage.rebalancer_disable()
 ---
 ...
-for i = 1, 100 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 ---
+- true
 ...
 test_run:switch('storage_2_a')
 ---
@@ -62,8 +63,9 @@ vshard.storage.cfg(cfg, util.name_to_uuid.storage_2_a)
 vshard.storage.rebalancer_disable()
 ---
 ...
-for i = 101, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 ---
+- true
 ...
 test_run:switch('router_1')
 ---
@@ -88,9 +90,9 @@ test_run:switch('storage_2_a')
 ---
 - true
 ...
-box.space._bucket:replace{100, vshard.consts.BUCKET.ACTIVE}
+vshard.storage.bucket_force_create(100, 1)
 ---
-- [100, 'active']
+- true
 ...
 box.space.test:insert{1, 100}
 ---
