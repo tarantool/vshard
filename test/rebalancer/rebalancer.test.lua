@@ -69,10 +69,12 @@ vshard.storage.bucket_force_create(1, 100)
 test_run:switch('default')
 util.map_evals(test_run, {REPLICASET_1},                                        \
                [[vshard.storage.internal.is_bucket_protected = false]])
+
 test_run:switch('box_1_a')
 _bucket:truncate()
+vshard.storage.sync()
+
 test_run:switch('default')
-test_run:wait_lsn('box_1_b', 'box_1_a')
 util.map_evals(test_run, {REPLICASET_1},                                        \
                [[vshard.storage.internal.is_bucket_protected = true]])
 
@@ -93,6 +95,7 @@ _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 -- cluster, it must detect disbalance.
 -- (See point (3) in the test plan)
 --
+
 test_run:switch('box_1_a')
 -- Set threshold to 300%
 cfg.rebalancer_disbalance_threshold = 300
@@ -103,10 +106,12 @@ vshard.storage.bucket_force_create(101, 100)
 test_run:switch('default')
 util.map_evals(test_run, {REPLICASET_2},                                        \
                [[vshard.storage.internal.is_bucket_protected = false]])
+
 test_run:switch('box_2_a')
 _bucket:truncate()
+vshard.storage.sync()
+
 test_run:switch('default')
-test_run:wait_lsn('box_2_b', 'box_2_a')
 util.map_evals(test_run, {REPLICASET_2},                                        \
                [[vshard.storage.internal.is_bucket_protected = true]])
 
@@ -150,9 +155,14 @@ wait_rebalancer_state("Rebalancer is disabled", test_run)
 -- sent.
 -- (See point (6) in the test plan)
 --
+
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
+test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
-wait_rebalancer_state("Some buckets are not active", test_run)
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 
 --
@@ -161,7 +171,13 @@ _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 --
 vshard.storage.rebalancer_disable()
 for i = 91, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.sync()
 
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+
+test_run:switch('box_1_a')
 space = box.space.test
 space:replace{1, 91}
 space:replace{2, 92}
@@ -169,9 +185,18 @@ space:replace{3, 93}
 space:replace{4, 150}
 space:replace{5, 151}
 
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 test_run:switch('box_2_a')
 space = box.space.test
 for i = 91, 100 do _bucket:delete{i} end
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
 
 test_run:switch('box_1_a')
 _bucket:get{91}.status

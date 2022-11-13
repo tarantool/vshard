@@ -186,7 +186,33 @@ assert(not ok and err.message:match("Duplicate key exists"))
 ---
 - Duplicate key exists
 ...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
+test_run:switch('storage_1_a')
+---
+- true
+...
 vshard.storage.bucket_force_drop(1)
+---
+- true
+...
+vshard.storage.sync()
+---
+- true
+...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+---
+...
+test_run:switch('storage_1_a')
 ---
 - true
 ...
@@ -727,6 +753,13 @@ rs:callro('echo', {'some_data'})
 -- Bucket count is calculated properly.
 --
 -- Cleanup after the previous tests.
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2},                          \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
 _ = test_run:switch('storage_1_a')
 ---
 ...
@@ -736,6 +769,21 @@ buckets = vshard.storage.buckets_info()
 for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
 ---
 ...
+vshard.storage.sync()
+---
+- true
+...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+---
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
 _ = test_run:switch('storage_2_a')
 ---
 ...
@@ -743,6 +791,17 @@ buckets = vshard.storage.buckets_info()
 ---
 ...
 for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
+---
+...
+vshard.storage.sync()
+---
+- true
+...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
 ---
 ...
 _ = test_run:switch('storage_1_a')
@@ -860,9 +919,33 @@ assert(not ok and not err)
 ---
 - true
 ...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
+_ = test_run:switch('storage_1_a')
+---
+...
 vshard.storage.bucket_force_drop(10)
 ---
 - true
+...
+vshard.storage.sync()
+---
+- true
+...
+_ = test_run:switch('default')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+---
+...
+_ = test_run:switch('storage_1_a')
+---
 ...
 test_run:wait_cond(function() return ok or err end)
 ---

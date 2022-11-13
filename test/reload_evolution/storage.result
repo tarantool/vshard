@@ -53,6 +53,13 @@ vshard.storage.bucket_force_create(1, vshard.consts.DEFAULT_BUCKET_COUNT / 2)
 bucket_id_to_move = vshard.consts.DEFAULT_BUCKET_COUNT
 ---
 ...
+test_run:switch('storage_2_b')
+---
+- true
+...
+vshard.storage.internal.is_bucket_protected = false
+---
+...
 test_run:switch('storage_2_a')
 ---
 - true
@@ -105,9 +112,15 @@ vshard.storage.internal.reload_version
 - 1
 ...
 -- Make sure storage operates well.
+vshard.storage.internal.is_bucket_protected = false
+---
+...
 vshard.storage.bucket_force_drop(2000)
 ---
 - true
+...
+vshard.storage.internal.is_bucket_protected = true
+---
 ...
 vshard.storage.bucket_force_create(2000)
 ---
@@ -176,7 +189,13 @@ assert(move_start + move_cnt < vshard.consts.DEFAULT_BUCKET_COUNT)
 ---
 - true
 ...
+vshard.storage.internal.is_bucket_protected = false
+---
+...
 for i = move_start, move_start + move_cnt - 1 do box.space._bucket:delete{i} end
+---
+...
+vshard.storage.internal.is_bucket_protected = true
 ---
 ...
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})

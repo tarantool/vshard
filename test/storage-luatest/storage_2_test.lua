@@ -114,8 +114,10 @@ local function test_storage_callro_refro_loss(g, user_err)
     -- The bucket becomes deleted on the master due to any reason. Need to pause
     -- the protection. Otherwise the replica would reject the bucket drop.
     rep_b:exec(bucket_set_protection, {false})
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_force_drop, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
     rep_b:exec(bucket_set_protection, {true})
     rep_b:exec(bucket_check_no_ref, {bid})
 
@@ -168,10 +170,10 @@ local function test_storage_callro_refrw_loss(g, user_err)
     -- The bucket becomes deleted on the new master due to any reason. Need to
     -- pause the protection. Otherwise the old master would reject the bucket
     -- drop.
-    rep_a:exec(bucket_set_protection, {false})
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_b:exec(bucket_force_drop, {bid})
     rep_a:wait_vclock_of(rep_a)
-    rep_a:exec(bucket_set_protection, {true})
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
     rep_a:exec(bucket_check_no_ref, {bid})
 
     -- The old master should fail to complete the RW request.

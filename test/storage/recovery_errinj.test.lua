@@ -18,10 +18,21 @@ vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 -- simulate the intermediate state.
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
+_ = test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket = box.space._bucket
 _bucket:replace{1, vshard.consts.BUCKET.ACTIVE, util.replicasets[2]}
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
+
+_ = test_run:switch('storage_1_a')
 ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
 ret, util.is_timeout_error(err)
 _bucket = box.space._bucket

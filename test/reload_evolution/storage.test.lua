@@ -23,12 +23,16 @@ test_run:switch('storage_1_a')
 vshard.storage.bucket_force_create(1, vshard.consts.DEFAULT_BUCKET_COUNT / 2)
 bucket_id_to_move = vshard.consts.DEFAULT_BUCKET_COUNT
 
+test_run:switch('storage_2_b')
+vshard.storage.internal.is_bucket_protected = false
+
 test_run:switch('storage_2_a')
 vshard.storage.bucket_force_create(vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1, vshard.consts.DEFAULT_BUCKET_COUNT / 2)
 bucket_id_to_move = vshard.consts.DEFAULT_BUCKET_COUNT
 vshard.storage.internal.reload_version
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 box.space.test:insert({42, bucket_id_to_move})
+
 
 -- Make the old sources invisible. Next require() is supposed to
 -- use the most actual source.
@@ -46,7 +50,9 @@ vshard.storage.internal.reload_version
 #box.space._bucket:on_replace()
 
 -- Make sure storage operates well.
+vshard.storage.internal.is_bucket_protected = false
 vshard.storage.bucket_force_drop(2000)
+vshard.storage.internal.is_bucket_protected = true
 vshard.storage.bucket_force_create(2000)
 vshard.storage.buckets_info()[2000]
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
@@ -69,7 +75,9 @@ vshard.storage.rebalancer_disable()
 move_start = vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1
 move_cnt = 100
 assert(move_start + move_cnt < vshard.consts.DEFAULT_BUCKET_COUNT)
+vshard.storage.internal.is_bucket_protected = false
 for i = move_start, move_start + move_cnt - 1 do box.space._bucket:delete{i} end
+vshard.storage.internal.is_bucket_protected = true
 box.space._bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_1_a')
 move_start = vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1

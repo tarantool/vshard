@@ -360,6 +360,27 @@ local function bucket_commit_delete(bucket)
     M.bucket_refs[bucket.id] = nil
 end
 
+local bucket_state_edges = {
+    -- From nothing. Have to cast nil to box.NULL explicitly then.
+    [box.NULL] = {BSTATE.RECEIVING},
+    [BSTATE.ACTIVE] = {BSTATE.PINNED, BSTATE.SENDING},
+    [BSTATE.PINNED] = {BSTATE.ACTIVE},
+    [BSTATE.SENDING] = {BSTATE.ACTIVE, BSTATE.SENT},
+    [BSTATE.SENT] = {BSTATE.GARBAGE},
+    [BSTATE.RECEIVING] = {BSTATE.GARBAGE, BSTATE.ACTIVE},
+    [BSTATE.GARBAGE] = {box.NULL},
+}
+
+-- Turn the edges into a table where edges[src][dst] would be true if the
+-- src->dst transition is allowed.
+for src, dsts in pairs(bucket_state_edges) do
+    local dst_dict = {}
+    for _, dst in pairs(dsts) do
+        dst_dict[dst] = true
+    end
+    bucket_state_edges[src] = dst_dict
+end
+
 --
 -- Validate whether _bucket update is possible. Bad ones need to be rejected for
 -- the sake of keeping data consistency. Ideally it should never throw. But
@@ -368,36 +389,50 @@ end
 --
 local function bucket_prepare_update(old_bucket, new_bucket)
     local new_status = new_bucket.status
+    local old_status = old_bucket ~= nil and old_bucket.status or box.NULL
     local bid = new_bucket.id
     local ref = M.bucket_refs[bid]
+    -- Check if existing refs allow the bucket to transfer to a new status.
     if old_bucket == nil and ref ~= nil then
         bucket_reject_update(bid, "new bucket can't have a ref object")
-    end
-    if new_status == BSTATE.PINNED or new_status == BSTATE.ACTIVE then
-        return
     end
     if new_status == BSTATE.SENDING or new_status == BSTATE.SENT then
         if ref ~= nil and ref.rw > 0 then
             bucket_reject_update(bid, "'%s' bucket can't have rw refs",
                                  new_status)
         end
-        return
     end
     if new_status == BSTATE.GARBAGE or new_status == BSTATE.RECEIVING then
         if ref ~= nil and (ref.rw > 0 or ref.ro > 0) then
             bucket_reject_update(bid, "'%s' bucket can't have any refs",
                                  new_status)
         end
-        return
     end
-    bucket_reject_update(bid, "unknown bucket status: '%s'", new_status)
+    -- Ensure that a bucket status is updated according to
+    -- the allowed paths, described in bucket_state_edges.
+    if new_status ~= old_status then
+        local src = bucket_state_edges[old_status]
+        if not src or not bucket_state_edges[new_status] then
+            bucket_reject_update(bid, "unknown bucket state '%s'", old_status)
+        elseif not src[new_status] then
+            bucket_reject_update(bid, "transition '%s' to '%s' is not allowed",
+                                 old_status, new_status)
+        end
+    end
 end
 
 local function bucket_prepare_delete(bucket)
     local bid = bucket.id
+    local status = bucket.status
     local ref = M.bucket_refs[bid]
     if ref ~= nil and (ref.ro > 0 or ref.rw > 0) then
         bucket_reject_update(bid, "can't delete a bucket with refs")
+    end
+    local src = bucket_state_edges[status]
+    if not src then
+        bucket_reject_update(bid, "unknown bucket state '%s'", status)
+    elseif not src[box.NULL] then
+        bucket_reject_update(bid, "can't delete '%s' bucket", status)
     end
 end
 
@@ -1486,7 +1521,14 @@ local function bucket_force_create_impl(first_bucket_id, count)
     box.begin()
     local limit = consts.BUCKET_CHUNK_SIZE
     for i = first_bucket_id, first_bucket_id + count - 1 do
-        _bucket:insert({i, consts.BUCKET.ACTIVE})
+        -- Buckets are protected with on_replace trigger, which
+        -- prohibits the creation of the ACTIVE buckets from nowhere,
+        -- as this is done only for bootstrap and not during the normal
+        -- work of vshard. So, as we don't want to disable the protection
+        -- of the buckets for the whole replicaset for bootstrap, a bucket's
+        -- status must go the following way: none -> RECEIVING -> ACTIVE.
+        _bucket:insert({i, consts.BUCKET.RECEIVING})
+        _bucket:replace({i, consts.BUCKET.ACTIVE})
         limit = limit - 1
         if limit == 0 then
             box.commit()

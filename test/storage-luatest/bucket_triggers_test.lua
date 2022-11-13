@@ -117,20 +117,16 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     -- Turn the bucket into garbage.
     t.assert_items_include({vconst.BUCKET.SENT, vconst.BUCKET.GARBAGE},
                            {status})
-    -- GARBAGE bucket can't have refs, such updates are rejected. Have to pause
-    -- the protection for them.
-    local is_unsafe = status == vconst.BUCKET.GARBAGE
-    if is_unsafe then
-        vtest.cluster_exec_each(g, bucket_set_protection, {false})
-    end
+    -- A bucket cannot transit from ACTIVE to SENT or GARBAGE state.
+    -- Moreover, GARBAGE bucket can't have refs. All these updates are
+    -- rejected. Have to pause the protection to make these changs.
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_update_status, {bid, status})
     rep_a:exec(bucket_refro_fail, {bid, verror.code.BUCKET_IS_LOCKED})
 
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_refro_fail, {bid, verror.code.BUCKET_IS_LOCKED})
-    if is_unsafe then
-        vtest.cluster_exec_each(g, bucket_set_protection, {true})
-    end
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Collect the bucket.
     rep_b:exec(bucket_unrefro, {bid})
@@ -143,6 +139,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     rep_b:exec(bucket_check_no_ref, {bid})
 
     -- Ensure it works when a bucket has no refs too.
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_force_create, {bid})
     rep_a:exec(bucket_update_status, {bid, status})
     rep_a:exec(bucket_gc_wait)
@@ -150,6 +147,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     rep_a:exec(bucket_check_no_ref, {bid})
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_check_no_ref, {bid})
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Cleanup.
     rep_a:exec(bucket_force_create, {bid})
@@ -157,6 +155,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
 end
 
 local function test_bucket_space_commit_trigger_active(g, status)
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
 
@@ -201,6 +200,7 @@ local function test_bucket_space_commit_trigger_active(g, status)
     rep_a:exec(bucket_check_no_ref)
     rep_a:exec(bucket_force_create, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_commit_trigger_sent = function(g)
@@ -209,7 +209,6 @@ end
 
 test_group.test_bucket_space_commit_trigger_garbage = function(g)
     test_bucket_space_commit_trigger_garbage(g, vconst.BUCKET.GARBAGE)
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_commit_trigger_active = function(g)
@@ -221,6 +220,7 @@ test_group.test_bucket_space_commit_trigger_pinned = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_receiving = function(g)
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
 
@@ -243,20 +243,17 @@ test_group.test_bucket_space_commit_trigger_receiving = function(g)
     rep_a:exec(bucket_refro, {bid})
     rep_b:exec(bucket_refro, {bid})
     rep_a:exec(bucket_check_has_ref, {bid})
-    -- Have to pause the protection because getting a RECEIVING bucket with refs
-    -- normally is rejected.
-    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_update_status, {bid, vconst.BUCKET.RECEIVING})
     rep_a:exec(bucket_check_no_ref, {bid})
 
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_check_no_ref, {bid})
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Restore.
     rep_a:exec(bucket_force_drop, {bid})
     rep_a:exec(bucket_force_create, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_rollback_trigger = function(g)
@@ -271,7 +268,7 @@ test_group.test_bucket_space_rollback_trigger = function(g)
         -- Rollback won't do anything if no manual changes were made to refs.
         --
         box.begin()
-        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.SENDING}})
         local ref = ivshard.storage.internal.bucket_refs[bid]
         local old_ro_lock = ref.ro_lock
         box.rollback()
@@ -283,7 +280,7 @@ test_group.test_bucket_space_rollback_trigger = function(g)
         -- Rollback fixes refs like commit does, if manual changes were made.
         --
         box.begin()
-        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.SENDING}})
         ref.ro_lock = true
         box.rollback()
         -- Restored. In other words, the _bucket transactions include some of
@@ -299,6 +296,7 @@ end
 test_group.test_bucket_space_reject_bad_replace = function(g)
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
+    rep_b:exec(bucket_set_protection, {false})
     rep_a:exec(function()
         local bid = _G.get_first_bucket()
         local _bucket = box.space._bucket
@@ -320,14 +318,18 @@ test_group.test_bucket_space_reject_bad_replace = function(g)
         ivshard.storage.bucket_unrefro(bid)
         local ref = all_refs[bid]
         ilt.assert_not_equals(ref, nil)
+        ivshard.storage.internal.is_bucket_protected = false
         ivshard.storage.bucket_force_drop(bid)
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert_equals(all_refs[bid], nil)
         all_refs[bid] = ref
         check_invalid_update(function()
             _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         end, "can't have a ref")
         all_refs[bid] = nil
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+        ivshard.storage.internal.is_bucket_protected = true
         ivshard.storage.bucket_force_create(bid)
         --
         -- Transitions blocked by RW ref presence.
@@ -363,7 +365,7 @@ test_group.test_bucket_space_reject_bad_replace = function(g)
         --
         check_invalid_update(function()
             _bucket:update({bid}, {{'=', 2, 'test_bad_status'}})
-        end, "unknown bucket status")
+        end, "unknown bucket state")
         --
         -- Can't delete with any refs.
         --
@@ -377,6 +379,7 @@ test_group.test_bucket_space_reject_bad_replace = function(g)
         ivshard.storage.bucket_unrefrw(bid)
     end)
     rep_b:wait_vclock_of(rep_a)
+    rep_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -409,7 +412,6 @@ test_group.test_bucket_space_truncation = function(g)
         _bucket:truncate()
     end)
     rep_b:wait_vclock_of(rep_a)
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
     rep_a:exec(function()
         local _bucket = box.space._bucket
         local new_all_refs = ivshard.storage.internal.bucket_refs
@@ -424,4 +426,160 @@ test_group.test_bucket_space_truncation = function(g)
         _G.all_buckets = nil
     end)
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
+end
+
+test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
+    local rep_a = g.replica_1_a
+    local rep_b = g.replica_1_b
+    rep_b:exec(bucket_set_protection, {false})
+    rep_a:exec(function()
+        local count = ivconst.DEFAULT_BUCKET_COUNT
+        local _bucket = box.space._bucket
+        local function check_invalid_update(func, msg)
+            local ok, err = pcall(func)
+            ilt.assert(not ok)
+            -- Exceptions are wrapped into box errors' messages. Thus vshard
+            -- error is serialized into a string.
+            ilt.assert_str_contains(err.message, 'BUCKET_INVALID_UPDATE')
+            ilt.assert_str_contains(err.message, msg)
+        end
+
+        -- none -> any
+        local bid1, bid2 = count + 1, count + 2
+        check_invalid_update(function()
+            _bucket:insert{bid1, ivconst.BUCKET.PINNED}
+        end, "to 'pinned' is not allowed")
+        check_invalid_update(function()
+            _bucket:insert{bid1, ivconst.BUCKET.SENDING}
+        end, "to 'sending' is not allowed")
+        check_invalid_update(function()
+            _bucket:insert{bid1, ivconst.BUCKET.SENT}
+        end, "to 'sent' is not allowed")
+        check_invalid_update(function()
+            _bucket:insert{bid1, ivconst.BUCKET.GARBAGE}
+        end, "to 'garbage' is not allowed")
+        check_invalid_update(function()
+            _bucket:insert{bid1, ivconst.BUCKET.ACTIVE}
+        end, "to 'active' is not allowed")
+        _bucket:insert({bid1, ivconst.BUCKET.RECEIVING})
+        _bucket:insert({bid2, ivconst.BUCKET.RECEIVING})
+
+        -- RECEIVING -> any
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
+        end, "'receiving' to 'pinned' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
+        end, "'receiving' to 'sending' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
+        end, "'receiving' to 'sent' is not allowed")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+
+        -- ACTIVE -> any
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:replace({bid1, ivconst.BUCKET.ACTIVE})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
+        end, "'active' to 'sent' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
+        end, "'active' to 'receiving' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        end, "'active' to 'garbage' is not allowed")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
+        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.SENDING}})
+
+        --  PINNED -> any
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:replace({bid1, ivconst.BUCKET.PINNED})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
+        end, "'pinned' to 'sending' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
+        end, "'pinned' to 'sent' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
+        end, "'pinned' to 'receiving' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        end, "'pinned' to 'garbage' is not allowed")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
+
+        -- SENDING -> any
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:replace({bid1, ivconst.BUCKET.SENDING})
+        _bucket:replace({bid2, ivconst.BUCKET.SENDING})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
+        end, "'sending' to 'pinned' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
+        end, "'sending' to 'receiving' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        end, "'sending' to 'garbage' is not allowed")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.SENT}})
+
+        -- SENT -> any
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:replace({bid1, ivconst.BUCKET.SENT})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        end, "'sent' to 'active' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
+        end, "'sent' to 'pinned' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
+        end, "'sent' to 'sending' is not allowed")
+        check_invalid_update(function()
+            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
+        end, "'sent' to 'receiving' is not allowed")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+
+        -- any -> none
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:replace({bid1, ivconst.BUCKET.RECEIVING})
+        _bucket:delete({bid2})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        check_invalid_update(function()
+            _bucket:delete({bid1})
+        end, "can't delete 'receiving' bucket")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        check_invalid_update(function()
+            _bucket:delete({bid1})
+        end, "can't delete 'active' bucket")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
+        check_invalid_update(function()
+            _bucket:delete({bid1})
+        end, "can't delete 'pinned' bucket")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.SENDING}})
+        check_invalid_update(function()
+            _bucket:delete({bid1})
+        end, "can't delete 'sending' bucket")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.SENT}})
+        check_invalid_update(function()
+            _bucket:delete({bid1})
+        end, "can't delete 'sent' bucket")
+        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        _bucket:delete({bid1})
+    end)
+    rep_b:wait_vclock_of(rep_a)
+    rep_b:exec(bucket_set_protection, {true})
 end

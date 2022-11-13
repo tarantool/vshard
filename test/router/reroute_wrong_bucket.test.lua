@@ -10,6 +10,12 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 
 test_run:cmd('create server router_1 with script="router/router_1.lua"')
 test_run:cmd('start server router_1')
+
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 test_run:switch('storage_1_a')
 vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
@@ -53,6 +59,14 @@ test_run:switch('storage_2_a')
 box.space._bucket:replace({100, vshard.consts.BUCKET.ACTIVE})
 test_run:switch('storage_1_a')
 box.space._bucket:replace({100, vshard.consts.BUCKET.SENT, util.replicasets[2]})
+
+test_run:switch('default')
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 test_run:switch('router_1')
 -- Emulate a situation, when a replicaset_2 while is unknown for
 -- router, but is already known for storages.

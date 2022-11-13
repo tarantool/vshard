@@ -33,6 +33,14 @@ test_run:cmd('start server router_1')
 ---
 - true
 ...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
 test_run:switch('storage_1_a')
 ---
 - true
@@ -147,6 +155,21 @@ test_run:switch('storage_1_a')
 box.space._bucket:replace({100, vshard.consts.BUCKET.SENT, util.replicasets[2]})
 ---
 - [100, 'sent', 'ac522f65-aa94-4134-9f64-51ee384f1a54']
+...
+test_run:switch('default')
+---
+- true
+...
+test_run:wait_lsn('storage_1_b', 'storage_1_a')
+---
+...
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
+...
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+---
 ...
 test_run:switch('router_1')
 ---

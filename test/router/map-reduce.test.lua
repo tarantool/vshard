@@ -157,9 +157,18 @@ test_run:wait_cond(function() return lref.count == 0 end)
 -- Fail if some buckets are not visible. Even if all the known replicasets were
 -- scanned. It means consistency violation.
 --
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 _ = test_run:switch('storage_1_a')
 bucket_id = box.space._bucket.index.pk:min().id
 vshard.storage.bucket_force_drop(bucket_id)
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_1},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
 
 _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, big_timeout_opts)
@@ -169,10 +178,19 @@ _ = test_run:switch('storage_1_a')
 test_run:wait_cond(function() return lref.count == 0 end)
 vshard.storage.bucket_force_create(bucket_id)
 
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = false]])
+
 _ = test_run:switch('storage_2_a')
 test_run:wait_cond(function() return lref.count == 0 end)
 bucket_id = box.space._bucket.index.pk:min().id
 vshard.storage.bucket_force_drop(bucket_id)
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_evals(test_run, {REPLICASET_2},                                        \
+               [[vshard.storage.internal.is_bucket_protected = true]])
 
 _ = test_run:switch('router_1')
 ok, err = vshard.router.map_callrw('echo', {1}, big_timeout_opts)
