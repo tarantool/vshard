@@ -10,6 +10,8 @@ if vutil.feature.memtx_mvcc then
     table.insert(group_config, {memtx_use_mvcc_engine = true})
 end
 
+group_config = {{memtx_use_mvcc_engine = true}}
+
 local test_group = t.group('storage', group_config)
 
 local cfg_template = {
@@ -434,151 +436,65 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
     local rep_b = g.replica_1_b
     rep_b:exec(bucket_set_protection, {false})
     rep_a:exec(function()
-        local count = ivconst.DEFAULT_BUCKET_COUNT
         local _bucket = box.space._bucket
-        local function check_invalid_update(func, msg)
-            local ok, err = pcall(func)
-            ilt.assert(not ok)
-            -- Exceptions are wrapped into box errors' messages. Thus vshard
-            -- error is serialized into a string.
-            ilt.assert_str_contains(err.message, 'BUCKET_INVALID_UPDATE')
-            ilt.assert_str_contains(err.message, msg)
+        local internal = ivshard.storage.internal
+
+        local bucket_state_edges = internal.bucket_state_edges
+        local all_states = {box.NULL}
+        for _, state in pairs(ivconst.BUCKET) do
+            table.insert(all_states, state)
         end
 
-        -- none -> any
-        local bid1, bid2 = count + 1, count + 2
-        check_invalid_update(function()
-            _bucket:insert{bid1, ivconst.BUCKET.PINNED}
-        end, "to 'pinned' is not allowed")
-        check_invalid_update(function()
-            _bucket:insert{bid1, ivconst.BUCKET.SENDING}
-        end, "to 'sending' is not allowed")
-        check_invalid_update(function()
-            _bucket:insert{bid1, ivconst.BUCKET.SENT}
-        end, "to 'sent' is not allowed")
-        check_invalid_update(function()
-            _bucket:insert{bid1, ivconst.BUCKET.GARBAGE}
-        end, "to 'garbage' is not allowed")
-        check_invalid_update(function()
-            _bucket:insert{bid1, ivconst.BUCKET.ACTIVE}
-        end, "to 'active' is not allowed")
-        _bucket:insert({bid1, ivconst.BUCKET.RECEIVING})
-        _bucket:insert({bid2, ivconst.BUCKET.RECEIVING})
+        local bid = _G.get_first_bucket()
+        local count = 0
+        for _, src in pairs(all_states) do
+            for _, dst in pairs(all_states) do
+                if src == dst then
+                    goto next_dst
+                end
+                count = count + 1
+                internal.is_bucket_protected = false
+                if src == box.NULL then
+                    _bucket:delete{bid}
+                else
+                    _bucket:replace{bid, src}
+                end
+                internal.is_bucket_protected = true
 
-        -- RECEIVING -> any
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
-        end, "'receiving' to 'pinned' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
-        end, "'receiving' to 'sending' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
-        end, "'receiving' to 'sent' is not allowed")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+                local src_edge = bucket_state_edges[src]
+                local should_be_ok = src_edge and src_edge[dst]
+                local ok, err
+                if dst == box.NULL then
+                    ok, err = pcall(_bucket.delete, _bucket, {bid})
+                else
+                    ok, err = pcall(_bucket.replace, _bucket, {bid, dst})
+                end
 
-        -- ACTIVE -> any
-        ivshard.storage.internal.is_bucket_protected = false
-        _bucket:replace({bid1, ivconst.BUCKET.ACTIVE})
-        ivshard.storage.internal.is_bucket_protected = true
+                if should_be_ok then
+                    ilt.assert(ok)
+                    goto next_dst
+                end
+                ilt.assert(not ok)
+                -- Exceptions are wrapped into box errors' messages. Thus vshard
+                -- error is serialized into a string.
+                ilt.assert_str_contains(err.message, 'BUCKET_INVALID_UPDATE')
+                local msg
+                if dst == box.NULL then
+                    msg = "can't delete '%s' bucket"
+                else
+                    msg = "transition '%s' to '%s' is not allowed"
+                end
+                ilt.assert_str_contains(err.message, msg:format(src, dst))
+            ::next_dst::
+            end
+        end
 
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
-        end, "'active' to 'sent' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
-        end, "'active' to 'receiving' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-        end, "'active' to 'garbage' is not allowed")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
-        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.SENDING}})
+        internal.is_bucket_protected = false
+        _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+        internal.is_bucket_protected = true
 
-        --  PINNED -> any
-        ivshard.storage.internal.is_bucket_protected = false
-        _bucket:replace({bid1, ivconst.BUCKET.PINNED})
-        ivshard.storage.internal.is_bucket_protected = true
-
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
-        end, "'pinned' to 'sending' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENT}})
-        end, "'pinned' to 'sent' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
-        end, "'pinned' to 'receiving' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-        end, "'pinned' to 'garbage' is not allowed")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
-
-        -- SENDING -> any
-        ivshard.storage.internal.is_bucket_protected = false
-        _bucket:replace({bid1, ivconst.BUCKET.SENDING})
-        _bucket:replace({bid2, ivconst.BUCKET.SENDING})
-        ivshard.storage.internal.is_bucket_protected = true
-
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
-        end, "'sending' to 'pinned' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
-        end, "'sending' to 'receiving' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-        end, "'sending' to 'garbage' is not allowed")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
-        _bucket:update(bid2, {{'=', 2, ivconst.BUCKET.SENT}})
-
-        -- SENT -> any
-        ivshard.storage.internal.is_bucket_protected = false
-        _bucket:replace({bid1, ivconst.BUCKET.SENT})
-        ivshard.storage.internal.is_bucket_protected = true
-
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
-        end, "'sent' to 'active' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.PINNED}})
-        end, "'sent' to 'pinned' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.SENDING}})
-        end, "'sent' to 'sending' is not allowed")
-        check_invalid_update(function()
-            _bucket:update({bid1}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
-        end, "'sent' to 'receiving' is not allowed")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-
-        -- any -> none
-        ivshard.storage.internal.is_bucket_protected = false
-        _bucket:replace({bid1, ivconst.BUCKET.RECEIVING})
-        _bucket:delete({bid2})
-        ivshard.storage.internal.is_bucket_protected = true
-
-        check_invalid_update(function()
-            _bucket:delete({bid1})
-        end, "can't delete 'receiving' bucket")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
-        check_invalid_update(function()
-            _bucket:delete({bid1})
-        end, "can't delete 'active' bucket")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.PINNED}})
-        check_invalid_update(function()
-            _bucket:delete({bid1})
-        end, "can't delete 'pinned' bucket")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.ACTIVE}})
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.SENDING}})
-        check_invalid_update(function()
-            _bucket:delete({bid1})
-        end, "can't delete 'sending' bucket")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.SENT}})
-        check_invalid_update(function()
-            _bucket:delete({bid1})
-        end, "can't delete 'sent' bucket")
-        _bucket:update(bid1, {{'=', 2, ivconst.BUCKET.GARBAGE}})
-        _bucket:delete({bid1})
+        -- To be sure that the loops above didn't somehow skip everything.
+        ilt.assert_equals(count, 42, 'transition count')
     end)
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_set_protection, {true})

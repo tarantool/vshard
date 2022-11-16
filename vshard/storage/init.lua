@@ -3696,6 +3696,7 @@ M.schema_upgrade_master = schema_upgrade_master
 M.schema_upgrade_handlers = schema_upgrade_handlers
 M.schema_version_make = schema_version_make
 M.schema_bootstrap = schema_init_0_1_15_0
+M.bucket_state_edges = bucket_state_edges
 
 M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
