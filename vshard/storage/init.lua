@@ -1735,7 +1735,8 @@ end
 local sharded_spaces_cache_schema_version = nil
 local sharded_spaces_cache = nil
 local function find_sharded_spaces()
-    if sharded_spaces_cache_schema_version == box.internal.schema_version() then
+    local schema_version = util.schema_version()
+    if sharded_spaces_cache_schema_version == schema_version then
         return sharded_spaces_cache
     end
     local spaces = {}
@@ -1749,7 +1750,7 @@ local function find_sharded_spaces()
             end
         end
     end
-    sharded_spaces_cache_schema_version = box.internal.schema_version()
+    sharded_spaces_cache_schema_version = schema_version
     sharded_spaces_cache = spaces
     return spaces
 end

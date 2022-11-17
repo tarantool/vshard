@@ -345,6 +345,31 @@ local feature = {
     csw = fiber.self().csw ~= nil,
 }
 
+local schema_version = function()
+    return box.info.schema_version
+end
+do
+    -- Since 2.11 the internal function is replaced by the info field.
+    -- Use pcall() in case box.info would raise an error on an unconfigured
+    -- instance (it does at 1.10).
+    local ok, res = pcall(schema_version)
+    if not ok or res == nil then
+        -- Fallback to older versions when the internal func was available.
+        schema_version = box.internal.schema_version
+        assert(schema_version ~= nil)
+    end
+    -- Can't tell whether box.info or the internal func will start yielding at
+    -- some day. If they do, that needs to be caught, because it potentially
+    -- might make the schema version not very much usable as a cache generation
+    -- number.
+    if feature.csw then
+        local csw1 = fiber.self().csw()
+        local _ = schema_version()
+        local csw2 = fiber.self().csw()
+        assert(csw2 == csw1)
+    end
+end
+
 return {
     uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
@@ -361,4 +386,5 @@ return {
     index_min = index_min,
     index_has = index_has,
     feature = feature,
+    schema_version = schema_version,
 }
