@@ -170,7 +170,7 @@ local function test_storage_callro_refrw_loss(g, user_err)
     -- drop.
     rep_a:exec(bucket_set_protection, {false})
     rep_b:exec(bucket_force_drop, {bid})
-    rep_a:wait_vclock_of(rep_a)
+    rep_a:wait_vclock_of(rep_b)
     rep_a:exec(bucket_set_protection, {true})
     rep_a:exec(bucket_check_no_ref, {bid})
 
