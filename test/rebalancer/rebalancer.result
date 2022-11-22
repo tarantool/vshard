@@ -77,8 +77,9 @@ cfg.rebalancer_max_receiving = 10
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 ---
+- true
 ...
 test_run:switch('box_2_a')
 ---
@@ -87,8 +88,9 @@ test_run:switch('box_2_a')
 _bucket = box.space._bucket
 ---
 ...
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 ---
+- true
 ...
 test_run:switch('box_1_a')
 ---
@@ -111,8 +113,9 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 ---
+- true
 ...
 test_run:switch('default')
 ---
@@ -188,8 +191,9 @@ vshard.storage.rebalancer_disable()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 ---
 ...
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 ---
+- true
 ...
 test_run:switch('default')
 ---
@@ -322,8 +326,12 @@ _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 vshard.storage.rebalancer_disable()
 ---
 ...
-for i = 91, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+wait_bucket_is_collected(100)
 ---
+...
+vshard.storage.bucket_force_create(91, 10)
+---
+- true
 ...
 space = box.space.test
 ---

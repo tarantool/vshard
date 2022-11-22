@@ -56,8 +56,9 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-for i = 1, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 200)
 ---
+- true
 ...
 test_run:switch('box_1_a')
 ---

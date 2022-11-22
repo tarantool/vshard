@@ -32,11 +32,11 @@ _bucket = box.space._bucket
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
 vshard.storage.rebalancer_disable()
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('box_2_a')
 _bucket = box.space._bucket
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = true
 
 test_run:switch('box_1_a')

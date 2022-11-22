@@ -28,7 +28,7 @@ _bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]}
 
 _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
-_bucket:replace{2, vshard.consts.BUCKET.ACTIVE}
+vshard.storage.bucket_force_create(2)
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
 
 _ = test_run:cmd('stop server storage_1_a')
@@ -61,7 +61,7 @@ _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _ = test_run:switch('storage_2_a')
-_bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
+vshard.storage.bucket_force_create(1)
 _ = test_run:switch('default')
 _ = test_run:cmd('stop server storage_2_a')
 _ = test_run:cmd('stop server storage_1_a')

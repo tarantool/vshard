@@ -16,7 +16,8 @@ util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
 --
 _ = test_run:switch('storage_1_a')
 _bucket = box.space._bucket
-for i = 1, 10 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 10)
+
 _ = test_run:switch('storage_1_b')
 _bucket = box.space._bucket
 while _bucket:count() ~= 10 do fiber.sleep(0.1) end

@@ -10,7 +10,7 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 
 _ = test_run:cmd('stop server storage_1_b')
 _ = test_run:switch('storage_1_a')
-box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
+vshard.storage.bucket_force_create(1)
 box.space.test:insert{1, 1, 1}
 
 _ = test_run:switch('default')
@@ -21,7 +21,7 @@ cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b].master
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_a].master = false
 cfg.replication_connect_quorum = 1
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_b)
-box.space._bucket:replace({1, vshard.consts.BUCKET.ACTIVE})
+vshard.storage.bucket_force_create(1)
 box.space.test:insert{1, 1, 2}
 
 --
