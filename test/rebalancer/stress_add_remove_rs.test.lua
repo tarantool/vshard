@@ -26,7 +26,8 @@ test_run:switch('router_1')
 -- data, that were written during the step execution.
 --
 test_run:switch('box_2_a')
-for i = 1, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 200)
+
 test_run:switch('box_1_a')
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('The cluster is balanced ok', test_run)

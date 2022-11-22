@@ -20,8 +20,6 @@ _ = test_run:switch('box_2_a')
 vshard.storage.bucket_force_create(101, 100)
 _ = test_run:switch('box_1_a')
 
-box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
-
 vshard.storage.bucket_refro(1)
 vshard.storage.buckets_info(1)
 

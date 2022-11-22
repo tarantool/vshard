@@ -31,7 +31,7 @@ test_run:switch('router_1')
 test_run:switch('box_2_a')
 cfg.rebalancer_max_receiving = 2
 vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
-for i = 1, 200 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 200)
 
 test_run:switch('box_1_a')
 cfg.rebalancer_max_receiving = 2

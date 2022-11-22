@@ -18,11 +18,11 @@ util.push_rs_filters(test_run)
 
 _ = test_run:switch('box_1_a')
 _bucket = box.space._bucket
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 
 _ = test_run:switch('box_2_a')
 _bucket = box.space._bucket
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 create_simple_space('test3', {engine = 'vinyl'})
 create_simple_space('test4')
 create_simple_space('test5', {engine = 'vinyl'})

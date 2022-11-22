@@ -55,22 +55,25 @@ test_run:cmd('switch box_1_a')
 ---
 - true
 ...
-for i = 1, 30 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 30)
 ---
+- true
 ...
 test_run:cmd('switch box_2_a')
 ---
 - true
 ...
-for i = 31, 60 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(31, 30)
 ---
+- true
 ...
 test_run:cmd('switch box_3_b')
 ---
 - true
 ...
-for i = 61, 90 do box.space._bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(61, 30)
 ---
+- true
 ...
 test_run:cmd('switch default')
 ---

@@ -48,11 +48,11 @@ wait_rebalancer_state('Total active bucket count is not equal to total', test_ru
 vshard.storage.rebalancer_disable()
 cfg.rebalancer_max_receiving = 10
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('box_2_a')
 _bucket = box.space._bucket
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
@@ -64,7 +64,7 @@ wait_rebalancer_state("The cluster is balanced ok", test_run)
 --
 vshard.storage.rebalancer_disable()
 test_run:switch('box_2_a')
-for i = 1, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('default')
 util.map_evals(test_run, {REPLICASET_1},                                        \
@@ -98,7 +98,7 @@ test_run:switch('box_1_a')
 cfg.rebalancer_disbalance_threshold = 300
 vshard.storage.rebalancer_disable()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-for i = 101, 200 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('default')
 util.map_evals(test_run, {REPLICASET_2},                                        \
@@ -160,7 +160,8 @@ _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 -- (See point (7) in the test plan)
 --
 vshard.storage.rebalancer_disable()
-for i = 91, 100 do _bucket:replace{i, vshard.consts.BUCKET.ACTIVE} end
+wait_bucket_is_collected(100)
+vshard.storage.bucket_force_create(91, 10)
 space = box.space.test
 space:replace{1, 91}
 space:replace{2, 92}
