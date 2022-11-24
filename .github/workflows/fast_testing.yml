@@ -65,8 +65,8 @@ jobs:
       - name: Build tarantool ${{ matrix.tarantool }}
         if: startsWith(matrix.tarantool, 'release') && steps.cache-tnt-release.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get -y install zlib1g-dev libreadline-dev libncurses5-dev \
-            libicu-dev python3-yaml python3-six python3-gevent
+          sudo apt-get -y install build-essential cmake make zlib1g-dev libreadline-dev libncurses5-dev \
+            libssl-dev libunwind-dev libicu-dev python3 python3-yaml python3-six python3-gevent
           cd ${GITHUB_WORKSPACE}/tarantool
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_DIST=ON
