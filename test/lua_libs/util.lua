@@ -207,6 +207,14 @@ function is_timeout_error(err)
     return 'Timeout exceeded' == err.message or 'timed out' == err.message
 end
 
+-- Turn the bucket protection off on all instances, mentioned in the
+-- `cluster` table. Allows/prohibits to do whatever you want with
+-- `_bucket` space, according to the boolean `value`.
+local function map_bucket_protection(test_run, cluster, value)
+    return map_evals(test_run, cluster,
+        [[vshard.storage.internal.is_bucket_protected = ...]], value)
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -214,6 +222,7 @@ return {
     wait_master = wait_master,
     has_same_fields = has_same_fields,
     map_evals = map_evals,
+    map_bucket_protection = map_bucket_protection,
     push_rs_filters = push_rs_filters,
     name_to_uuid = name_to_uuid,
     replicasets = replicasets,

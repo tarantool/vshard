@@ -15,6 +15,10 @@ end
 
 local test_group = t.group('bucket_gc', group_config)
 
+local function bucket_set_protection(value)
+    ivshard.storage.internal.is_bucket_protected = value
+end
+
 local cfg_template = {
     sharding = {
         {
@@ -59,6 +63,7 @@ end)
 -- Fill a few buckets, "send" them, ensure they and their data are gone.
 --
 test_group.test_basic = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function()
         local bucket_space = box.space._bucket
         local status_index = bucket_space.index.status
@@ -96,12 +101,14 @@ test_group.test_basic = function(g)
 
         -- Simulate sending of some buckets.
         local sent_bids = {}
+        ivshard.storage.internal.is_bucket_protected = false
         for i, bid in pairs(all_bids) do
             if i % 3 == 0 then
                 table.insert(sent_bids, bid)
                 bucket_space:update({bid}, {{'=', 2, ivconst.BUCKET.SENT}})
             end
         end
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert(#sent_bids > 0, 'sent some buckets')
 
         -- The master has GC fiber.
@@ -144,6 +151,7 @@ test_group.test_basic = function(g)
 
     -- Ensure the replica received all that and didn't break in the middle.
     g.replica_1_b:wait_vclock_of(g.replica_1_a)
+    g.replica_1_b:exec(bucket_set_protection, {true})
     g.replica_1_b:exec(function()
         -- Non-master doesn't have a GC bucket.
         ilt.assert_equals(
@@ -153,6 +161,7 @@ end
 
 test_group.test_yield_before_send_commit = function(g)
     t.run_only_if(global_cfg.memtx_use_mvcc_engine)
+    g.replica_1_b:exec(bucket_set_protection, {false})
 
     g.replica_1_a:exec(function()
         local s = box.space.test
@@ -172,7 +181,9 @@ test_group.test_yield_before_send_commit = function(g)
         local is_send_blocked = true
         local f_send = ifiber.new(function()
             box.begin()
+            ivshard.storage.internal.is_bucket_protected = false
             bucket_space:update({bid}, {{'=', 2, ivconst.BUCKET.SENT}})
+            ivshard.storage.internal.is_bucket_protected = true
             while is_send_blocked do
                 ifiber.sleep(0.01)
             end
@@ -197,6 +208,7 @@ test_group.test_yield_before_send_commit = function(g)
 
     -- Ensure the replica received all that and didn't break.
     g.replica_1_b:wait_vclock_of(g.replica_1_a)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -207,6 +219,7 @@ test_group.test_fail_bucket_space_replace = function(g)
     --
     -- A couple of buckets. One becomes SENT but all deletions in _bucket fail.
     --
+    g.replica_1_b:exec(bucket_set_protection, {false})
     local bid1_active, bid2_sent = g.replica_1_a:exec(function()
         local _bucket = box.space._bucket
         local bstatus = ivconst.BUCKET
@@ -227,7 +240,9 @@ test_group.test_fail_bucket_space_replace = function(g)
         s:replace{3, bid1_active}
         s:replace{4, bid2_sent}
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid2_sent, ivconst.BUCKET.SENT}
+        ivshard.storage.internal.is_bucket_protected = true
         -- Flush garbage into the logs to separate the next greps from the old
         -- logs.
         require('log').info(string.rep('a', 1000))
@@ -268,12 +283,16 @@ test_group.test_fail_bucket_space_replace = function(g)
         -- Cleanup.
         --
         s:truncate()
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid2_sent, ivconst.BUCKET.ACTIVE}
+        ivshard.storage.internal.is_bucket_protected = true
         local bucket_count = total_bucket_count
         ilt.assert_equals(_bucket:count(), bucket_count)
         ilt.assert_equals(_bucket.index.status:count(ivconst.BUCKET.ACTIVE),
                           bucket_count)
     end, {bid1_active, bid2_sent})
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -281,6 +300,7 @@ end
 -- everything with yields in between.
 --
 test_group.test_huge_bucket_count = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function(engine)
         ilt.assert_not_equals(engine, nil)
         local _bucket = box.space._bucket
@@ -326,6 +346,7 @@ test_group.test_huge_bucket_count = function(g)
         --
         -- Simulate buckets' sending.
         --
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for bid = 1, bucket_count_new do
             if bid % ivconst.BUCKET_CHUNK_SIZE == 0 then
@@ -339,6 +360,7 @@ test_group.test_huge_bucket_count = function(g)
             end
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
 
         _G.bucket_gc_continue()
         _G.bucket_gc_wait()
@@ -351,13 +373,16 @@ test_group.test_huge_bucket_count = function(g)
         ivconst.BUCKET_CHUNK_SIZE = old_chunk_size
         s1:drop()
         s2:drop()
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for bid = 1, bucket_count_old do
             _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
     end, {g.params.engine})
     vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -386,6 +411,7 @@ test_group.test_replica_ref_basic = function(g)
     --
     -- Master tries to GC the buckets, but it can't.
     --
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function(bids)
         local _bucket = box.space._bucket
         local s = box.space.test
@@ -395,11 +421,13 @@ test_group.test_replica_ref_basic = function(g)
             s:replace{bid, bid}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for _, bid in ipairs(bids) do
             _bucket:replace{bid, ivconst.BUCKET.SENT}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
 
         _G.bucket_gc_once()
         for _, bid in ipairs(bids) do
@@ -409,6 +437,8 @@ test_group.test_replica_ref_basic = function(g)
             ilt.assert_equals(s:get{bid}, {bid, bid})
         end
     end, {bids})
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
     --
     -- Free some refs on the replica but not all.
     --
@@ -485,7 +515,9 @@ test_group.test_replica_ref_bucket_wait_lsn = function(g)
         local s = box.space.test
 
         s:replace{bid, bid}
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid, ivconst.BUCKET.SENT}
+        ivshard.storage.internal.is_bucket_protected = true
         ivshard.storage.garbage_collector_wakeup()
         ifiber.sleep(0.1)
 
@@ -499,6 +531,9 @@ test_group.test_replica_ref_bucket_wait_lsn = function(g)
     -- Restore the replication.
     --
     g.replica_1_b:exec(function()
+        -- Disable the protection because will now receive active->sent
+        -- transition from the master.
+        ivshard.storage.internal.is_bucket_protected = false
         box.cfg{replication = _G.old_replication}
         _G.old_replication = nil
     end)
@@ -516,6 +551,7 @@ test_group.test_replica_ref_bucket_wait_lsn = function(g)
         ivshard.storage.bucket_force_create(bid)
     end, {bid})
     vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -524,6 +560,7 @@ end
 -- should be ready.
 --
 test_group.test_local_changes_during_replicas_check = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function()
         local _bucket = box.space._bucket
         local bids_part1 = {1, 3, 5}
@@ -536,11 +573,13 @@ test_group.test_local_changes_during_replicas_check = function(g)
 
         local errinj = ivshard.storage.internal.errinj
         errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = true
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for _, bid in ipairs(bids) do
             _bucket:replace{bid, ivconst.BUCKET.SENT}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
         ivshard.storage.garbage_collector_wakeup()
         ifiber.yield()
         --
@@ -548,6 +587,7 @@ test_group.test_local_changes_during_replicas_check = function(g)
         -- the master come back to life: get new refs or change status. They
         -- should remain.
         --
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for _, bid in ipairs(bids_part2) do
             _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
@@ -560,6 +600,7 @@ test_group.test_local_changes_during_replicas_check = function(g)
             _bucket:replace{bid, ivconst.BUCKET.SENT}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
         errinj.ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false
         ivshard.storage.garbage_collector_wakeup()
         -- Run GC twice - first time to end the current run. Second time to
@@ -592,19 +633,23 @@ test_group.test_local_changes_during_replicas_check = function(g)
         --
         -- Cleanup.
         --
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for _, bid in ipairs(bids) do
             _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
     end)
     vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
 -- Unit tests for gc_bucket_drop() internal function.
 --
 test_group.test_unit_gc_bucket_drop = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function(engine)
         ilt.assert_not_equals(engine, nil)
         local _bucket = box.space._bucket
@@ -685,11 +730,13 @@ test_group.test_unit_gc_bucket_drop = function(g)
             end
             box.commit()
 
+            ivshard.storage.internal.is_bucket_protected = false
             _bucket:replace{bid2_receiving, bstatus.RECEIVING}
             _bucket:replace{bid4_sent, bstatus.SENT, 'destination1'}
             _bucket:replace{bid5_garbage, bstatus.GARBAGE}
             _bucket:replace{bid6_garbage, bstatus.GARBAGE, 'destination2'}
             _bucket:replace{bid8_garbage, bstatus.GARBAGE}
+            ivshard.storage.internal.is_bucket_protected = true
             ilt.assert_equals(_bucket:count(), total_bucket_count)
         end
 
@@ -725,7 +772,9 @@ test_group.test_unit_gc_bucket_drop = function(g)
         --
         route_map = {}
         bucket_count = bucket_count - _bucket_idx_status:count(bstatus.SENT)
+        ivshard.storage.internal.is_bucket_protected = false
         ilt.assert(gc_bucket_drop(bstatus.SENT, route_map))
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert_equals(route_map, {[bid4_sent] = 'destination1'})
         ilt.assert_equals(_bucket:count(), bucket_count)
         ilt.assert_equals(_bucket.index.status:select(bstatus.SENT), {})
@@ -735,7 +784,9 @@ test_group.test_unit_gc_bucket_drop = function(g)
         --
         route_map = {}
         ilt.assert(gc_bucket_drop(bstatus.GARBAGE, route_map))
+        ivshard.storage.internal.is_bucket_protected = false
         ilt.assert(gc_bucket_drop(bstatus.SENT, route_map))
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert_equals(_bucket:count(), bucket_count)
         ilt.assert_equals(route_map, {})
         data_validate()
@@ -757,22 +808,27 @@ test_group.test_unit_gc_bucket_drop = function(g)
         --
         s1:drop()
         s2:drop()
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid2_receiving, bstatus.ACTIVE}
         _bucket:replace{bid4_sent, bstatus.ACTIVE}
         _bucket:replace{bid5_garbage, bstatus.ACTIVE}
         _bucket:replace{bid6_garbage, bstatus.ACTIVE}
         _bucket:replace{bid8_garbage, bstatus.ACTIVE}
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert_equals(_bucket:count(), total_bucket_count)
         ilt.assert_equals(_bucket.index.status:count(bstatus.ACTIVE),
                           total_bucket_count)
         _G.bucket_recovery_continue()
     end, {g.params.engine})
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
 -- Unit tests for vshard.storage.bucket_delete_garbage().
 --
 test_group.test_unit_bucket_delete_garbage = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function(engine)
         ilt.assert_not_equals(engine, nil)
         local _bucket = box.space._bucket
@@ -803,7 +859,9 @@ test_group.test_unit_bucket_delete_garbage = function(g)
 
         -- Delete an existing garbage bucket.
         data_prepare()
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid2, ivconst.BUCKET.GARBAGE}
+        ivshard.storage.internal.is_bucket_protected = true
         delete_garbage(bid2)
         ilt.assert_equals(s:select{}, {{1, bid1}, {3, bid1}})
 
@@ -816,7 +874,9 @@ test_group.test_unit_bucket_delete_garbage = function(g)
         -- Fail to delete a not garbage bucket.
         data_prepare()
         ilt.assert_equals(s:count(), 4)
+        ivshard.storage.internal.is_bucket_protected = false
         _bucket:replace{bid2, ivconst.BUCKET.ACTIVE}
+        ivshard.storage.internal.is_bucket_protected = false
         ilt.assert_error_msg_contains('Can not delete not garbage bucket',
                                       delete_garbage, bid2)
         -- tarantool/gh-7394: space:count() is broken here when mvcc is used. It
@@ -838,12 +898,15 @@ test_group.test_unit_bucket_delete_garbage = function(g)
         _G.bucket_recovery_continue()
         _G.bucket_gc_continue()
     end, {g.params.engine})
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
 
 --
 -- Unit tests for vshard.storage._call('bucket_test_gc').
 --
 test_group.test_unit_bucket_test_gc = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function()
         local bucket_count = ivshard.storage.internal.total_bucket_count
         local _bucket = box.space._bucket
@@ -882,6 +945,7 @@ test_group.test_unit_bucket_test_gc = function(g)
         ivutil.table_extend(not_ok_bids, receiving_bids)
         ivutil.table_extend(not_ok_bids, active_bids)
 
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for _, bid in ipairs(sent_ro_bids) do
             ilt.assert(ivshard.storage.bucket_refro(bid))
@@ -896,6 +960,7 @@ test_group.test_unit_bucket_test_gc = function(g)
             _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.RECEIVING}})
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
         --
         -- All is available for GC.
         --
@@ -913,9 +978,11 @@ test_group.test_unit_bucket_test_gc = function(g)
         for _, bid in ipairs(sent_ro_bids) do
             ilt.assert(ivshard.storage.bucket_unrefro(bid))
         end
+        ivshard.storage.internal.is_bucket_protected = false
         for _, bid in ipairs(test_bids) do
             _bucket:update({bid}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
         end
+        ivshard.storage.internal.is_bucket_protected = true
         box.commit()
         --
         -- Long bucket list iteration should yield.
@@ -927,6 +994,7 @@ test_group.test_unit_bucket_test_gc = function(g)
         ilt.assert_gt(bucket_count_new, bucket_count)
         sent_bids = {}
         sent_ro_bids = {}
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for i = 1, bucket_count_new do
             _bucket:replace({i, ivconst.BUCKET.ACTIVE})
@@ -940,6 +1008,7 @@ test_group.test_unit_bucket_test_gc = function(g)
             end
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
         if ivutil.feature.csw then
             local csw1 = ifiber.self():csw()
             ilt.assert_equals(test_gc(sent_bids), sent_ro_bids)
@@ -955,6 +1024,7 @@ test_group.test_unit_bucket_test_gc = function(g)
         for _, bid in ipairs(sent_ro_bids) do
             ilt.assert(ivshard.storage.bucket_unrefro(bid))
         end
+        ivshard.storage.internal.is_bucket_protected = false
         box.begin()
         for bid = 1, bucket_count do
             _bucket:replace({bid, ivconst.BUCKET.ACTIVE})
@@ -963,8 +1033,10 @@ test_group.test_unit_bucket_test_gc = function(g)
             _bucket:delete({bid})
         end
         box.commit()
+        ivshard.storage.internal.is_bucket_protected = true
         _G.bucket_recovery_continue()
         _G.bucket_gc_continue()
     end)
     vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end

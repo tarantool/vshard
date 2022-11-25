@@ -129,9 +129,16 @@ vshard.router.call(1, 'read', 'echo', {123})
 -- Not ok to write sending bucket.
 util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
 _ = test_run:switch('storage_1_a')
 box.space._bucket:delete({1})
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 _ = test_run:switch('storage_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false

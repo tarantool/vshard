@@ -15,21 +15,32 @@ _ = test_run:switch("storage_2_a")
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 vshard.storage.rebalancer_disable()
 
-_ = test_run:switch("storage_1_a")
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
+_ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 
 -- Create buckets sending to rs2 and restart - recovery must
 -- garbage some of them and activate others. Receiving buckets
 -- must be garbaged on bootstrap.
 _bucket = box.space._bucket
-
 _bucket:replace{2, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
 _bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]}
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
+util.map_bucket_protection(test_run, {REPLICASET_2}, false)
 
 _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
 vshard.storage.bucket_force_create(2)
 _bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_2}, true)
 
 _ = test_run:cmd('stop server storage_1_a')
 _ = test_run:cmd('start server storage_1_a')
@@ -57,12 +68,19 @@ while _bucket:count() ~= 2 do vshard.storage.recovery_wakeup() fiber.sleep(0.1) 
 -- Test a case, when a destination is down. The recovery fiber
 -- must restore buckets, when the destination is up.
 --
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
 _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+vshard.storage.sync()
 _ = test_run:switch('storage_2_a')
 vshard.storage.bucket_force_create(1)
+vshard.storage.sync()
+
 _ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 _ = test_run:cmd('stop server storage_2_a')
 _ = test_run:cmd('stop server storage_1_a')
 _ = test_run:cmd('start server storage_1_a')
@@ -83,9 +101,19 @@ _bucket:select{}
 -- Test a case when a bucket is sending in one place and garbage
 -- or sent or deleted on a destination.
 --
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, false)
+
+_ = test_run:switch('storage_2_a')
 _bucket:replace{1, vshard.consts.BUCKET.GARBAGE, util.replicasets[1]}
+vshard.storage.sync()
 _ = test_run:switch('storage_1_a')
 _bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, true)
+
 _ = test_run:switch('default')
 _ = test_run:cmd('stop server storage_2_a')
 _ = test_run:cmd('stop server storage_1_a')

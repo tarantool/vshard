@@ -58,8 +58,18 @@ vshard.storage.bucket_force_create(1)
 vshard.storage.buckets_info()
 ok, err = vshard.storage.bucket_force_create(1)
 assert(not ok and err.message:match("Duplicate key exists"))
-vshard.storage.bucket_force_drop(1)
 
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
+test_run:switch('storage_1_a')
+vshard.storage.bucket_force_drop(1)
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
+
+test_run:switch('storage_1_a')
 vshard.storage.buckets_info()
 vshard.storage.bucket_force_create(1)
 vshard.storage.bucket_force_create(2)
@@ -209,12 +219,20 @@ rs:callro('echo', {'some_data'})
 -- Bucket count is calculated properly.
 --
 -- Cleanup after the previous tests.
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, false)
+
 _ = test_run:switch('storage_1_a')
 buckets = vshard.storage.buckets_info()
 for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
+vshard.storage.sync()
 _ = test_run:switch('storage_2_a')
 buckets = vshard.storage.buckets_info()
 for bid, _ in pairs(buckets) do vshard.storage.bucket_force_drop(bid) end
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, true)
 
 _ = test_run:switch('storage_1_a')
 assert(vshard.storage.buckets_count() == 0)
@@ -263,7 +281,18 @@ _ = fiber.create(function()                                                     
 end)
 fiber.sleep(small_timeout)
 assert(not ok and not err)
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
+_ = test_run:switch('storage_1_a')
 vshard.storage.bucket_force_drop(10)
+vshard.storage.sync()
+
+_ = test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
+
+_ = test_run:switch('storage_1_a')
 test_run:wait_cond(function() return ok or err end)
 assert(ok)
 
