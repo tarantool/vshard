@@ -67,14 +67,14 @@ test_run:switch('box_2_a')
 vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('default')
-util.map_evals(test_run, {REPLICASET_1},                                        \
-               [[vshard.storage.internal.is_bucket_protected = false]])
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
 test_run:switch('box_1_a')
 _bucket:truncate()
+vshard.storage.sync()
+
 test_run:switch('default')
-test_run:wait_lsn('box_1_b', 'box_1_a')
-util.map_evals(test_run, {REPLICASET_1},                                        \
-               [[vshard.storage.internal.is_bucket_protected = true]])
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
@@ -101,14 +101,14 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('default')
-util.map_evals(test_run, {REPLICASET_2},                                        \
-               [[vshard.storage.internal.is_bucket_protected = false]])
+util.map_bucket_protection(test_run, {REPLICASET_2}, false)
+
 test_run:switch('box_2_a')
 _bucket:truncate()
+vshard.storage.sync()
+
 test_run:switch('default')
-test_run:wait_lsn('box_2_b', 'box_2_a')
-util.map_evals(test_run, {REPLICASET_2},                                        \
-               [[vshard.storage.internal.is_bucket_protected = true]])
+util.map_bucket_protection(test_run, {REPLICASET_2}, true)
 
 test_run:switch('box_1_a')
 -- The cluster is balanced with maximal disbalance = 100% < 300%,
@@ -150,15 +150,25 @@ wait_rebalancer_state("Rebalancer is disabled", test_run)
 -- sent.
 -- (See point (6) in the test plan)
 --
+
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
+test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
 wait_rebalancer_state("Some buckets are not active", test_run)
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 --
 -- Test garbage collector deletes sent buckets and their data.
 -- (See point (7) in the test plan)
 --
+test_run:switch('box_1_a')
 vshard.storage.rebalancer_disable()
 wait_bucket_is_collected(100)
 vshard.storage.bucket_force_create(91, 10)
@@ -169,9 +179,16 @@ space:replace{3, 93}
 space:replace{4, 150}
 space:replace{5, 151}
 
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_2}, false)
+
 test_run:switch('box_2_a')
 space = box.space.test
 for i = 91, 100 do _bucket:delete{i} end
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_2}, true)
 
 test_run:switch('box_1_a')
 _bucket:get{91}.status

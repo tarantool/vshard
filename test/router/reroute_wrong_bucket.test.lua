@@ -10,6 +10,9 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 
 test_run:cmd('create server router_1 with script="router/router_1.lua"')
 test_run:cmd('start server router_1')
+
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, false)
+
 test_run:switch('storage_1_a')
 vshard.consts.BUCKET_SENT_GARBAGE_DELAY = 100
 vshard.storage.cfg(cfg, util.name_to_uuid.storage_1_a)
@@ -51,8 +54,14 @@ _ = vshard.router.call(100, 'read', 'space_get', {'test', {1}}, {timeout = 1})
 -- TRANSFER_IS_IN_PROGRESS error object.
 test_run:switch('storage_2_a')
 box.space._bucket:replace({100, vshard.consts.BUCKET.ACTIVE})
+vshard.storage.sync()
 test_run:switch('storage_1_a')
 box.space._bucket:replace({100, vshard.consts.BUCKET.SENT, util.replicasets[2]})
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, true)
+
 test_run:switch('router_1')
 -- Emulate a situation, when a replicaset_2 while is unknown for
 -- router, but is already known for storages.

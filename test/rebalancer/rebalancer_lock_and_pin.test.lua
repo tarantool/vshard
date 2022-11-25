@@ -183,6 +183,10 @@ box.space._bucket:get{first_id}.status
 vshard.storage.bucket_unpin(first_id)
 box.space._bucket:get{first_id}.status
 
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, false)
+
+test_run:switch('box_1_a')
 -- Test that can not pin other buckets.
 test_run:cmd("setopt delimiter ';'")
 box.begin()
@@ -208,11 +212,16 @@ ok, err = vshard.storage.bucket_unpin(first_id)
 assert(not ok and err)
 box.rollback()
 test_run:cmd("setopt delimiter ''");
+vshard.storage.sync()
+
+test_run:switch('default')
+util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 --
 -- gh-189: a pinned bucket can't be sent. Unpin is required
 -- beforehand.
 --
+test_run:switch('box_1_a')
 vshard.storage.bucket_pin(first_id)
 vshard.storage.bucket_send(first_id, util.replicasets[2])
 vshard.storage.bucket_unpin(first_id)

@@ -117,20 +117,16 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     -- Turn the bucket into garbage.
     t.assert_items_include({vconst.BUCKET.SENT, vconst.BUCKET.GARBAGE},
                            {status})
-    -- GARBAGE bucket can't have refs, such updates are rejected. Have to pause
-    -- the protection for them.
-    local is_unsafe = status == vconst.BUCKET.GARBAGE
-    if is_unsafe then
-        vtest.cluster_exec_each(g, bucket_set_protection, {false})
-    end
+    -- A bucket cannot transit from ACTIVE to SENT or GARBAGE state.
+    -- Moreover, GARBAGE bucket can't have refs. All these updates are
+    -- rejected. Have to pause the protection to make these changs.
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_update_status, {bid, status})
     rep_a:exec(bucket_refro_fail, {bid, verror.code.BUCKET_IS_LOCKED})
 
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_refro_fail, {bid, verror.code.BUCKET_IS_LOCKED})
-    if is_unsafe then
-        vtest.cluster_exec_each(g, bucket_set_protection, {true})
-    end
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Collect the bucket.
     rep_b:exec(bucket_unrefro, {bid})
@@ -143,6 +139,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     rep_b:exec(bucket_check_no_ref, {bid})
 
     -- Ensure it works when a bucket has no refs too.
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_force_create, {bid})
     rep_a:exec(bucket_update_status, {bid, status})
     rep_a:exec(bucket_gc_wait)
@@ -150,6 +147,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
     rep_a:exec(bucket_check_no_ref, {bid})
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_check_no_ref, {bid})
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Cleanup.
     rep_a:exec(bucket_force_create, {bid})
@@ -157,6 +155,7 @@ local function test_bucket_space_commit_trigger_garbage(g, status)
 end
 
 local function test_bucket_space_commit_trigger_active(g, status)
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
 
@@ -201,6 +200,7 @@ local function test_bucket_space_commit_trigger_active(g, status)
     rep_a:exec(bucket_check_no_ref)
     rep_a:exec(bucket_force_create, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_commit_trigger_sent = function(g)
@@ -209,7 +209,6 @@ end
 
 test_group.test_bucket_space_commit_trigger_garbage = function(g)
     test_bucket_space_commit_trigger_garbage(g, vconst.BUCKET.GARBAGE)
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_commit_trigger_active = function(g)
@@ -221,6 +220,7 @@ test_group.test_bucket_space_commit_trigger_pinned = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_receiving = function(g)
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
 
@@ -243,20 +243,17 @@ test_group.test_bucket_space_commit_trigger_receiving = function(g)
     rep_a:exec(bucket_refro, {bid})
     rep_b:exec(bucket_refro, {bid})
     rep_a:exec(bucket_check_has_ref, {bid})
-    -- Have to pause the protection because getting a RECEIVING bucket with refs
-    -- normally is rejected.
-    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(bucket_update_status, {bid, vconst.BUCKET.RECEIVING})
     rep_a:exec(bucket_check_no_ref, {bid})
 
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_check_no_ref, {bid})
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 
     -- Restore.
     rep_a:exec(bucket_force_drop, {bid})
     rep_a:exec(bucket_force_create, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 test_group.test_bucket_space_rollback_trigger = function(g)
@@ -266,6 +263,7 @@ test_group.test_bucket_space_rollback_trigger = function(g)
     rep_a:exec(bucket_refro, {bid})
     rep_a:exec(bucket_unrefro, {bid})
     rep_a:exec(bucket_check_has_ref, {bid})
+    vtest.cluster_exec_each(g, bucket_set_protection, {false})
     rep_a:exec(function(bid)
         --
         -- Rollback won't do anything if no manual changes were made to refs.
@@ -291,14 +289,16 @@ test_group.test_bucket_space_rollback_trigger = function(g)
         ilt.assert(not ref.ro_lock)
     end, {bid})
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
 end
 
 --
 -- Protection against illegal changes in _bucket.
 --
-test_group.test_bucket_space_reject_bad_replace = function(g)
+test_group.test_bucket_space_reject_bad_replace_refs = function(g)
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
+    rep_b:exec(bucket_set_protection, {false})
     rep_a:exec(function()
         local bid = _G.get_first_bucket()
         local _bucket = box.space._bucket
@@ -320,14 +320,15 @@ test_group.test_bucket_space_reject_bad_replace = function(g)
         ivshard.storage.bucket_unrefro(bid)
         local ref = all_refs[bid]
         ilt.assert_not_equals(ref, nil)
+        ivshard.storage.internal.is_bucket_protected = false
         ivshard.storage.bucket_force_drop(bid)
+        ivshard.storage.internal.is_bucket_protected = true
         ilt.assert_equals(all_refs[bid], nil)
         all_refs[bid] = ref
         check_invalid_update(function()
             _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         end, "can't have a ref")
         all_refs[bid] = nil
-        _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         ivshard.storage.bucket_force_create(bid)
         --
         -- Transitions blocked by RW ref presence.
@@ -377,6 +378,7 @@ test_group.test_bucket_space_reject_bad_replace = function(g)
         ivshard.storage.bucket_unrefrw(bid)
     end)
     rep_b:wait_vclock_of(rep_a)
+    rep_b:exec(bucket_set_protection, {true})
 end
 
 --
@@ -409,7 +411,6 @@ test_group.test_bucket_space_truncation = function(g)
         _bucket:truncate()
     end)
     rep_b:wait_vclock_of(rep_a)
-    vtest.cluster_exec_each(g, bucket_set_protection, {true})
     rep_a:exec(function()
         local _bucket = box.space._bucket
         local new_all_refs = ivshard.storage.internal.bucket_refs
@@ -424,4 +425,75 @@ test_group.test_bucket_space_truncation = function(g)
         _G.all_buckets = nil
     end)
     rep_b:wait_vclock_of(rep_a)
+    vtest.cluster_exec_each(g, bucket_set_protection, {true})
+end
+
+test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
+    -- waiting for tarantool/tarantool#7945 to be fixed
+    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
+
+    local rep_a = g.replica_1_a
+    local rep_b = g.replica_1_b
+    rep_b:exec(bucket_set_protection, {false})
+    rep_a:exec(function()
+        local internal = ivshard.storage.internal
+        local _bucket = box.space._bucket
+        local bucket_state_edges = internal.bucket_state_edges
+        local all_states = {box.NULL}
+        for _, state in pairs(ivconst.BUCKET) do
+            table.insert(all_states, state)
+        end
+        local bid = _G.get_first_bucket()
+        local count = 0
+        for _, src in pairs(all_states) do
+            for _, dst in pairs(all_states) do
+                if src == dst then
+                    goto next_dst
+                end
+                count = count + 1
+                internal.is_bucket_protected = false
+                if src == box.NULL then
+                    _bucket:delete{bid}
+                else
+                    _bucket:replace{bid, src}
+                end
+                internal.is_bucket_protected = true
+
+                local src_edge = bucket_state_edges[src]
+                local should_be_ok = src_edge and src_edge[dst]
+                local ok, err
+                if dst == box.NULL then
+                    ok, err = pcall(_bucket.delete, _bucket, {bid})
+                else
+                    ok, err = pcall(_bucket.replace, _bucket, {bid, dst})
+                end
+
+                if should_be_ok then
+                    ilt.assert(ok)
+                    goto next_dst
+                end
+                ilt.assert(not ok, ('%s - %s'):format(src, dst))
+                -- Exceptions are wrapped into box errors' messages. Thus vshard
+                -- error is serialized into a string.
+                ilt.assert_str_contains(err.message, 'BUCKET_INVALID_UPDATE')
+                local msg
+                if dst == box.NULL then
+                    msg = "can't delete '%s' bucket"
+                else
+                    msg = "transition '%s' to '%s' is not allowed"
+                end
+                ilt.assert_str_contains(err.message, msg:format(
+                    src == box.NULL and 'nil' or src,
+                    dst == box.NULL and 'nil' or dst))
+            ::next_dst::
+            end
+        end
+        internal.is_bucket_protected = false
+        _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
+        internal.is_bucket_protected = true
+        -- To be sure that the loops above didn't somehow skip everything.
+        ilt.assert_equals(count, 42, 'transition count')
+    end)
+    rep_b:wait_vclock_of(rep_a)
+    rep_b:exec(bucket_set_protection, {true})
 end
