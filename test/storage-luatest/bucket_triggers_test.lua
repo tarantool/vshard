@@ -212,6 +212,8 @@ test_group.test_bucket_space_commit_trigger_garbage = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_active = function(g)
+    -- waiting for tarantool/tarantool#7977 to be fixed
+    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
     test_bucket_space_commit_trigger_active(g, vconst.BUCKET.ACTIVE)
 end
 
@@ -220,6 +222,9 @@ test_group.test_bucket_space_commit_trigger_pinned = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_receiving = function(g)
+    -- waiting for tarantool/tarantool#7977 to be fixed
+    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
+
     vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
@@ -296,6 +301,9 @@ end
 -- Protection against illegal changes in _bucket.
 --
 test_group.test_bucket_space_reject_bad_replace_refs = function(g)
+    -- waiting for tarantool/tarantool#7977 to be fixed
+    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
+
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
     rep_b:exec(bucket_set_protection, {false})
@@ -436,6 +444,9 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
     local rep_b = g.replica_1_b
     rep_b:exec(bucket_set_protection, {false})
     rep_a:exec(function()
+        -- We need to pause garbage collecting as gc isn't supposed
+        -- to delete GARBAGE or replace SENT with GARBAGE bucket.
+        _G.bucket_gc_pause()
         local internal = ivshard.storage.internal
         local _bucket = box.space._bucket
         local bucket_state_edges = internal.bucket_state_edges
@@ -493,6 +504,7 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
         internal.is_bucket_protected = true
         -- To be sure that the loops above didn't somehow skip everything.
         ilt.assert_equals(count, 42, 'transition count')
+        _G.bucket_gc_continue()
     end)
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_set_protection, {true})
