@@ -17,8 +17,8 @@ err = nil
 function on_master_enable() box.space.test:replace{1, 1} end
 -- Test, that in disable trigger already can not write.
 function on_master_disable() ok, err = pcall(box.space.test.replace, box.space.test, {2, 2}) end
-vshard.storage.on_master_enable(on_master_enable)
-vshard.storage.on_master_disable(on_master_disable)
+_ = vshard.storage.on_master_enable(on_master_enable)
+_ = vshard.storage.on_master_disable(on_master_disable)
 box.space.test:select{}
 
 _ = test_run:switch('storage_1_b')
@@ -28,8 +28,8 @@ assert(not ok and err.code == box.error.READONLY)
 fiber = require('fiber')
 function on_master_enable() box.space.test:replace{3, 3} end
 function on_master_disable() if not box.cfg.read_only then box.space.test:replace{4, 4} end end
-vshard.storage.on_master_enable(on_master_enable)
-vshard.storage.on_master_disable(on_master_disable)
+_ = vshard.storage.on_master_enable(on_master_enable)
+_ = vshard.storage.on_master_disable(on_master_disable)
 -- Yes, there is no 3 or 4, because a trigger on disable always
 -- works in readonly.
 box.space.test:select{}

@@ -959,20 +959,22 @@ local function this_is_master()
 end
 
 local function on_master_disable(new_func, old_func)
-    M._on_master_disable(new_func, old_func)
+    local func = M._on_master_disable(new_func, old_func)
     -- If a trigger is set after storage.cfg(), then notify an
     -- user, that the current instance is not master.
     if old_func == nil and not this_is_master() then
         M._on_master_disable:run()
     end
+    return func
 end
 
 local function on_master_enable(new_func, old_func)
-    M._on_master_enable(new_func, old_func)
+    local func = M._on_master_enable(new_func, old_func)
     -- Same as above, but notify, that the instance is master.
     if old_func == nil and this_is_master() then
         M._on_master_enable:run()
     end
+    return func
 end
 
 --------------------------------------------------------------------------------
