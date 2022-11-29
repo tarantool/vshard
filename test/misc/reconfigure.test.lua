@@ -50,8 +50,8 @@ disable_count = 0
 enable_count = 0
 function on_master_disable() disable_count = disable_count + 1 end
 function on_master_enable() enable_count = enable_count + 1 end
-vshard.storage.on_master_disable(on_master_disable)
-vshard.storage.on_master_enable(on_master_enable)
+_ = vshard.storage.on_master_disable(on_master_disable)
+_ = vshard.storage.on_master_enable(on_master_enable)
 
 -- test without master
 for _, rs in pairs(cfg.sharding) do for _, s in pairs(rs.replicas) do s.master = nil end end

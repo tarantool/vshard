@@ -22,8 +22,8 @@ master_enabled = false
 master_disabled = false
 function on_master_enable() master_enabled = true end
 function on_master_disable() master_disabled = true end
-vshard.storage.on_master_enable(on_master_enable)
-vshard.storage.on_master_disable(on_master_disable)
+_ = vshard.storage.on_master_enable(on_master_enable)
+_ = vshard.storage.on_master_disable(on_master_disable)
 master_enabled
 master_disabled
 -- Test the same about master disabling.
@@ -32,8 +32,8 @@ master_enabled = false
 master_disabled = false
 function on_master_enable() master_enabled = true end
 function on_master_disable() master_disabled = true end
-vshard.storage.on_master_enable(on_master_enable)
-vshard.storage.on_master_disable(on_master_disable)
+_ = vshard.storage.on_master_enable(on_master_enable)
+_ = vshard.storage.on_master_disable(on_master_disable)
 master_enabled
 master_disabled
 
