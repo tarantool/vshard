@@ -9,6 +9,14 @@ return {
         GARBAGE = 'garbage',
     },
 
+    BUCKET_EVENT = {
+        -- Txn triggers allow to attach anything to the bucket transaction. That
+        -- was requested by a customer to be able to detect vshard book-keeping
+        -- actions like bucket sending right in the journal.
+        RECV = 'bucket_data_recv_txn',
+        GC = 'bucket_data_gc_txn'
+    },
+
     STATUS = {
         GREEN = 0,
         YELLOW = 1,
