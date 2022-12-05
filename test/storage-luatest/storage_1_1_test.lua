@@ -1,4 +1,5 @@
 local t = require('luatest')
+local vconst = require('vshard.consts')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 
@@ -155,5 +156,110 @@ test_group.test_bucket_send_field_types = function(g)
 
     vtest.cluster_exec_each_master(g, function()
         box.space.test:drop()
+    end)
+end
+
+--
+-- Custom triggers on bucket changes.
+--
+test_group.test_on_bucket_event = function(g)
+    vtest.cluster_exec_each_master(g, function(engine)
+        local event_space = box.schema.space.create('events', {
+            engine = engine,
+        })
+        event_space:create_index('primary')
+
+        local function data_space_new(name)
+            local s = box.schema.space.create(name, {
+                engine = engine,
+                format = {
+                    {'id', 'unsigned'},
+                    {'bucket_id', 'unsigned'},
+                },
+            })
+            s:create_index('id', {parts = {'id'}})
+            s:create_index('bucket_id', {
+                parts = {'bucket_id'}, unique = false
+            })
+        end
+        data_space_new('data1')
+        data_space_new('data2')
+
+        local test_txn_id = 0
+        local test_events = {}
+        local test_commits = {}
+        rawset(_G, 'test_trigger', function(event_type, bucket_id, data)
+            test_txn_id = test_txn_id + 1
+            local tid = test_txn_id
+            local event_data = {event_type, bucket_id, data}
+            ilt.assert(box.is_in_txn())
+            ilt.assert(not test_events[tid])
+            event_space:insert{tid, event_data}
+            test_events[tid] = event_data
+
+            box.on_commit(function(iterator)
+                for _, _, _, space_id in iterator() do
+                    if space_id == event_space.id then
+                        test_commits[tid] = true
+                        break
+                    end
+                end
+            end)
+        end)
+        ivshard.storage.on_bucket_event(_G.test_trigger)
+
+        rawset(_G, 'process_events', function(expected_events)
+            -- Compare only the items, not looking at the order. Because the
+            -- spaces can be sent in any order, can't rely on one.
+            ilt.assert_items_equals(test_events, expected_events)
+            -- Ensure that each saved event is also persisted.
+            for tid, event_data in pairs(test_events) do
+                ilt.assert_equals(box.space.events:get{tid}, {tid, event_data})
+                ilt.assert_not_equals(test_commits[tid], nil)
+                test_commits[tid] = nil
+                box.space.events:delete{tid}
+            end
+            test_events = {}
+            -- No unexpected events anywhere.
+            ilt.assert(not next(test_commits))
+            ilt.assert_equals(box.space.events.index[0]:min(), nil)
+        end)
+    end, {g.params.engine})
+
+    local rs1_uuid = g.replica_1_a:exec(function()
+        return box.info.cluster.uuid
+    end)
+    local bid = g.replica_2_a:exec(function(rs1_uuid)
+        local bid = _G.get_first_bucket()
+        box.space.data1:insert({10, bid})
+        box.space.data2:insert({20, bid})
+        local ok, err = ivshard.storage.bucket_send(
+            bid, rs1_uuid, {timeout = _G.iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+        return bid
+    end, {rs1_uuid})
+
+    g.replica_2_a:exec(function(events)
+        _G.process_events(events)
+    end, {{
+        [1] = {vconst.BUCKET_EVENT.GC, bid, {spaces = {'data1'}}},
+        [2] = {vconst.BUCKET_EVENT.GC, bid, {spaces = {'data2'}}},
+    }})
+
+    g.replica_1_a:exec(function(events)
+        _G.process_events(events)
+    end, {{
+        [1] = {vconst.BUCKET_EVENT.RECV, bid, {spaces = {'data1'}}},
+        [2] = {vconst.BUCKET_EVENT.RECV, bid, {spaces = {'data2'}}},
+    }})
+
+    -- Cleanup
+    vtest.cluster_exec_each_master(g, function()
+        ivshard.storage.on_bucket_event(nil, _G.test_trigger)
+        box.space.events:drop()
+        box.space.data1:drop()
+        box.space.data2:drop()
     end)
 end

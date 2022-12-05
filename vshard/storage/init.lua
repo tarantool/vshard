@@ -69,6 +69,10 @@ if not M then
         -- before the event occurs.
         _on_master_enable = trigger.new('_on_master_enable'),
         _on_master_disable = trigger.new('_on_master_disable'),
+        -- Trigger on bucket change event. It's called as the first
+        -- operation in bucket related transaction. All supported
+        -- types of trigger are inside vshard.consts.BUCKET_EVENT.
+        _on_bucket_event = trigger.new('_on_bucket_event'),
         -- Index which is a trigger to shard its space by numbers in
         -- this index. It must have at first part either unsigned,
         -- or integer or number type and be not nullable. Values in
@@ -223,6 +227,9 @@ else
     end
     if M.is_bucket_protected == nil then
         M.is_bucket_protected = true
+    end
+    if M._on_bucket_event == nil then
+        M._on_bucket_event = trigger.new('_on_bucket_event')
     end
 end
 
@@ -1012,6 +1019,10 @@ local function on_master_enable(new_func, old_func)
     return func
 end
 
+local function on_bucket_event(new_func, old_func)
+    return M._on_bucket_event(new_func, old_func)
+end
+
 --------------------------------------------------------------------------------
 -- Recovery
 --------------------------------------------------------------------------------
@@ -1633,6 +1644,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     end
     local bucket_generation = M.bucket_generation
     local limit = consts.BUCKET_CHUNK_SIZE
+    local event_type = consts.BUCKET_EVENT.RECV
     for _, row in ipairs(data) do
         local space_name, space_data = row[1], row[2]
         local space = box.space[space_name]
@@ -1641,6 +1653,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             return nil, lerror.box(err)
         end
         box.begin()
+        M._on_bucket_event:run(event_type, bucket_id, {spaces = {space_name}})
         for _, tuple in ipairs(space_data) do
             local ok, err = pcall(space.insert, space, tuple)
             if not ok then
@@ -1659,6 +1672,8 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, recvg)
                 box.begin()
+                M._on_bucket_event:run(event_type, bucket_id,
+                                       {spaces = {space_name}})
                 limit = consts.BUCKET_CHUNK_SIZE
             end
         end
@@ -2177,6 +2192,8 @@ local function gc_bucket_in_space_xc(space, bucket_id, status)
 ::restart::
     local limit = consts.BUCKET_CHUNK_SIZE
     box.begin()
+    M._on_bucket_event:run(consts.BUCKET_EVENT.GC, bucket_id,
+                           {spaces = {space.name}})
     for _, tuple in bucket_index:pairs({bucket_id}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
         limit = limit - 1
@@ -3767,6 +3784,7 @@ return {
     cfg = function(cfg, uuid) return storage_cfg_fiber_safe(cfg, uuid, false) end,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,
+    on_bucket_event = on_bucket_event,
     enable = storage_enable,
     disable = storage_disable,
     internal = M,
