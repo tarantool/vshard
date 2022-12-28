@@ -15,6 +15,8 @@ function slow_fail() fiber.sleep(0.01) error('Error happened.') end
 fake_M.reloadable_function = function () fake_M.reloadable_function = slow_fail; slow_fail() end
 
 fib = util.reloadable_fiber_create('Worker_name', fake_M, 'reloadable_function')
+-- Check that the fiber starts with the proper name
+while not test_run:grep_log('default', 'Worker_name.+reloadable_function has been started') do fiber.sleep(0.01); end
 while not test_run:grep_log('default', 'reloadable function reloadable_function has been changed') do fiber.sleep(0.01); end
 fib:cancel()
 test_run:grep_log('default', 'module is reloaded, restarting')
