@@ -577,13 +577,35 @@ local function replicaset_template_multicallro(prefer_replica, balance)
     local function pick_next_replica(replicaset, now)
         local r
         local master = replicaset.master
+
         if balance then
+            local prefered_zone = replicaset.priority_list[1].zone
             local i = #replicaset.priority_list
             while i > 0 do
                 r = replicaset_balance_replica(replicaset)
                 i = i - 1
                 if r:is_connected() and (not prefer_replica or r ~= master) and
-                   replica_check_backoff(r, now) then
+                    replica_check_backoff(r, now)
+                then
+                    -- Pick a replica according prefered zone (highest priority replica zone) in round-robin manner.
+                    if balance == 2 and prefered_zone then
+                        -- save current rr-cursor position
+                        local cbi = replicaset.balance_i
+                        -- find next replica
+                        local nr = replicaset_balance_replica(replicaset)
+
+                        if prefered_zone and r.zone and r.zone == prefered_zone -- current replica is in prefered_zone
+                            and nr.zone and nr.zone ~= prefered_zone -- next replica is from different zone (reached prefered_zone replicas)
+                            and (not prefer_replica or nr ~= master)
+                        then
+                            -- reset cursor to the main position
+                            replicaset.balance_i = 1
+                        else
+                            -- restore rr-cursor position
+                            replicaset.balance_i = cbi
+                        end
+                    end
+
                     return r
                 end
             end
@@ -637,6 +659,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 end
             end
             opts.timeout = timeout
+
             net_status, storage_status, retval, err =
                 replica_call(replica, func, args, opts)
             now = fiber_clock()
@@ -990,8 +1013,10 @@ local replicaset_mt = {
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);
         callbro = replicaset_template_multicallro(false, true);
+        callbzro = replicaset_template_multicallro(false, 2);
         callre = replicaset_template_multicallro(true, false);
         callbre = replicaset_template_multicallro(true, true);
+        callbzre = replicaset_template_multicallro(true, 2);
         map_call = replicaset_map_call,
         update_master = replicaset_update_master,
     };
@@ -1235,6 +1260,7 @@ local function buildall(sharding_cfg)
         local function replica_cmp_weight(r1, r2)
             -- Master has priority over replicas with the same
             -- weight.
+
             if r1.weight == r2.weight then
                 return r1 == new_replicaset.master
             else
