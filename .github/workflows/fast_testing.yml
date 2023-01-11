@@ -27,11 +27,11 @@ jobs:
     env:
       TNT_RELEASE_PATH: /home/runner/tnt-release
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
         if: startsWith(matrix.tarantool, 'release') != true
-        uses: tarantool/setup-tarantool@v1
+        uses: tarantool/setup-tarantool@v2
         with:
           tarantool-version: ${{ matrix.tarantool }}
 
