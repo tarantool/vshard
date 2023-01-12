@@ -2685,6 +2685,9 @@ local function route_dispenser_create(routes)
     return {
         rlist = rlist,
         map = map,
+        -- Error, which occurred in `bucket_send` and led to
+        -- skipping of the above-mentioned uuid from dispenser.
+        error = nil,
     }
 end
 
@@ -2815,6 +2818,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
                       'error %s', uuid, err)
             log.info('Can not finish transfers to %s, skip to next round', uuid)
             worker_throttle_count = 0
+            dispenser.error = dispenser.error or err
             route_dispenser_skip(dispenser, uuid)
             goto continue
         end
@@ -2872,7 +2876,11 @@ local function rebalancer_apply_routes_f(routes)
             log.error('Rebalancer worker %d threw an exception: %s', i, res)
         end
     end
-    log.info('Rebalancer routes are applied')
+    if not dispenser.error then
+        log.info('Rebalancer routes are applied')
+    else
+        log.info("Couldn't apply some rebalancer routes")
+    end
     local throttled = {}
     for uuid, dst in pairs(dispenser.map) do
         if dst.is_throttle_warned then
