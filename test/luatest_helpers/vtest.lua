@@ -6,6 +6,7 @@ local fiber = require('fiber')
 local uuid = require('uuid')
 local yaml = require('yaml')
 local vrepset = require('vshard.replicaset')
+local log = require('log')
 
 local wait_timeout = 50
 -- Use it in busy-loops like `while !cond do fiber.sleep(busy_step) end`.
@@ -601,6 +602,104 @@ local function drop_instance(g, instance)
     g[instance.alias] = nil
 end
 
+--------------------------------------------------------------------------------
+-- Service info helpers
+--------------------------------------------------------------------------------
+
+--
+-- Wait for the status of the service to be equal to the one user expects.
+-- The function assumes, that the current status is not the one user want
+-- to see (requested status must have another status_idx).
+--
+-- Following opts are accepted: opts.timeout and opts.on_yield
+--
+local function service_wait_for_new_status(service, status, opts)
+    opts = opts or {}
+    local first_status_idx = service.status_idx
+    t.helpers.retrying({timeout = opts.timeout or wait_timeout,
+                        delay = busy_step}, function()
+        if first_status_idx ~= service.status_idx and
+           service.status == status then
+            return
+        end
+        if opts.on_yield then
+            opts.on_yield()
+        end
+        error(string.format('waiting for status "%s" timed out: ' ..
+                            'last status is "%s" with status_idx %d',
+                            status, service.status, service.status_idx))
+    end)
+end
+
+--
+-- Wait until the error, passed to the function's argument, occurs.
+-- The error must have new status_idx different from the current one.
+--
+local function service_wait_for_new_error(service, error, opts)
+    log.info('Waiting for new error "%s" of "%s" service',
+             error, service.name)
+    repeat
+        service_wait_for_new_status(service, 'error', opts)
+    until string.match(service.error, error)
+end
+
+--
+-- Check if current status is 'error' and the error is the one,
+-- user requested. If not, wait for a new 'error'.
+--
+local function service_wait_for_error(service, error, opts)
+    log.info('Waiting for error "%s" of "%s" service', error, service.name)
+    if service.status == 'error' and string.match(service.error, error) then
+        return
+    end
+    service_wait_for_new_error(service, error, opts)
+end
+
+--
+-- Wait until the new status of the service is 'ok'. The status must
+-- have new status_idx different from the current one.
+--
+local function service_wait_for_new_ok(service, opts)
+    log.info('Waiting for new ok status of "%s" service', service.name)
+    service_wait_for_new_status(service, 'ok', opts)
+end
+
+--
+-- Check if current status is 'ok' and if not, wait for a new 'ok'.
+-- Ignore this status if `status_idx` equals to 0 as this one is default
+-- value and no iteration of background service was done yet.
+--
+local function service_wait_for_ok(service, opts)
+    log.info('Waiting for ok status of "%s" service', service.name)
+    if service.status_idx ~= 0 and service.status == 'ok' then
+        log.info('"%s" already has ok status', service.name)
+        return
+    end
+    service_wait_for_new_ok(service, opts)
+end
+
+--
+-- Wait for activity. Passed value can be the substring of the
+-- actual activity.
+--
+local function service_wait_for_activity(service, activity, opts)
+    opts = opts or {}
+    log.info('Waiting for activity "%s" of "%s" service ',
+             activity, service.name)
+    t.helpers.retrying({timeout = opts.timeout or wait_timeout,
+                        delay = busy_step}, function()
+        if string.match(service.activity, activity) then
+            return
+        end
+        if opts.on_yield then
+            opts.on_yield()
+        end
+        error(string.format('waiting for activity "%s" timed out: '..
+                            'last activity is %s', activity,
+                            service.activity))
+    end)
+end
+
 return {
     error_is_timeout = error_is_timeout,
     config_new = config_new,
@@ -625,4 +724,9 @@ return {
     wait_timeout = wait_timeout,
     busy_step = busy_step,
     drop_instance = drop_instance,
+    service_wait_for_ok = service_wait_for_ok,
+    service_wait_for_new_ok = service_wait_for_new_ok,
+    service_wait_for_error = service_wait_for_error,
+    service_wait_for_new_error = service_wait_for_new_error,
+    service_wait_for_activity = service_wait_for_activity,
 }
