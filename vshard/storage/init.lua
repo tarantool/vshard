@@ -16,7 +16,7 @@ local MODULE_INTERNALS = '__module_vshard_storage'
 if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg', 'vshard.version',
-        'vshard.replicaset', 'vshard.util',
+        'vshard.replicaset', 'vshard.util', 'vshard.service_info',
         'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
     }
@@ -31,6 +31,7 @@ local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lregistry = require('vshard.registry')
+local lservice_info = require('vshard.service_info')
 local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
 local reload_evolution = require('vshard.storage.reload_evolution')
@@ -92,6 +93,7 @@ if not M then
             ERRINJ_DISCOVERY = false,
             ERRINJ_BUCKET_GC_PAUSE = false,
             ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false,
+            ERRINJ_APPLY_ROUTES_STOP_DELAY = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -164,19 +166,27 @@ if not M then
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
         collect_bucket_garbage_fiber = nil,
+        -- Save statuses and errors for the gc fiber
+        gc_service = nil,
         -- How many times the GC fiber performed the garbage collection.
         bucket_gc_count = 0,
 
         -------------------- Bucket recovery ---------------------
         recovery_fiber = nil,
+        -- Save statuses and errors for the recovery fiber
+        recovery_service = nil,
 
         ----------------------- Rebalancer -----------------------
         -- Fiber to rebalance a cluster.
         rebalancer_fiber = nil,
+        -- Save statuses and errors for the rebalancer fiber
+        rebalancer_service = nil,
         -- Fiber which applies routes one by one. Its presence and
         -- active status means that the rebalancing is in progress
         -- now on the current node.
         rebalancer_applier_fiber = nil,
+        -- Save statuses and errors for the rebalancer_applier fiber
+        routes_applier_service = nil,
         -- Internal flag to activate and deactivate rebalancer. Mostly
         -- for tests.
         is_rebalancer_active = true,
@@ -1174,7 +1184,7 @@ end
 -- has failed due to tarantool or network problems. Restarts on
 -- reload.
 --
-local function recovery_f()
+local function recovery_service_f(service)
     local module_version = M.module_version
     -- Change of _bucket increments bucket generation. Recovery has its own
     -- bucket generation which is <= actual. Recovery is finished, when its
@@ -1186,6 +1196,7 @@ local function recovery_f()
     -- Interrupt recovery if a module has been reloaded. Perhaps,
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
+        service:next_iter()
         if M.errinj.ERRINJ_RECOVERY_PAUSE then
             M.errinj.ERRINJ_RECOVERY_PAUSE = 1
             lfiber.sleep(0.01)
@@ -1196,20 +1207,24 @@ local function recovery_f()
             goto sleep
         end
 
+        service:set_activity('recovering sending')
         ok, total, recovered = pcall(recovery_step_by_type,
                                      consts.BUCKET.SENDING)
         if not ok then
             is_all_recovered = false
-            log.error('Error during sending buckets recovery: %s', total)
+            log.error(service:set_status_error(
+                'Error during sending buckets recovery: %s', total))
         elseif total ~= recovered then
             is_all_recovered = false
         end
 
+        service:set_activity('recovering receiving')
         ok, total, recovered = pcall(recovery_step_by_type,
                                      consts.BUCKET.RECEIVING)
         if not ok then
             is_all_recovered = false
-            log.error('Error during receiving buckets recovery: %s', total)
+            log.error(service:set_status_error(
+                'Error during receiving buckets recovery: %s', total))
         elseif total == 0 then
             bucket_receiving_quota_reset()
         else
@@ -1223,26 +1238,39 @@ local function recovery_f()
         if not is_all_recovered then
             bucket_generation_recovered = -1
         else
+            service:set_status_ok()
             bucket_generation_recovered = bucket_generation_current
         end
         bucket_generation_current = M.bucket_generation
 
+        local sleep_activity = 'idling'
         if not is_all_recovered then
             -- One option - some buckets are not broken. Their transmission is
             -- still in progress. Don't need to retry immediately. Another
             -- option - network errors when tried to repair the buckets. Also no
             -- need to retry often. It won't help.
             sleep_time = consts.RECOVERY_BACKOFF_INTERVAL
+            sleep_activity = 'backoff'
         elseif bucket_generation_recovered ~= bucket_generation_current then
             sleep_time = 0
         else
             sleep_time = consts.TIMEOUT_INFINITY
         end
         if module_version == M.module_version then
+            service:set_activity(sleep_activity)
             M.bucket_generation_cond:wait(sleep_time)
         end
     ::continue::
     end
+end
+
+local function recovery_f()
+    assert(not M.recovery_service)
+    local service = lservice_info.new('recovery')
+    M.recovery_service = service
+    pcall(recovery_service_f, service)
+    assert(M.recovery_service == service)
+    M.recovery_service = nil
 end
 
 --
@@ -2399,7 +2427,7 @@ end
 -- 4) Sleep, go to (1).
 -- For each step details see comments in the code.
 --
-local function gc_bucket_f()
+local function gc_bucket_service_f(service)
     local module_version = M.module_version
     -- Changes of _bucket increments bucket generation. Garbage
     -- collector has its own bucket generation which is <= actual.
@@ -2420,19 +2448,23 @@ local function gc_bucket_f()
     local route_map_deadline = 0
     local status, err, is_done
     while M.module_version == module_version do
+        service:next_iter()
         if M.errinj.ERRINJ_BUCKET_GC_PAUSE then
             M.errinj.ERRINJ_BUCKET_GC_PAUSE = 1
             lfiber.sleep(0.01)
             goto continue
         end
         if bucket_generation_collected ~= bucket_generation_current then
+            service:set_activity('gc garbage')
             status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
             if status then
+                service:set_activity('gc sent')
                 status, is_done, err = gc_bucket_process_sent()
             end
             if not status then
                 box.rollback()
-                log.error('Error during garbage collection step: %s', err)
+                log.error(service:set_status_error(
+                    'Error during garbage collection step: %s', err))
             elseif is_done then
                 -- Don't use global generation. During the collection it could
                 -- already change. Instead, remember the generation known before
@@ -2449,6 +2481,7 @@ local function gc_bucket_f()
             end
         else
             status = true
+            service:set_status_ok()
         end
 
         local sleep_time = route_map_deadline - fiber_clock()
@@ -2465,6 +2498,7 @@ local function gc_bucket_f()
         end
         bucket_generation_current = M.bucket_generation
 
+        local sleep_activity = 'idling'
         if bucket_generation_current ~= bucket_generation_collected then
             -- Generation was changed during collection. Or *by* collection.
             if status then
@@ -2479,15 +2513,26 @@ local function gc_bucket_f()
                 -- SENT buckets are still RO-refed on a replica - all these
                 -- issues are not going to be fixed quickly anyway. Backoff.
                 sleep_time = consts.GC_BACKOFF_INTERVAL
+                sleep_activity = 'backoff'
             end
         end
 
         M.bucket_gc_count = M.bucket_gc_count + 1
         if M.module_version == module_version then
+            service:set_activity(sleep_activity)
             M.bucket_generation_cond:wait(sleep_time)
         end
     ::continue::
     end
+end
+
+local function gc_bucket_f()
+    assert(not M.gc_service)
+    local service = lservice_info.new('gc')
+    M.gc_service = service
+    pcall(gc_bucket_service_f, service)
+    assert(M.gc_service == service)
+    M.gc_service = nil
 end
 
 --
@@ -2846,8 +2891,9 @@ end
 -- Main applier of rebalancer routes. It manages worker fibers,
 -- logs total results.
 --
-local function rebalancer_apply_routes_f(routes)
+local function rebalancer_service_apply_routes_f(service, routes)
     lfiber.name('vshard.rebalancer_applier')
+    service:set_activity('applying routes')
     local worker_count = M.rebalancer_worker_count
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
@@ -2873,13 +2919,16 @@ local function rebalancer_apply_routes_f(routes)
         local f = workers[i]
         local ok, res = f:join()
         if not ok then
-            log.error('Rebalancer worker %d threw an exception: %s', i, res)
+            log.error(service:set_status_error(
+                'Rebalancer worker %d threw an exception: %s', i, res))
         end
     end
     if not dispenser.error then
         log.info('Rebalancer routes are applied')
+        service:set_status_ok()
     else
-        log.info("Couldn't apply some rebalancer routes")
+        log.info(service:set_status_error(
+            "Couldn't apply some rebalancer routes: %s", dispenser.error))
     end
     local throttled = {}
     for uuid, dst in pairs(dispenser.map) do
@@ -2893,6 +2942,20 @@ local function rebalancer_apply_routes_f(routes)
                  '"rebalancer_max_receiving" or decrease '..
                  '"rebalancer_worker_count"', table.concat(throttled, ', '))
     end
+    service:set_activity('idling')
+end
+
+local function rebalancer_apply_routes_f(routes)
+    assert(not M.routes_applier_service)
+    local service = lservice_info.new('routes_applier')
+    M.routes_applier_service = service
+    pcall(rebalancer_service_apply_routes_f, service, routes)
+    -- Delay service destruction in order to check states and errors
+    while M.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY do
+        lfiber.sleep(0.001)
+    end
+    assert(M.routes_applier_service == service)
+    M.routes_applier_service = nil
 end
 
 --
@@ -2954,13 +3017,16 @@ end
 -- Background rebalancer. Works on a storage which has the
 -- smallest replicaset uuid and which is master.
 --
-local function rebalancer_f()
+local function rebalancer_service_f(service)
     local module_version = M.module_version
     while module_version == M.module_version do
+        service:next_iter()
         while not M.is_rebalancer_active do
             log.info('Rebalancer is disabled. Sleep')
+            M.rebalancer_service:set_activity('disabled')
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
         end
+        service:set_activity('downloading states')
         local status, replicasets, total_bucket_active_count =
             pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
@@ -2968,10 +3034,12 @@ local function rebalancer_f()
         end
         if not status or replicasets == nil then
             if not status then
-                log.error('Error during downloading rebalancer states: %s',
-                          replicasets)
+                log.error(service:set_status_error(
+                    'Error during downloading rebalancer states: %s',
+                    replicasets))
             end
             log.info('Some buckets are not active, retry rebalancing later')
+            service:set_activity('idling')
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
             goto continue
         end
@@ -2995,6 +3063,8 @@ local function rebalancer_f()
             end
             log.info('%s Schedule next rebalancing after %f seconds',
                      balance_msg, consts.REBALANCER_IDLE_INTERVAL)
+            service:set_status_ok()
+            service:set_activity('idling')
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
             goto continue
         end
@@ -3004,22 +3074,35 @@ local function rebalancer_f()
         -- incorrectly.
         assert(next(routes) ~= nil)
         for src_uuid, src_routes in pairs(routes) do
+            service:set_activity('applying routes')
             local rs = M.replicasets[src_uuid]
             local status, err =
                 rs:callrw('vshard.storage.rebalancer_apply_routes',
                           {src_routes})
             if not status then
-                log.error('Error during routes appying on "%s": %s. '..
-                          'Try rebalance later', rs, lerror.make(err))
+                log.error(service:set_status_error(
+                    'Error during routes appying on "%s": %s. '..
+                    'Try rebalance later', rs, lerror.make(err)))
+                service:set_activity('idling')
                 lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
                 goto continue
             end
         end
         log.info('Rebalance routes are sent. Schedule next wakeup after '..
                  '%f seconds', consts.REBALANCER_WORK_INTERVAL)
+        service:set_activity('idling')
         lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
 ::continue::
     end
+end
+
+local function rebalancer_f()
+    assert(not M.rebalancer_service)
+    local service = lservice_info.new('rebalancer')
+    M.rebalancer_service = service
+    pcall(rebalancer_service_f, service)
+    assert(M.rebalancer_service == service)
+    M.rebalancer_service = nil
 end
 
 --
@@ -3435,7 +3518,7 @@ local function storage_buckets_info(bucket_id)
     return ibuckets
 end
 
-local function storage_info()
+local function storage_info(opts)
     local state = {
         alerts = {},
         replication = {},
@@ -3553,6 +3636,15 @@ local function storage_info()
         end
     end
     state.replicasets = ireplicasets
+    if opts and opts.with_services then
+        state.services = {
+            gc = M.gc_service and M.gc_service:info(),
+            rebalancer = M.rebalancer_service and M.rebalancer_service:info(),
+            recovery = M.recovery_service and M.recovery_service:info(),
+            routes_applier = M.routes_applier_service and
+                M.routes_applier_service:info(),
+        }
+    end
     return state
 end
 
