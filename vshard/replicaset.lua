@@ -63,6 +63,7 @@ local util = require('vshard.util')
 local fiber_clock = fiber.clock
 local fiber_yield = fiber.yield
 local fiber_cond_wait = util.fiber_cond_wait
+local future_wait = util.future_wait
 local gsc = util.generate_self_checker
 
 --
@@ -717,7 +718,7 @@ local function replicaset_map_call(replicaset, func, args, opts)
     --
     map = table.new(0, replica_count)
     for uuid, future in pairs(futures) do
-        res, err = future:wait_result(timeout)
+        res, err = future_wait(future, timeout)
         if res == nil then
             err_uuid = uuid
             goto fail
@@ -926,7 +927,7 @@ local function replicaset_locate_master(replicaset)
             -- a sign of a master.
             timeout = 0
         end
-        res, err = f:wait_result(timeout)
+        res, err = future_wait(f, timeout)
         timeout = deadline - fiber_clock()
         if not res then
             f:discard()
