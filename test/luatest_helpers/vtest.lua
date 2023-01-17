@@ -602,6 +602,47 @@ local function drop_instance(g, instance)
     g[instance.alias] = nil
 end
 
+--
+-- Wait until the member of the tab (table) becomes not equal to nil.
+-- As we want to have a 'pointer' to the member and not just the copy
+-- of nil, we pass table and the expected member's name.
+--
+local function wait_for_not_nil(tab, member, opts)
+    opts = opts or {}
+    t.assert_equals(type(tab), 'table')
+    t.helpers.retrying({timeout = opts.timeout or wait_timeout,
+                        delay = busy_step}, function()
+        if tab[member] ~= nil then
+            return
+        end
+
+        if opts.on_yield then
+            opts.on_yield()
+        end
+        error(string.format('timed out: %s is still nil', member))
+    end)
+end
+
+--
+-- Wait until the member of the table becomes equals to nil
+-- Same as wait_for_not_nil.
+--
+local function wait_for_nil(tab, member, opts)
+    opts = opts or {}
+    t.assert_equals(type(tab), 'table')
+    t.helpers.retrying({timeout = opts.timeout or wait_timeout,
+                        delay = busy_step}, function()
+        if tab[member] == nil then
+            return
+        end
+
+        if opts.on_yield then
+            opts.on_yield()
+        end
+        error(string.format('timed out: %s is still not nil', member))
+    end)
+end
+
 --------------------------------------------------------------------------------
 -- Service info helpers
 --------------------------------------------------------------------------------
@@ -729,4 +770,6 @@ return {
     service_wait_for_error = service_wait_for_error,
     service_wait_for_new_error = service_wait_for_new_error,
     service_wait_for_activity = service_wait_for_activity,
+    wait_for_not_nil = wait_for_not_nil,
+    wait_for_nil = wait_for_nil,
 }
