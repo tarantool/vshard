@@ -587,18 +587,17 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 if r:is_connected() and (not prefer_replica or r ~= master) and
                     replica_check_backoff(r, now)
                 then
-                    -- Pick a replica according prefered zone (highest priority replica zone) in round-robin manner.
+                    -- Pick a replica according prefered zone (highest priority replica zone) in round-robin manner
                     if balance == 2 and prefered_zone then
-                        -- save current rr-cursor position
                         local cbi = replicaset.balance_i
-                        -- find next replica
                         local nr = replicaset_balance_replica(replicaset)
 
-                        if prefered_zone and r.zone and r.zone == prefered_zone -- current replica is in prefered_zone
-                            and nr.zone and nr.zone ~= prefered_zone -- next replica is from different zone (reached prefered_zone replicas)
+                        if prefered_zone and r.zone and r.zone == prefered_zone
+                            and nr.zone and nr.zone ~= prefered_zone
                             and (not prefer_replica or nr ~= master)
                         then
-                            -- reset cursor to the main position
+                            -- Reset cursor to the main position if next replica is in different zone,
+                            -- reached prefered_zone replicas
                             replicaset.balance_i = 1
                         else
                             -- restore rr-cursor position
