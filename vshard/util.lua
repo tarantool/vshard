@@ -279,6 +279,32 @@ local function fiber_cond_wait(cond, timeout)
     return nil, lerror.make(err)
 end
 
+local function future_wait_xc(cond, timeout)
+    -- Handle negative timeouts in order to avoid usage error.
+    -- The idea is the same as in fiber_cond_wait_xc function.
+    if timeout and timeout < 0 then
+        error(lerror.timeout())
+    end
+    local res, err = cond:wait_result(timeout)
+    if err then
+        error(err)
+    end
+    return res
+end
+
+--
+-- Exception-safe future wait
+--
+local function future_wait(cond, timeout)
+    -- pcall() is inevitable as wait_result can throw an error
+    -- if executed in net.box's trigger for example.
+    local ok, res = pcall(future_wait_xc, cond, timeout)
+    if ok then
+        return res
+    end
+    return nil, lerror.make(res)
+end
+
 --
 -- Exception-safe way to check if the current fiber is canceled.
 --
@@ -374,6 +400,7 @@ return {
     uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
+    future_wait = future_wait,
     generate_self_checker = generate_self_checker,
     async_task = async_task,
     internal = M,

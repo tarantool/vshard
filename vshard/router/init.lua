@@ -22,6 +22,7 @@ local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local seq_serializer = { __serialize = 'seq' }
+local future_wait = util.future_wait
 
 local msgpack_is_object = lmsgpack.is_object
 
@@ -311,7 +312,7 @@ local function discovery_f(router)
             if not future then
                 goto continue
             end
-            local result, err = future:wait_result(consts.DISCOVERY_TIMEOUT)
+            local result, err = future_wait(future, consts.DISCOVERY_TIMEOUT)
             if module_version ~= M.module_version then
                 return
             end
@@ -462,7 +463,7 @@ local function vshard_future_result(self)
 end
 
 local function vshard_future_wait_result(self, timeout)
-    local res, err = self._base:wait_result(timeout)
+    local res, err = future_wait(self._base, timeout)
     if res == nil then
         return nil, lerror.make(err)
     end
@@ -817,7 +818,7 @@ local function router_map_callrw(router, func, args, opts)
     -- Ref stage: collect.
     --
     for uuid, future in pairs(futures) do
-        res, err = future:wait_result(timeout)
+        res, err = future_wait(future, timeout)
         -- Handle netbox error first.
         if res == nil then
             err_uuid = uuid
@@ -860,7 +861,7 @@ local function router_map_callrw(router, func, args, opts)
     --
     if do_return_raw then
         for uuid, f in pairs(futures) do
-            res, err = f:wait_result(timeout)
+            res, err = future_wait(f, timeout)
             if res == nil then
                 err_uuid = uuid
                 goto fail
@@ -881,7 +882,7 @@ local function router_map_callrw(router, func, args, opts)
         end
     else
         for uuid, f in pairs(futures) do
-            res, err = f:wait_result(timeout)
+            res, err = future_wait(f, timeout)
             if res == nil then
                 err_uuid = uuid
                 goto fail

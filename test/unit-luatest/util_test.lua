@@ -1,7 +1,9 @@
 local t = require('luatest')
 local luuid = require('uuid')
 local server = require('test.luatest_helpers.server')
+local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local net = require('net.box')
 
 local test_group = t.group('util')
 
@@ -208,4 +210,55 @@ end
 test_group.test_index = function(g)
     test_index_templ(g, 'memtx')
     test_index_templ(g, 'vinyl')
+end
+
+test_group.test_future_wait_exception = function(g)
+    -- Before 2.10.3 executing future_wait in trigger cause silent hang.
+    t.run_only_if(vutil.version_is_at_least(2, 10, 3, nil, 0, 0))
+    local conn = net.connect(g.server.net_box_uri, {wait_connected = false})
+    t.assert_equals(conn.state, 'initial')
+
+    -- Test that no exceptions're thrown from future_wait
+    local _, err
+    conn:on_connect(function()
+        local f = conn:eval('return true', {}, {is_async = true})
+        _, err = vutil.future_wait(f)
+    end)
+
+    conn:wait_connected()
+    t.assert_str_contains(err.message, 'Synchronous requests are not allowed')
+end
+
+test_group.test_future_wait_timeout = function(g)
+    g.server:exec(function()
+        local fiber = require('fiber')
+        rawset(_G, 'do_sleep', true)
+        rawset(_G, 'fiber_sleep', function()
+            while _G.do_sleep do
+                fiber.sleep(0.001)
+            end
+            return true
+        end)
+    end)
+
+    local function stop_sleep()
+        g.server:exec(function()
+            _G.do_sleep = false
+        end)
+    end
+
+    local conn = net.connect(g.server.net_box_uri)
+    local f = conn:call('_G.fiber_sleep', {}, {is_async = true})
+
+    -- Default timeout error
+    local _, err = vutil.future_wait(f, 1e-6)
+    t.assert_equals(vtest.error_is_timeout(err), true)
+
+    -- Negative timeout should return timeout error too
+    _, err = vutil.future_wait(f, -1)
+    t.assert_equals(vtest.error_is_timeout(err), true)
+
+    stop_sleep()
+    -- Everything is all right, wait for result
+    t.assert_equals(vutil.future_wait(f)[1], true)
 end
