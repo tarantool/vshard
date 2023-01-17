@@ -618,3 +618,31 @@ g.test_simultaneous_cfg = function()
 
     vtest.drop_instance(g, router)
 end
+
+g.test_router_service_info = function(g)
+    -- Enable master search fiber and logging of the background fibers
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.discovery_mode = 'on'
+    for _, rs in pairs(new_cfg_template.sharding) do
+        rs.master = 'auto'
+        for _, r in pairs(rs.replicas) do
+            r.master = nil
+        end
+    end
+
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    -- Test that all services save states
+    g.router:exec(function()
+        ivshard.router.discovery_wakeup()
+        local info = ivshard.router.info({with_services = true})
+        ilt.assert_not_equals(info.services, nil)
+        ilt.assert_not_equals(info.services.failover, nil)
+        ilt.assert_not_equals(info.services.discovery, nil)
+        ilt.assert_not_equals(info.services.master_search, nil)
+    end)
+
+    -- Restore everything back.
+    vtest.router_cfg(g.router, global_cfg)
+end

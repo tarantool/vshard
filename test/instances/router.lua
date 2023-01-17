@@ -7,6 +7,7 @@ local helpers = require('test.luatest_helpers')
 -- same lib is declared in the _test.lua file.
 --
 _G.ifiber = require('fiber')
+_G.ilt = require('luatest')
 _G.imsgpack = require('msgpack')
 _G.ivtest = require('test.luatest_helpers.vtest')
 _G.iwait_timeout = _G.ivtest.wait_timeout

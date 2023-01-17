@@ -9,7 +9,8 @@ local MODULE_INTERNALS = '__module_vshard_router'
 if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg', 'vshard.version',
-        'vshard.hash', 'vshard.replicaset', 'vshard.util'
+        'vshard.hash', 'vshard.replicaset', 'vshard.util',
+        'vshard.service_info',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -20,6 +21,7 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lhash = require('vshard.hash')
 local lreplicaset = require('vshard.replicaset')
+local lservice_info = require('vshard.service_info')
 local util = require('vshard.util')
 local seq_serializer = { __serialize = 'seq' }
 
@@ -79,10 +81,16 @@ local ROUTER_TEMPLATE = {
         replicasets = nil,
         -- Fiber to maintain replica connections.
         failover_fiber = nil,
+        -- Save statuses and errors for the failover fiber
+        failover_service = nil,
         -- Fiber to watch for master changes and find new masters.
         master_search_fiber = nil,
+        -- Save statuses and errors for the master_search_service fiber
+        master_search_service = nil,
         -- Fiber to discovery buckets in background.
         discovery_fiber = nil,
+        -- Save statuses and errors for the discovery fiber
+        discovery_service = nil,
         -- How discovery works. On - work infinitely. Off - no
         -- discovery.
         discovery_mode = nil,
@@ -252,13 +260,14 @@ end
 --
 -- Bucket discovery main loop.
 --
-local function discovery_f(router)
+local function discovery_service_f(router, service)
     local module_version = M.module_version
     assert(router.discovery_mode == 'on' or router.discovery_mode == 'once')
     local iterators = {}
     local opts = {is_async = true}
     local mode
     while module_version == M.module_version do
+        service:next_iter()
         -- Just typical map reduce - send request to each
         -- replicaset in parallel, and collect responses. Many
         -- requests probably will be needed for each replicaset.
@@ -278,6 +287,7 @@ local function discovery_f(router)
         -- Step 2: map stage - send parallel requests for every
         -- iterator, prune orphan iterators whose replicasets were
         -- removed.
+        service:set_activity('sending requests')
         for rs_uuid, iter in pairs(iterators) do
             local replicaset = router.replicasets[rs_uuid]
             if not replicaset then
@@ -289,8 +299,9 @@ local function discovery_f(router)
                 replicaset:callro('vshard.storage.buckets_discovery', iter.args,
                                   opts)
             if not future then
-                log.warn('Error during discovery %s, retry will be done '..
-                         'later: %s', rs_uuid, err)
+                log.warn(service:set_status_error(
+                        'Error during discovery %s, retry will be done '..
+                        'later: %s', rs_uuid, err))
                 goto continue
             end
             iter.future = future
@@ -305,6 +316,7 @@ local function discovery_f(router)
         end
         -- Step 3: reduce stage - collect responses, restart
         -- iterators which reached the end.
+        service:set_activity('collecting responses and updating route map')
         for rs_uuid, iter in pairs(iterators) do
             lfiber.yield()
             local future = iter.future
@@ -317,8 +329,9 @@ local function discovery_f(router)
             end
             if not result then
                 future:discard()
-                log.warn('Error during discovery %s, retry will be done '..
-                         'later: %s', rs_uuid, err)
+                log.warn(service:set_status_error(
+                        'Error during discovery %s, retry will be done '..
+                        'later: %s', rs_uuid, err))
                 goto continue
             end
             local replicaset = router.replicasets[rs_uuid]
@@ -342,11 +355,13 @@ local function discovery_f(router)
             end
             ::continue::
         end
+        service:set_activity('idling')
         local unknown_bucket_count
         repeat
             unknown_bucket_count =
                 router.total_bucket_count - router.known_bucket_count
             if unknown_bucket_count == 0 then
+                service:set_status_ok()
                 if router.discovery_mode == 'once' then
                     log.info("Discovery mode is 'once', and all is "..
                              "discovered - shut down the discovery process")
@@ -387,6 +402,15 @@ local function discovery_f(router)
             end
         until next(router.replicasets)
     end
+end
+
+local function discovery_f(router)
+    assert(not router.discovery_service)
+    local service = lservice_info.new('discovery')
+    router.discovery_service = service
+    pcall(discovery_service_f, router, service)
+    assert(router.discovery_service == service)
+    router.discovery_service = nil
 end
 
 --
@@ -1067,7 +1091,7 @@ end
 -- tries to reconnect to the best replica. When the connection is
 -- established, it replaces the original replica.
 --
-local function failover_f(router)
+local function failover_service_f(router, service)
     local module_version = M.module_version
     local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
                                  consts.FAILOVER_DOWN_TIMEOUT)
@@ -1076,13 +1100,17 @@ local function failover_f(router)
     -- each min_timeout seconds.
     local prev_was_ok = false
     while module_version == M.module_version do
+        service:next_iter()
+        service:set_activity('updating replicas')
         local ok, replica_is_changed = pcall(failover_step, router)
         if not ok then
-            log.error('Error during failovering: %s',
-                      lerror.make(replica_is_changed))
+            log.error(service:set_status_error(
+                'Error during failovering: %s',
+                lerror.make(replica_is_changed)))
             replica_is_changed = true
         elseif not prev_was_ok then
             log.info('All replicas are ok')
+            service:set_status_ok()
         end
         prev_was_ok = not replica_is_changed
         local logf
@@ -1095,8 +1123,18 @@ local function failover_f(router)
         end
         logf('Failovering step is finished. Schedule next after %f seconds',
              min_timeout)
+        service:set_activity('idling')
         lfiber.sleep(min_timeout)
     end
+end
+
+local function failover_f(router)
+    assert(not router.failover_service)
+    local service = lservice_info.new('failover')
+    router.failover_service = service
+    pcall(failover_service_f, router, service)
+    assert(router.failover_service == service)
+    router.failover_service = nil
 end
 
 --------------------------------------------------------------------------------
@@ -1123,11 +1161,13 @@ end
 -- subscriptions. The problem is that at the moment of writing the subscriptions
 -- are not working well in all Tarantool versions.
 --
-local function master_search_f(router)
+local function master_search_service_f(router, service)
     local module_version = M.module_version
     local is_in_progress = false
     local errinj = M.errinj
     while module_version == M.module_version do
+        service:next_iter()
+        service:set_activity('locating masters')
         if errinj.ERRINJ_MASTER_SEARCH_DELAY then
             errinj.ERRINJ_MASTER_SEARCH_DELAY = 'in'
             repeat
@@ -1138,12 +1178,16 @@ local function master_search_f(router)
         local start_time = fiber_clock()
         local is_done, is_nop, err = master_search_step(router)
         if err then
-            log.error('Error during master search: %s', lerror.make(err))
+            log.error(service:set_status_error(
+                'Error during master search: %s', lerror.make(err)))
         end
         if is_done then
             timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
+            service:set_status_ok()
+            service:set_activity('idling')
         elseif err then
             timeout = consts.MASTER_SEARCH_BACKOFF_INTERVAL
+            service:set_activity('backoff')
         else
             timeout = consts.MASTER_SEARCH_WORK_INTERVAL
         end
@@ -1166,6 +1210,15 @@ local function master_search_f(router)
         end
         lfiber.sleep(timeout)
     end
+end
+
+local function master_search_f(router)
+    assert(not router.master_search_service)
+    local service = lservice_info.new('master_search')
+    router.master_search_service = service
+    pcall(master_search_service_f, router, service)
+    assert(router.master_search_service == service)
+    router.master_search_service = nil
 end
 
 local function master_search_set(router)
@@ -1386,7 +1439,7 @@ local function replicaset_instance_info(replicaset, name, alerts, errcolor,
     return info, consts.STATUS.GREEN
 end
 
-local function router_info(router)
+local function router_info(router, opts)
     local state = {
         replicasets = {},
         bucket = {
@@ -1497,6 +1550,16 @@ local function router_info(router)
                     "storages' one, difference is "..(0 - bucket_info.unknown)
         bucket_info.unknown = '???'
         table.insert(state.alerts, lerror.alert(lerror.code.INVALID_CFG, msg))
+    end
+    if opts and opts.with_services then
+        state.services = {
+            discovery = router.discovery_service and
+                router.discovery_service:info(),
+            master_search = router.master_search_service and
+                router.master_search_service:info(),
+            failover = router.failover_service and
+                router.failover_service:info(),
+        }
     end
     return state
 end
