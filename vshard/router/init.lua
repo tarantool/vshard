@@ -576,14 +576,14 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
     local call
     if mode == 'read' then
         if prefer_replica then
-            if balance == 2 then
+            if balance == "prefer_zone" then
                 call = 'callbzre'
             elseif balance then
                 call = 'callbre'
             else
                 call = 'callre'
             end
-        elseif balance == 2 then
+        elseif balance == "prefer_zone" then
             call = 'callbzro'
         elseif balance then
             call = 'callbro'
@@ -703,7 +703,7 @@ local function router_callbro(router, bucket_id, ...)
 end
 
 local function router_callbzro(router, bucket_id, ...)
-    return router_call_impl(router, bucket_id, 'read', false, 2, ...)
+    return router_call_impl(router, bucket_id, 'read', false, "prefer_zone", ...)
 end
 
 local function router_callrw(router, bucket_id, ...)
@@ -719,7 +719,7 @@ local function router_callbre(router, bucket_id, ...)
 end
 
 local function router_callbzre(router, bucket_id, ...)
-    return router_call_impl(router, bucket_id, 'read', true, 2, ...)
+    return router_call_impl(router, bucket_id, 'read', true, "prefer_zone", ...)
 end
 
 local function router_call(router, bucket_id, opts, ...)

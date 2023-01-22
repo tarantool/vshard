@@ -588,7 +588,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                     replica_check_backoff(r, now)
                 then
                     -- Pick a replica according prefered zone (highest priority replica zone) in round-robin manner
-                    if balance == 2 and prefered_zone then
+                    if balance == "prefer_zone" and prefered_zone then
                         local cbi = replicaset.balance_i
                         local nr = replicaset_balance_replica(replicaset)
 
@@ -596,11 +596,10 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                             and nr.zone and nr.zone ~= prefered_zone
                             and (not prefer_replica or nr ~= master)
                         then
-                            -- Reset cursor to the main position if next replica is in different zone,
-                            -- reached prefered_zone replicas
+                            -- Reset cursor to the main position if next replica is in different zone.
                             replicaset.balance_i = 1
                         else
-                            -- restore rr-cursor position
+                            -- Restore rr-cursor position.
                             replicaset.balance_i = cbi
                         end
                     end
@@ -1012,10 +1011,10 @@ local replicaset_mt = {
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);
         callbro = replicaset_template_multicallro(false, true);
-        callbzro = replicaset_template_multicallro(false, 2);
+        callbzro = replicaset_template_multicallro(false, "prefer_zone");
         callre = replicaset_template_multicallro(true, false);
         callbre = replicaset_template_multicallro(true, true);
-        callbzre = replicaset_template_multicallro(true, 2);
+        callbzre = replicaset_template_multicallro(true, "prefer_zone");
         map_call = replicaset_map_call,
         update_master = replicaset_update_master,
     };
