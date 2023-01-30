@@ -212,8 +212,6 @@ test_group.test_bucket_space_commit_trigger_garbage = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_active = function(g)
-    -- waiting for tarantool/tarantool#7977 to be fixed
-    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
     test_bucket_space_commit_trigger_active(g, vconst.BUCKET.ACTIVE)
 end
 
@@ -222,9 +220,6 @@ test_group.test_bucket_space_commit_trigger_pinned = function(g)
 end
 
 test_group.test_bucket_space_commit_trigger_receiving = function(g)
-    -- waiting for tarantool/tarantool#7977 to be fixed
-    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
-
     vtest.cluster_exec_each(g, bucket_set_protection, {false})
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
@@ -301,9 +296,6 @@ end
 -- Protection against illegal changes in _bucket.
 --
 test_group.test_bucket_space_reject_bad_replace_refs = function(g)
-    -- waiting for tarantool/tarantool#7977 to be fixed
-    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
-
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
     rep_b:exec(bucket_set_protection, {false})
@@ -437,9 +429,6 @@ test_group.test_bucket_space_truncation = function(g)
 end
 
 test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
-    -- waiting for tarantool/tarantool#7945 to be fixed
-    t.run_only_if(not cfg_template.memtx_use_mvcc_engine)
-
     local rep_a = g.replica_1_a
     local rep_b = g.replica_1_b
     rep_b:exec(bucket_set_protection, {false})
