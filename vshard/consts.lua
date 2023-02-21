@@ -1,4 +1,8 @@
 return {
+    -- Сontains the module version.
+    -- Requires manual update in case of release commit.
+    VERSION = '0.1.22',
+
     -- Bucket FSM
     BUCKET = {
         ACTIVE = 'active',
