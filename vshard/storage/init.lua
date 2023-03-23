@@ -525,7 +525,7 @@ end
 -- attach to _truncate space.
 --
 local function bucket_on_truncate_f(_, new_tuple)
-    if new_tuple[1] ~= box.space._bucket.id then
+    if new_tuple == nil or new_tuple[1] ~= box.space._bucket.id then
         return
     end
     -- There is no a valid truncation of _bucket. Because it would require to

@@ -123,3 +123,19 @@ test_group.test_simultaneous_cfg = function(g)
     err = storage_cfg()
     t.assert_equals(err, nil)
 end
+
+--
+-- gh-400: _truncate deletions should be let through.
+--
+test_group.test_truncate_space_clear = function(g)
+    g.replica_1_a:exec(function()
+       local s = box.schema.create_space('test')
+       s:create_index('pk')
+       s:replace{1}
+       s:truncate()
+       local sid = s.id
+       ilt.assert(box.space._truncate:get{sid} ~= nil)
+       s:drop()
+       ilt.assert(box.space._truncate:get{sid} == nil)
+    end)
+end
