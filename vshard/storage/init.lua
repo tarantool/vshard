@@ -2023,7 +2023,7 @@ end
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
-    local uuid = box.info.cluster.uuid
+    local uuid = util.replicaset_uuid()
     local status, ok
     local ref, err = bucket_refrw_touch(bucket_id)
     if not ref then
@@ -3400,10 +3400,11 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
                                     '"%s" but "%s" in arguments', info.uuid,
                                     this_replica_uuid))
             end
-            if this_replicaset.uuid ~= info.cluster.uuid then
+            local real_rs_uuid = util.replicaset_uuid(info)
+            if this_replicaset.uuid ~= real_rs_uuid then
                 error(string.format('Replicaset UUID mismatch: already set ' ..
                                     '"%s" but "%s" in vshard config',
-                                    info.cluster.uuid, this_replicaset.uuid))
+                                    real_rs_uuid, this_replicaset.uuid))
             end
         end
         local ok, err = pcall(box.cfg, box_cfg)

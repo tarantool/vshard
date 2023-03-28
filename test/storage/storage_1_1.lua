@@ -8,16 +8,18 @@ if os.getenv('ADMIN') then
     require('console').listen(os.getenv('ADMIN'))
 end
 util = require('util')
+vutil = require('vshard.util')
+
 instance_uuid = nil
 replicaset_uuid = nil
 if name == 'storage_1_1' then
     box.cfg{}
     instance_uuid = box.info.uuid
-    replicaset_uuid = box.info.cluster.uuid
+    replicaset_uuid = vutil.replicaset_uuid()
 elseif name == 'storage_1_2' then
     box.cfg{instance_uuid = '8a274925-a26d-47fc-9e1b-af88ce939412'}
     instance_uuid = '8a274925-a26d-47fc-9e1b-af88ce000000'
-    replicaset_uuid = box.info.cluster.uuid
+    replicaset_uuid = vutil.replicaset_uuid()
 elseif name == 'storage_1_3' then
     box.cfg{replicaset_uuid = '8a274925-a26d-47fc-9e1b-af88ce939412'}
     instance_uuid = box.info.uuid

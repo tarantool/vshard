@@ -226,9 +226,7 @@ test_group.test_on_bucket_event = function(g)
         end)
     end, {g.params.engine})
 
-    local rs1_uuid = g.replica_1_a:exec(function()
-        return box.info.cluster.uuid
-    end)
+    local rs1_uuid = g.replica_1_a:replicaset_uuid()
     local bid = g.replica_2_a:exec(function(rs1_uuid)
         local bid = _G.get_first_bucket()
         box.space.data1:insert({10, bid})
@@ -285,7 +283,7 @@ test_group.test_basic_storage_service_info = function(g)
         -- Break timeout in order to get error
         rawset(_G, 'chunk_timeout', ivconst.REBALANCER_CHUNK_TIMEOUT)
         ivconst.REBALANCER_CHUNK_TIMEOUT = 1e-6
-        return box.info.cluster.uuid
+        return ivutil.replicaset_uuid()
     end)
 
     g.replica_2_a:exec(function(uuid)
