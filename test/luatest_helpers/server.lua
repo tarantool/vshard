@@ -190,7 +190,13 @@ function Server:replicaset_uuid()
     if self.replicaset_uuid_value then
         return self.replicaset_uuid_value
     end
-    local uuid = self:exec(function() return box.info.cluster.uuid end)
+    local uuid = self:exec(function()
+        local info = box.info
+        if info.replicaset then
+            return info.replicaset.uuid
+        end
+        return info.cluster.uuid
+    end)
     if uuid == nil then
         -- Probably didn't bootstrap yet. Listen starts before replicaset UUID
         -- is assigned.

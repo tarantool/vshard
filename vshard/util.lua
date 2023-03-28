@@ -370,6 +370,13 @@ local feature = {
     end)(),
     error_stack = version_is_at_least(2, 4, 0, nil, 0, 0),
     csw = fiber.self().csw ~= nil,
+    info_replicaset = (function()
+        -- Since 3.0 box.info.cluster means the whole cluster, not just the
+        -- replicaset. To get the replicaset UUID have to use
+        -- box.info.replicaset.
+        local ok, res = pcall(function() return box.info end)
+        return ok and res.replicaset ~= nil
+    end)(),
 }
 
 local schema_version = function()
@@ -397,6 +404,19 @@ do
     end
 end
 
+local replicaset_uuid
+if feature.info_replicaset then
+    replicaset_uuid = function(info)
+        info = info ~= nil and info or box.info
+        return info.replicaset.uuid
+    end
+else
+    replicaset_uuid= function(info)
+        info = info ~= nil and info or box.info
+        return info.cluster.uuid
+    end
+end
+
 return {
     uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
@@ -415,4 +435,5 @@ return {
     index_has = index_has,
     feature = feature,
     schema_version = schema_version,
+    replicaset_uuid = replicaset_uuid,
 }

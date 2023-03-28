@@ -262,3 +262,12 @@ test_group.test_future_wait_timeout = function(g)
     -- Everything is all right, wait for result
     t.assert_equals(vutil.future_wait(f)[1], true)
 end
+
+test_group.test_replicaset_uuid = function(g)
+    g.server:exec(function()
+        local _schema = box.space._schema
+        local t = _schema:get{'replicaset_uuid'}
+        t = t ~= nil and t or _schema:get{'cluster'}
+        ilt.assert_equals(ivutil.replicaset_uuid(), t[2])
+    end)
+end
