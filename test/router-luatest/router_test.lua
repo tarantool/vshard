@@ -469,24 +469,23 @@ g.test_enable_disable = function(g)
         _G.fiber_new:set_joinable(true)
     end, {global_cfg})
 
-    -- emulate unconfigured box
-    router:exec(function()
-        rawset(_G, 'old_box_cfg', box.cfg)
-        box.cfg = function(...) return _G.old_box_cfg(...) end
-    end)
-
     local err1, err2 = router:exec(function()
+        -- emulate unconfigured box
+        local old_box_cfg = box.cfg
+        box.cfg = function(...) return old_box_cfg(...) end
+
         rawset(_G, 'static_router', ivshard.router.internal.routers._static_router)
         rawset(_G, 'new_router', ivshard.router.internal.routers.new_router)
         local _, err_1 = pcall(_G.static_router.info, _G.static_router)
         local _, err_2 = pcall(_G.new_router.info, _G.new_router)
+
+        box.cfg = old_box_cfg
         return err_1, err_2
     end)
     assert_errors_equals(err1, err2, 'box seems not to be configured')
 
     -- set box status to loading
     router:exec(function()
-        box.cfg = _G.old_box_cfg
         rawset(_G, 'old_box_info', box.info)
         box.info = {status = 'loading'}
     end)
