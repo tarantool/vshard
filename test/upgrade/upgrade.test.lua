@@ -1,11 +1,20 @@
 test_run = require('test_run').new()
 git_util = require('git_util')
 util = require('util')
+vutil = require('vshard.util')
 
--- Commit "Improve compatibility with 1.9".
-version_0_1_15_0 = '79a4dbfc4229e922cbfe4be259193a7b18dc089d'
-vshard_copy_path = util.git_checkout('vshard_git_tree_copy_0_1_15_0',           \
-                                     version_0_1_15_0)
+oldest_version = nil
+is_at_least_3_0 = vutil.version_is_at_least(3, 0, 0, 'entrypoint', 0, 0)
+-- On 3.0 old vshard versions won't work. The users are supposed to update
+-- vshard first, and then update Tarantool.
+if is_at_least_3_0 then                                                         \
+-- Commit 'Support 3.0'.                                                        \
+    oldest_version = '0243bc692fb6b34e26e89ea032214859f1ad53ea'                 \
+else                                                                            \
+-- Commit 'Improve compatibility with 1.9'.                                     \
+    oldest_version = '79a4dbfc4229e922cbfe4be259193a7b18dc089d'                 \
+end
+vshard_copy_path = util.git_checkout('vshard_git_tree_copy', oldest_version)
 
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
@@ -14,12 +23,23 @@ test_run:create_cluster(REPLICASET_2, 'upgrade', {args = vshard_copy_path})
 util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
-util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memtx\')')
+util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, [[                       \
+    bootstrap_storage('memtx')                                                  \
+    is_at_least_3_0 = %s                                                        \
+]], is_at_least_3_0)
 
 test_run:switch('storage_1_a')
-box.space._schema:get({'oncevshard:storage:1'}) or box.space._schema:select()
-vshard.storage.internal.schema_current_version
-vshard.storage.internal.schema_latest_version
+if is_at_least_3_0 then                                                         \
+    local t = box.space._schema:get{'vshard_version'}                           \
+    assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
+    assert(vshard.storage.internal.schema_current_version ~= nil)               \
+    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
+else                                                                            \
+    assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
+    assert(vshard.storage.internal.schema_current_version == nil)               \
+    assert(vshard.storage.internal.schema_latest_version == nil)                \
+end
+
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
 vshard.storage.bucket_force_create(1, bucket_count)
 box.begin()                                                                     \
@@ -28,10 +48,16 @@ box.commit()
 box.space.test:count()
 
 test_run:switch('storage_2_a')
-box.space._schema:get({'oncevshard:storage:1'}) or box.space._schema:select()
-vshard.storage.internal.schema_current_version
-vshard.storage.internal.schema_latest_version
-vshard.storage._call == nil
+if is_at_least_3_0 then                                                         \
+    local t = box.space._schema:get{'vshard_version'}                           \
+    assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
+    assert(vshard.storage.internal.schema_current_version ~= nil)               \
+    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
+else                                                                            \
+    assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
+    assert(vshard.storage.internal.schema_current_version == nil)               \
+    assert(vshard.storage.internal.schema_latest_version == nil)                \
+end
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
 first_bucket = vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1
 vshard.storage.bucket_force_create(first_bucket, bucket_count)
