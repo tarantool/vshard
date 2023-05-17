@@ -78,7 +78,6 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
-vshard.storage.rebalancer_wakeup()
 wait_rebalancer_state("Rebalance routes are sent", test_run)
 
 wait_rebalancer_state('The cluster is balanced ok', test_run)
