@@ -1018,10 +1018,20 @@ vshard.storage._call('info')
 --
 -- gh-123, gh-298: storage auto-enable/disable depending on instance state.
 --
+_ = test_run:switch('default')
+---
+...
 _ = test_run:cmd('stop server storage_1_a')
 ---
 ...
 _ = test_run:cmd('start server storage_1_a with args="boot_before_cfg"')
+---
+...
+-- We should wait for upstream on storage_1_b, as overwise we can get
+-- IPROTO_VOTE from it, which tries to access box.cfg.read_only for ballot
+-- generation. It won't be able to do that as at this point box.cfg will be
+-- a function, and tarantool will fail with panic.
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 ---
 ...
 _ = test_run:switch('storage_1_a')
