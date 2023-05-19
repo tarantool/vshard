@@ -22,7 +22,7 @@ is_at_least_3_0 = vutil.version_is_at_least(3, 0, 0, 'entrypoint', 0, 0)
 -- vshard first, and then update Tarantool.
 if is_at_least_3_0 then                                                         \
 -- Commit 'Support 3.0'.                                                        \
-    oldest_version = '0243bc692fb6b34e26e89ea032214859f1ad53ea'                 \
+    oldest_version = 'e5f2cc022bb12b0b272a3bad026cd64f549abc9c'                 \
 else                                                                            \
 -- Commit 'Improve compatibility with 1.9'.                                     \
     oldest_version = '79a4dbfc4229e922cbfe4be259193a7b18dc089d'                 \
