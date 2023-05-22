@@ -34,6 +34,7 @@ _ = test_run:switch('storage_1_a')
 ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
 ret, util.is_timeout_error(err)
 _bucket = box.space._bucket
+wait_bucket_is_collected(1)
 _bucket:get{1}
 
 _ = test_run:switch('storage_2_a')

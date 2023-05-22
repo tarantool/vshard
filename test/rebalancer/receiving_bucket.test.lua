@@ -43,6 +43,7 @@ box.space.test4:count()
 box.space.test5:count()
 
 vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 10})
+wait_bucket_is_collected(1)
 box.space._bucket:get{1}
 
 _ = test_run:switch('box_2_a')
@@ -89,14 +90,13 @@ vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 _ = test_run:switch('box_2_a')
 _, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
 util.is_timeout_error(err)
-box.space._bucket:get{101}
-while box.space._bucket:get{101}.status ~= vshard.consts.BUCKET.ACTIVE do vshard.storage.recovery_wakeup() fiber.sleep(0.01) end
-box.space._bucket:get{101}
+wait_bucket_is_collected(101)
 _ = test_run:switch('box_1_a')
-while _bucket:get{101} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
-fiber.sleep(0.1)
-box.space._bucket:get{101}
+test_run:wait_cond(function()                                                   \
+    vshard.storage.recovery_wakeup()                                            \
+    return box.space._bucket:get{101}.status == vshard.consts.BUCKET.ACTIVE     \
+end)
 
 --
 -- gh-122 and gh-73: a bucket can be transferred not completely,

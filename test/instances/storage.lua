@@ -120,6 +120,19 @@ local function bucket_gc_once()
     end)
 end
 
+local function bucket_recovery_wait()
+    local status_index = box.space._bucket.index.status
+    t.helpers.retrying({timeout = wait_timeout}, function()
+        vshard.storage.recovery_wakeup()
+        if index_has(status_index, vconst.BUCKET.SENDING) then
+            error('Still have SENDING buckets')
+        end
+        if index_has(status_index, vconst.BUCKET.RECEIVING) then
+            error('Still have RECEIVING buckets')
+        end
+    end)
+end
+
 local function bucket_recovery_pause()
     local errinj = vshard.storage.internal.errinj
     errinj.ERRINJ_RECOVERY_PAUSE = true
@@ -153,6 +166,7 @@ _G.bucket_gc_wait = bucket_gc_wait
 _G.bucket_gc_once = bucket_gc_once
 _G.bucket_gc_pause = bucket_gc_pause
 _G.bucket_gc_continue = bucket_gc_continue
+_G.bucket_recovery_wait = bucket_recovery_wait
 _G.bucket_recovery_pause = bucket_recovery_pause
 _G.bucket_recovery_continue = bucket_recovery_continue
 _G.wal_sync = wal_sync

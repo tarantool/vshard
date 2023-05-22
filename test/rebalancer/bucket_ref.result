@@ -124,23 +124,23 @@ vshard.storage.buckets_info(1)
     ref_ro: 1
     id: 1
 ...
-_ = test_run:switch('box_2_a')
----
-...
-vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = true
----
-...
 _ = test_run:switch('box_1_a')
 ---
 ...
-res, err = vshard.storage.bucket_send(1, util.replicasets[2])
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = true
 ---
 ...
-res, util.portable_error(err)
+f2 = fiber.create(function()                                                    \
+    vshard.storage.bucket_send(1, util.replicasets[2])                          \
+end)
 ---
-- null
-- type: ClientError
-  message: Timeout exceeded
+...
+test_run:wait_cond(function()                                                   \
+    local i = vshard.storage.buckets_info(1)[1]                                 \
+    return i.status == vshard.consts.BUCKET.SENDING                             \
+end)
+---
+- true
 ...
 vshard.storage.buckets_info(1)
 ---
@@ -187,20 +187,19 @@ vshard.storage.buckets_info(1)
     destination: <replicaset_2>
     id: 1
 ...
-_ = test_run:cmd("setopt delimiter ';'")
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
 ---
 ...
-while true do
-	local i = vshard.storage.buckets_info(1)[1]
-    if i.status == vshard.consts.BUCKET.SENT and i.ro_lock then
-        break
-    end
-    fiber.sleep(0.01)
-end;
+test_run:wait_cond(function() return f2:status() == 'dead' end)
 ---
+- true
 ...
-_ = test_run:cmd("setopt delimiter ''");
+test_run:wait_cond(function()                                                   \
+    local i = vshard.storage.buckets_info(1)[1]                                 \
+    return i.status == vshard.consts.BUCKET.SENT and i.ro_lock                  \
+end)
 ---
+- true
 ...
 vshard.storage.buckets_info(1)
 ---
@@ -237,9 +236,6 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     id: 1
-...
-vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = false
----
 ...
 --
 -- Test that when bucket_send waits for rw == 0, it is waked up
