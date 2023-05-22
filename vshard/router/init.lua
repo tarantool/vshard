@@ -1854,6 +1854,13 @@ else
         M.ref_id = 0
     end
     for _, router in pairs(M.routers) do
+        -- It's not set when reloaded from an old vshard version.
+        if router.is_enabled == nil then
+            router.is_enabled = true
+        end
+        if router.api_call_cache == nil then
+            router.api_call_cache = router_api_call_unsafe
+        end
         router_cfg_fiber_safe(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
