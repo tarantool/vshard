@@ -741,6 +741,19 @@ local function service_wait_for_activity(service, activity, opts)
     end)
 end
 
+-- Git directory of the project and data directory of the test.
+-- Used in evolution tests to fetch old versions of vshard.
+local sourcedir = fio.abspath(os.getenv('PACKPACK_GIT_SOURCEDIR') or
+                              os.getenv('SOURCEDIR'))
+if not sourcedir then
+    local script_path = debug.getinfo(1).source:match("@?(.*/)")
+    script_path = fio.abspath(script_path)
+    sourcedir = fio.abspath(script_path .. '/../../../')
+end
+
+-- May be nil, if VARDIR is not specified.
+local vardir = fio.abspath(os.getenv('VARDIR'))
+
 return {
     error_is_timeout = error_is_timeout,
     config_new = config_new,
@@ -772,4 +785,6 @@ return {
     service_wait_for_activity = service_wait_for_activity,
     wait_for_not_nil = wait_for_not_nil,
     wait_for_nil = wait_for_nil,
+    sourcedir = sourcedir,
+    vardir = vardir,
 }
