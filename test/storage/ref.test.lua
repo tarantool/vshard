@@ -71,10 +71,10 @@ wait_bucket_is_collected(1)
 --
 -- While bucket move is in progress, ref won't work.
 --
-vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 
 _ = test_run:switch('storage_1_a')
 fiber = require('fiber')
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = true
 _ = fiber.create(vshard.storage.bucket_send, 1, util.replicasets[2],            \
                  {timeout = big_timeout})
 ok, err = lref.add(rid, sid, small_timeout)
@@ -85,10 +85,8 @@ _ = fiber.create(function()                                                     
     ok, err = lref.add(rid, sid, big_timeout)                                   \
 end)
 
-_ = test_run:switch('storage_2_a')
-vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
-
 _ = test_run:switch('storage_1_a')
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
 wait_bucket_is_collected(1)
 test_run:wait_cond(function() return ok or err end)
 lref.use(rid, sid)

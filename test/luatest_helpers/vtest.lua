@@ -71,8 +71,8 @@ end
 -- helps not to care.
 --
 local function error_is_timeout(err)
-    return err.type == 'ClientError' and err.code == box.error.TIMEOUT or
-           err.type == 'TimedOut'
+    return err.code == box.error.TIMEOUT or (err.code == box.error.PROC_LUA and
+           err.message == 'Timeout exceeded') or err.type == 'TimedOut'
 end
 
 --

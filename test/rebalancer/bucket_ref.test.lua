@@ -43,11 +43,15 @@ vshard.storage.buckets_info(1)
 -- What is more, a bucket under RO ref can not be deleted.
 f1 = fiber.create(function() vshard.storage.call(1, 'read', 'make_ref') end)
 vshard.storage.buckets_info(1)
-_ = test_run:switch('box_2_a')
-vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = true
 _ = test_run:switch('box_1_a')
-res, err = vshard.storage.bucket_send(1, util.replicasets[2])
-res, util.portable_error(err)
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = true
+f2 = fiber.create(function()                                                    \
+    vshard.storage.bucket_send(1, util.replicasets[2])                          \
+end)
+test_run:wait_cond(function()                                                   \
+    local i = vshard.storage.buckets_info(1)[1]                                 \
+    return i.status == vshard.consts.BUCKET.SENDING                             \
+end)
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_ref(1, 'write')
 vshard.storage.bucket_unref(1, 'write') -- Error, no refs.
@@ -55,15 +59,12 @@ vshard.storage.bucket_ref(1, 'read')
 vshard.storage.bucket_unref(1, 'read')
 -- Force GC to take an RO lock on the bucket now.
 vshard.storage.buckets_info(1)
-_ = test_run:cmd("setopt delimiter ';'")
-while true do
-	local i = vshard.storage.buckets_info(1)[1]
-    if i.status == vshard.consts.BUCKET.SENT and i.ro_lock then
-        break
-    end
-    fiber.sleep(0.01)
-end;
-_ = test_run:cmd("setopt delimiter ''");
+vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
+test_run:wait_cond(function() return f2:status() == 'dead' end)
+test_run:wait_cond(function()                                                   \
+    local i = vshard.storage.buckets_info(1)[1]                                 \
+    return i.status == vshard.consts.BUCKET.SENT and i.ro_lock                  \
+end)
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_refro(1)
 finish_refs = true
@@ -71,7 +72,6 @@ while f1:status() ~= 'dead' do fiber.sleep(0.01) end
 wait_bucket_is_collected(1)
 _ = test_run:switch('box_2_a')
 vshard.storage.buckets_info(1)
-vshard.storage.internal.errinj.ERRINJ_LONG_RECEIVE = false
 
 --
 -- Test that when bucket_send waits for rw == 0, it is waked up

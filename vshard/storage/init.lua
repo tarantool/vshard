@@ -87,6 +87,7 @@ if not M then
             ERRINJ_CFG_DELAY = false,
             ERRINJ_LONG_RECEIVE = false,
             ERRINJ_LAST_RECEIVE_DELAY = false,
+            ERRINJ_LAST_SEND_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
             ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_UPGRADE = false,
@@ -2113,6 +2114,27 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     if not status then
         return status, lerror.make(err)
     end
+    while M.errinj.ERRINJ_LAST_SEND_DELAY do
+        lfiber.sleep(0.01)
+    end
+    -- It is safe to turn bucket to SENT as it has already been fully
+    -- sent to the destination and can be garbade collected regardless of
+    -- receiving is_last message by the destination, as out there it will be
+    -- converted to ACTIVE status by recovery process. Moreover, it's preferable
+    -- to turn it into SENT at the source before turning to ACTIVE at the
+    -- destination, as it allows to avoid doubled buckets problem caused by
+    -- manual vshard.storage.bucket_send() call. The following example
+    -- illustrates how it can happen.
+    --
+    -- Storage S1 has bucket B, which is sent to S2, but then connection breaks.
+    -- The bucket is in the state S1 {B: sending-to-s2}, S2 {B: active}. Now if
+    -- the user will do vshard.storage.bucket_send(S2 -> S3), then we will get
+    -- this: S1 {B: sending-to-s2}, S2: {}, S3: {B: active}. Now when recovery
+    -- fiber will wakeup on S1, it will see that B is sending-to-s2 but S2
+    -- doesn't have the bucket. Recovery will then assume that S2 already
+    -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
+    -- S3 {B: active}, doubled buckets situation (gh-414)
+    _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
     -- Always send at least two messages to prevent the case, when
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
@@ -2123,7 +2145,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     if not status then
         return status, lerror.make(err)
     end
-    _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
     return true
 end
 

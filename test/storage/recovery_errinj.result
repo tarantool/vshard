@@ -83,9 +83,11 @@ ret, util.is_timeout_error(err)
 _bucket = box.space._bucket
 ---
 ...
+wait_bucket_is_collected(1)
+---
+...
 _bucket:get{1}
 ---
-- [1, 'sending', '<replicaset_2>']
 ...
 _ = test_run:switch('storage_2_a')
 ---
