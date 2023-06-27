@@ -240,7 +240,7 @@ On storages call `vshard.storage.cfg(cfg, <INSTANCE_UUID>)`:
 local MY_UUID = "de0ea826-e71d-4a82-bbf3-b04a6413e417"
 
 -- Call a configuration provider
-local cfg = require('localcfg')
+local cfg = dofile('localcfg.lua')
 
 -- Start the database with sharding
 vshard = require('vshard')

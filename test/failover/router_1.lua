@@ -5,11 +5,11 @@ test_run = require('test_run').new()
 
 local fio = require('fio')
 local name = fio.basename(arg[0], '.lua')
-cfg = require('config')
+cfg = dofile('config.lua')
 vshard = require('vshard')
 os = require('os')
 fiber = require('fiber')
-local names = require('names')
+local names = dofile('names.lua')
 log = require('log')
 rs_uuid = names.rs_uuid
 replica_uuid = names.replica_uuid

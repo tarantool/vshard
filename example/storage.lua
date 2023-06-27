@@ -14,7 +14,7 @@ if os.getenv('ADMIN') then
 end
 
 -- Call a configuration provider
-cfg = require('localcfg')
+cfg = dofile('localcfg.lua')
 -- Name to uuid map
 names = {
     ['storage_1_a'] = '8a274925-a26d-47fc-9e1b-af88ce939412',
