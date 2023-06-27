@@ -1,5 +1,5 @@
 #!/usr/bin/env tarantool
-cfg = require('config')
+cfg = dofile('config.lua')
 vshard = require('vshard')
 os = require('os')
 fiber = require('fiber')

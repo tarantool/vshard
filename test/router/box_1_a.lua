@@ -1,3 +1,3 @@
 #!/usr/bin/env tarantool
-cfg = require('config')
+cfg = dofile('config.lua')
 require('storage_template')

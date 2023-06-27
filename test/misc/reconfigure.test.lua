@@ -11,7 +11,7 @@ test_run:cmd('create server router_1 with script="misc/router_1.lua", wait=True,
 test_run:cmd('start server router_1')
 
 _ = test_run:switch('default')
-cfg = require('localcfg')
+cfg = dofile('localcfg.lua')
 cfg.sharding[util.replicasets[1]].replicas[util.name_to_uuid.storage_1_b] = nil
 cfg.sharding[util.replicasets[2]].replicas[util.name_to_uuid.storage_2_a].master = nil
 cfg.sharding[util.replicasets[2]].replicas[util.name_to_uuid.storage_2_b].master = true

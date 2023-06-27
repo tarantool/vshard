@@ -8,7 +8,7 @@ local NAME = fio.basename(arg[0], '.lua')
 
 require('console').listen(os.getenv('ADMIN'))
 
-configs = require('configs')
+configs = dofile('configs.lua')
 
 -- Start the database with sharding
 vshard = require('vshard')

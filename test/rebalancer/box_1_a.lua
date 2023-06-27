@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 NAME = require('fio').basename(arg[0], '.lua')
-cfg = require('config')
+cfg = dofile('config.lua')
 util = require('util')
 if NAME == 'box_3_a' or NAME == 'box_3_b' or
    NAME == 'box_4_a' or NAME == 'box_4_b' or

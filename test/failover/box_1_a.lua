@@ -7,8 +7,8 @@ test_run = require('test_run').new()
 require('console').listen(os.getenv('ADMIN'))
 
 vshard = require('vshard')
-names = require('names')
-cfg = require('config')
+names = dofile('names.lua')
+cfg = dofile('config.lua')
 cfg.weights = nil
 vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 

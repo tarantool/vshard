@@ -1,4 +1,4 @@
-names = require('names')
+names = dofile('names.lua')
 replica = names.replica_uuid
 rs = names.rs_uuid
 weights = {

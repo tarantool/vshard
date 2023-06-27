@@ -7,7 +7,7 @@ fiber = require('fiber')
 test_run = require('test_run').new()
 util = require('util')
 require('console').listen(os.getenv('ADMIN'))
-cfg = rawget(_G, "cfg") or require('localcfg')
+cfg = rawget(_G, "cfg") or dofile('localcfg.lua')
 log = require('log')
 if not cfg.shard_index then
     cfg.shard_index = 'bucket_id'
