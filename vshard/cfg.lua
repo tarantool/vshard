@@ -44,6 +44,12 @@ local function check_replicaset_master(master)
     end
 end
 
+local function cfg_check_rebalancer_mode(mode)
+    if mode ~= 'auto' and mode ~= 'manual' and mode ~= 'off' then
+        error('Only "auto", "manual", and "off" are supported')
+    end
+end
+
 local function is_number(v)
     return type(v) == 'number' and v == v
 end
@@ -148,6 +154,7 @@ local replica_template = {
         type = 'boolean', name = "Master", is_optional = true,
         check = check_replica_master
     },
+    rebalancer = {type = 'boolean', name = 'Rebalancer', is_optional = true},
 }
 
 local function check_replicas(replicas)
@@ -209,6 +216,7 @@ local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
     local names = {}
+    local rebalancer_uuid
     local is_all_weights_zero = true
     for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
@@ -252,6 +260,14 @@ local function check_sharding(sharding)
                     names[name] = 2
                 end
             end
+            if replica.rebalancer then
+                if rebalancer_uuid then
+                    error(string.format('More than one rebalancer is found: '..
+                                        'on replicas %s and %s', replica_uuid,
+                                        rebalancer_uuid))
+                end
+                rebalancer_uuid = replica_uuid
+            end
         end
         is_all_weights_zero = is_all_weights_zero and replicaset.weight == 0
     end
@@ -277,6 +293,10 @@ local cfg_template = {
     bucket_count = {
         type = 'positive integer', name = 'Bucket count', is_optional = true,
         default = consts.DEFAULT_BUCKET_COUNT
+    },
+    rebalancer_mode = {
+        type = 'string', name = 'Rebalancer mode', is_optional = true,
+        default = 'auto', check = cfg_check_rebalancer_mode,
     },
     rebalancer_disbalance_threshold = {
         type = 'non-negative number', name = 'Rebalancer disbalance threshold',

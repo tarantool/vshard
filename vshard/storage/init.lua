@@ -3315,6 +3315,32 @@ end
 -- Configuration
 --------------------------------------------------------------------------------
 
+local function storage_cfg_find_rebalancer(cfg)
+    local mode = cfg.rebalancer_mode
+    if mode == 'off' then
+        return
+    end
+    local min_master_uuid
+    local rebalancer_uuid
+    for _, rs in pairs(cfg.sharding) do
+        for replica_uuid, replica in pairs(rs.replicas) do
+            if replica.rebalancer then
+                assert(not rebalancer_uuid)
+                rebalancer_uuid = replica_uuid
+            end
+            if replica.master and (not min_master_uuid or
+                                   replica_uuid < min_master_uuid) then
+                min_master_uuid = replica_uuid
+            end
+        end
+    end
+    if mode == 'auto' then
+        return min_master_uuid
+    end
+    assert(mode == 'manual')
+    return rebalancer_uuid
+end
+
 local function storage_cfg(cfg, this_replica_uuid, is_reload)
     if this_replica_uuid == nil then
         error('Usage: cfg(configuration, this_replica_uuid)')
@@ -3337,13 +3363,8 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local this_replicaset
     local this_replica
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
-    local min_master
     for _, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
-            if (min_master == nil or replica_uuid < min_master.uuid) and
-               rs.master == replica then
-                min_master = replica
-            end
             if replica_uuid == this_replica_uuid then
                 assert(this_replicaset == nil)
                 this_replicaset = rs
@@ -3481,7 +3502,8 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         local_on_master_enable()
     end
 
-    if min_master == this_replica then
+    local rebalancer_uuid = storage_cfg_find_rebalancer(vshard_cfg)
+    if rebalancer_uuid == this_replica.uuid then
         if not M.rebalancer_fiber then
             M.rebalancer_fiber =
                 util.reloadable_fiber_create('vshard.rebalancer', M,
@@ -3492,7 +3514,12 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
             M.rebalancer_fiber:wakeup()
         end
     elseif M.rebalancer_fiber then
-        log.info('Rebalancer location has changed to %s', min_master)
+        if rebalancer_uuid then
+            log.info('Rebalancer location has changed to instance %s',
+                     rebalancer_uuid)
+        else
+            log.info('Rebalancer is turned off')
+        end
         M.rebalancer_fiber:cancel()
         M.rebalancer_fiber = nil
     end
