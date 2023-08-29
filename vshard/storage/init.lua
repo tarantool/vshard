@@ -3347,36 +3347,9 @@ end
 -- Master management
 --------------------------------------------------------------------------------
 
---
--- The only thing, that must be done to abort a master demote is
--- a reset of read_only.
---
-local function local_on_master_disable_abort()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg{read_only = false}
-    end
-end
-
---
--- Prepare to a master demotion. Before it, a master must stop
--- accept writes, and try to wait until all of its data is
--- replicated to each slave.
---
-local function local_on_master_disable_prepare()
-    log.info("Resigning from the replicaset master role...")
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = true})
-        sync(M.sync_timeout)
-    end
-end
-
---
--- This function executes when a master role is removed from local
--- instance during configuration
---
-local function local_on_master_disable()
+local function master_on_disable()
+    log.info("Stepping down from the master role")
     M._on_master_disable:run()
-    -- Stop garbage collecting
     if M.collect_bucket_garbage_fiber ~= nil then
         M.collect_bucket_garbage_fiber:cancel()
         M.collect_bucket_garbage_fiber = nil
@@ -3387,91 +3360,150 @@ local function local_on_master_disable()
         M.recovery_fiber = nil
         log.info('Recovery stopped')
     end
-    log.info("Resigned from the replicaset master role")
 end
 
---
--- The only thing, that must be done to abort a master promotion
--- is a set read_only back to true.
---
-local function local_on_master_enable_abort()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = true})
-    end
-end
-
---
--- Promote does not require sync, because a replica can not have a
--- data, that is not on a current master - the replica is read
--- only. But read_only can not be set to false here, because
--- until box.cfg is called, it can not be guaranteed, that the
--- promotion will be successful.
---
-local function local_on_master_enable_prepare()
-    log.info("Taking on replicaset master role...")
-end
---
--- This function executes whan a master role is added to local
--- instance during configuration
---
-local function local_on_master_enable()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = false})
-    end
+local function master_on_enable()
+    log.info("Stepping up into the master role")
     M._on_master_enable:run()
-    -- Start background process to collect garbage.
     M.collect_bucket_garbage_fiber =
         util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
     M.recovery_fiber =
         util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
-    -- TODO: check current status
-    log.info("Took on replicaset master role")
 end
 
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
 
-local function storage_cfg(cfg, this_replica_uuid, is_reload)
-    if this_replica_uuid == nil then
-        error('Usage: cfg(configuration, this_replica_uuid)')
-    end
-    local is_first_cfg = not M.current_cfg
-    cfg = lcfg.check(cfg, M.current_cfg)
-    local vshard_cfg, box_cfg = lcfg.split(cfg)
-    if vshard_cfg.weights or vshard_cfg.zone then
-        error('Weights and zone are not allowed for storage configuration')
-    end
-    if M.replicasets then
-        log.info("Starting reconfiguration of replica %s", this_replica_uuid)
-    else
-        log.info("Starting configuration of replica %s", this_replica_uuid)
-    end
-
-    local was_master = M.this_replicaset ~= nil and
-                       M.this_replicaset.master == M.this_replica
-
-    local this_replicaset
-    local this_replica
-    local new_replicasets = lreplicaset.buildall(vshard_cfg)
-    for _, rs in pairs(new_replicasets) do
-        for replica_uuid, replica in pairs(rs.replicas) do
-            if replica_uuid == this_replica_uuid then
-                assert(this_replicaset == nil)
-                this_replicaset = rs
-                this_replica = replica
+local function storage_cfg_find_replicaset_uuid_for_instance(cfg, instance_uuid)
+    for rs_uuid, rs in pairs(cfg.sharding) do
+        for replica_uuid, _ in pairs(rs.replicas) do
+            if replica_uuid == instance_uuid then
+                return rs_uuid
             end
         end
     end
-    if this_replicaset == nil then
-        error(string.format("Local replica %s wasn't found in config",
-                            this_replica_uuid))
+end
+
+local function storage_cfg_build_local_box_cfg(cfgctx)
+    local box_cfg = cfgctx.new_box_cfg
+    if box_cfg.listen == nil then
+        box_cfg.listen = cfgctx.new_instance_cfg.listen
+        if box_cfg.listen == nil then
+            box_cfg.listen = cfgctx.new_instance_cfg.uri
+        end
     end
-    local is_master = this_replicaset.master == this_replica
-    if is_master then
-        log.info('I am master')
+    if box_cfg.replication == nil then
+        box_cfg.replication = {}
+        for _, replica in pairs(cfgctx.new_replicaset_cfg.replicas) do
+            table.insert(box_cfg.replication, replica.uri)
+        end
+    end
+    if box_cfg.read_only == nil then
+        box_cfg.read_only = not cfgctx.is_master_in_cfg
+    end
+    if type(box.cfg) == 'function' then
+        box_cfg.instance_uuid = box_cfg.instance_uuid or cfgctx.instance_uuid
+        box_cfg.replicaset_uuid = box_cfg.replicaset_uuid or cfgctx.replicaset_uuid
+    else
+        local info = box.info
+        if cfgctx.instance_uuid ~= info.uuid then
+            error(string.format('Instance UUID mismatch: already set ' ..
+                                '"%s" but "%s" in arguments', info.uuid,
+                                cfgctx.instance_uuid))
+        end
+        local real_rs_uuid = util.replicaset_uuid(info)
+        if cfgctx.replicaset_uuid ~= real_rs_uuid then
+            error(string.format('Replicaset UUID mismatch: already set ' ..
+                                '"%s" but "%s" in vshard config',
+                                real_rs_uuid, cfgctx.replicaset_uuid))
+        end
+    end
+end
+
+local function storage_cfg_master_prepare(cfgctx)
+    if cfgctx.was_master_in_cfg and not cfgctx.is_master_in_cfg then
+        log.info('Preparing to disable the master role')
+        if not cfgctx.old_cfg or cfgctx.old_cfg.read_only == nil then
+            table.insert(cfgctx.rollback_guards, {
+                name = 'master_disable_prepare', func = function()
+                    log.info('Revert master disable')
+                    box.cfg({read_only = false})
+                end
+            })
+            box.cfg({read_only = true})
+            sync(cfgctx.new_cfg.sync_timeout)
+        end
+    elseif not cfgctx.was_master_in_cfg and cfgctx.is_master_in_cfg then
+        --
+        -- Promote does not require sync, because a replica can not have data,
+        -- that is not on the current master - the replica is read only. But
+        -- read_only can not be set to false here, because until box.cfg is
+        -- called, it can not be guaranteed, that the promotion will be
+        -- successful.
+        --
+        log.info('Preparing to enable the master role')
+    end
+end
+
+local function storage_cfg_master_commit(cfgctx)
+    if cfgctx.was_master_in_cfg and not cfgctx.is_master_in_cfg then
+        master_on_disable()
+    elseif not cfgctx.was_master_in_cfg and cfgctx.is_master_in_cfg then
+        if cfgctx.new_cfg.read_only == nil then
+            box.cfg({read_only = false})
+        end
+        master_on_enable()
+    end
+end
+
+local function storage_cfg_context_extend(cfgctx)
+    local instance_uuid = cfgctx.instance_uuid
+    if instance_uuid == nil then
+        error('Usage: cfg(configuration, this_replica_uuid)')
+    end
+    local full_cfg = lcfg.check(cfgctx.full_cfg, M.current_cfg)
+    local new_cfg, new_box_cfg = lcfg.split(full_cfg)
+    if new_cfg.weights or new_cfg.zone then
+        error('Weights and zone are not allowed for storage configuration')
+    end
+    cfgctx.new_cfg = new_cfg
+    cfgctx.old_cfg = M.current_cfg
+    cfgctx.new_box_cfg = new_box_cfg
+
+    local replicaset_uuid = storage_cfg_find_replicaset_uuid_for_instance(
+        new_cfg, instance_uuid)
+    if not replicaset_uuid then
+        error(string.format("Local replica %s wasn't found in config",
+                            instance_uuid))
+    end
+    cfgctx.replicaset_uuid = replicaset_uuid
+
+    if cfgctx.old_cfg then
+        local old_rs_cfg = cfgctx.old_cfg.sharding[replicaset_uuid]
+        cfgctx.old_replicaset_cfg = old_rs_cfg
+        cfgctx.old_instance_cfg = old_rs_cfg.replicas[instance_uuid]
+        cfgctx.was_master_in_cfg = cfgctx.old_instance_cfg.master
+    end
+    local new_rs_cfg = new_cfg.sharding[replicaset_uuid]
+    cfgctx.new_replicaset_cfg = new_rs_cfg
+    cfgctx.new_instance_cfg = new_rs_cfg.replicas[instance_uuid]
+    cfgctx.is_master_in_cfg = cfgctx.new_instance_cfg.master
+end
+
+local function storage_cfg_xc(cfgctx)
+    storage_cfg_context_extend(cfgctx)
+    local instance_uuid = cfgctx.instance_uuid
+    local replicaset_uuid = cfgctx.replicaset_uuid
+    local new_cfg = cfgctx.new_cfg
+    local is_first_cfg = not M.current_cfg
+    if M.replicasets then
+        log.info("Starting reconfiguration of replica %s", instance_uuid)
+    else
+        log.info("Starting configuration of replica %s", instance_uuid)
     end
 
+    local new_replicasets = lreplicaset.buildall(new_cfg)
     -- It is considered that all possible errors during cfg
     -- process occur only before this place.
     -- This check should be placed as late as possible.
@@ -3479,120 +3511,46 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         error('Error injection: cfg')
     end
 
-    --
-    -- Sync timeout is a special case - it must be updated before
-    -- all other options to allow a user to demote a master with
-    -- a new sync timeout.
-    --
-    local old_sync_timeout = M.sync_timeout
-    M.sync_timeout = vshard_cfg.sync_timeout
+    if not cfgctx.is_reload then
+        storage_cfg_master_prepare(cfgctx)
+        storage_cfg_build_local_box_cfg(cfgctx)
 
-    if was_master and not is_master then
-        local_on_master_disable_prepare()
-    end
-    if not was_master and is_master then
-        local_on_master_enable_prepare()
-    end
-
-    if not is_reload then
-        -- Do not change 'read_only' option here - if a master is
-        -- disabled and there are triggers on master disable, then
-        -- they would not be able to modify anything, if 'read_only'
-        -- had been set here. 'Read_only' is set in
-        -- local_on_master_disable after triggers and is unset in
-        -- local_on_master_enable before triggers.
-        --
-        -- If a master role of the replica is not changed, then
-        -- 'read_only' can be set right here.
-        local this_replicaset_cfg = vshard_cfg.sharding[this_replicaset.uuid]
-        local this_replica_cfg = this_replicaset_cfg.replicas[this_replica.uuid]
-
-        if box_cfg.listen == nil then
-            box_cfg.listen = this_replica_cfg.listen
-            if box_cfg.listen == nil then
-                box_cfg.listen = this_replica_cfg.uri
-            end
-        end
-        if not box_cfg.replication then
-            box_cfg.replication = {}
-            for _, replica in pairs(this_replicaset.replicas) do
-                table.insert(box_cfg.replication, replica.uri)
-            end
-        end
-        if was_master == is_master and box_cfg.read_only == nil then
-            box_cfg.read_only = not is_master
-        end
-        if type(box.cfg) == 'function' then
-            box_cfg.instance_uuid = box_cfg.instance_uuid or this_replica.uuid
-            box_cfg.replicaset_uuid = box_cfg.replicaset_uuid or
-                                      this_replicaset.uuid
-        else
-            local info = box.info
-            if this_replica_uuid ~= info.uuid then
-                error(string.format('Instance UUID mismatch: already set ' ..
-                                    '"%s" but "%s" in arguments', info.uuid,
-                                    this_replica_uuid))
-            end
-            local real_rs_uuid = util.replicaset_uuid(info)
-            if this_replicaset.uuid ~= real_rs_uuid then
-                error(string.format('Replicaset UUID mismatch: already set ' ..
-                                    '"%s" but "%s" in vshard config',
-                                    real_rs_uuid, this_replicaset.uuid))
-            end
-        end
-        local ok, err = pcall(box.cfg, box_cfg)
+        box.cfg(cfgctx.new_box_cfg)
+        cfgctx.rollback_guards = {}
         while M.errinj.ERRINJ_CFG_DELAY do
             lfiber.sleep(0.01)
         end
-        if not ok then
-            M.sync_timeout = old_sync_timeout
-            if was_master and not is_master then
-                local_on_master_disable_abort()
-            end
-            if not was_master and is_master then
-                local_on_master_enable_abort()
-            end
-            error(err)
-        end
         log.info("Box has been configured")
     end
+    lref.cfg()
+    lsched.cfg(new_cfg)
+    lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
+    lreplicaset.outdate_replicasets(M.replicasets)
+    M.replicasets = new_replicasets
+    M.this_replicaset = new_replicasets[replicaset_uuid]
+    M.this_replica = M.this_replicaset.replicas[instance_uuid]
+    M.total_bucket_count = new_cfg.bucket_count
+    M.rebalancer_disbalance_threshold = new_cfg.rebalancer_disbalance_threshold
+    M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
+    M.shard_index = new_cfg.shard_index
+    M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
+    M.sync_timeout = new_cfg.sync_timeout
+    M.current_cfg = new_cfg
 
-    local uri = luri.parse(this_replica.uri)
-    schema_upgrade(is_first_cfg, is_master, uri.login, uri.password)
+    local uri = luri.parse(M.this_replica.uri)
+    schema_upgrade(is_first_cfg, cfgctx.is_master_in_cfg,
+                   uri.login, uri.password)
 
     -- Check for master specifically. On master _bucket space must exist.
     -- Because it should have done the schema bootstrap. Shall not ever try to
     -- do anything delayed.
-    if is_master or box.space._bucket then
+    if cfgctx.is_master_in_cfg or box.space._bucket then
         schema_install_triggers()
     else
         schema_install_triggers_delayed()
     end
 
-    lref.cfg()
-    lsched.cfg(vshard_cfg)
-
-    lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
-    lreplicaset.outdate_replicasets(M.replicasets)
-    M.replicasets = new_replicasets
-    M.this_replicaset = this_replicaset
-    M.this_replica = this_replica
-    M.total_bucket_count = vshard_cfg.bucket_count
-    M.rebalancer_disbalance_threshold =
-        vshard_cfg.rebalancer_disbalance_threshold
-    M.rebalancer_receiving_quota = vshard_cfg.rebalancer_max_receiving
-    M.shard_index = vshard_cfg.shard_index
-    M.rebalancer_worker_count = vshard_cfg.rebalancer_max_sending
-    M.current_cfg = cfg
-
-    if was_master and not is_master then
-        local_on_master_disable()
-    end
-
-    if not was_master and is_master then
-        local_on_master_enable()
-    end
-
+    storage_cfg_master_commit(cfgctx)
     rebalancer_role_update()
 
     M.is_configured = true
@@ -3600,13 +3558,29 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     collectgarbage()
 end
 
-local function storage_cfg_fiber_safe(cfg, this_replica_uuid, is_reload)
+local function storage_cfg(cfg, this_replica_uuid, is_reload)
     if M.is_cfg_in_progress then
         return error(lerror.vshard(lerror.code.STORAGE_CFG_IS_IN_PROGRESS))
     end
+    local cfgctx = {
+        instance_uuid = this_replica_uuid,
+        full_cfg = cfg,
+        is_reload = is_reload,
+        rollback_guards = {},
+    }
 
     M.is_cfg_in_progress = true
-    local ok, err = pcall(storage_cfg, cfg, this_replica_uuid, is_reload)
+    local ok, err = pcall(storage_cfg_xc, cfgctx)
+    if not ok then
+        for i = #cfgctx.rollback_guards, 1, -1 do
+            local guard = cfgctx.rollback_guards[i]
+            local guard_ok, guard_err = pcall(guard.func)
+            if not guard_ok then
+                log.info('Failed to rollback cfg guard %s - %s', guard.name,
+                         guard_err)
+            end
+        end
+    end
     M.is_cfg_in_progress = false
     if not ok then
         error(err)
@@ -3903,7 +3877,7 @@ if not rawget(_G, MODULE_INTERNALS) then
 else
     reload_evolution.upgrade(M)
     if M.current_cfg then
-        storage_cfg_fiber_safe(M.current_cfg, M.this_replica.uuid, true)
+        storage_cfg(M.current_cfg, M.this_replica.uuid, true)
     end
     M.module_version = M.module_version + 1
     -- Background fibers could sleep waiting for bucket changes.
@@ -4002,7 +3976,7 @@ return {
     call = storage_make_api(storage_call),
     _call = storage_make_api(service_call),
     sync = storage_make_api(sync),
-    cfg = function(cfg, uuid) return storage_cfg_fiber_safe(cfg, uuid, false) end,
+    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,
     on_bucket_event = on_bucket_event,
