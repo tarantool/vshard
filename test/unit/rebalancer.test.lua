@@ -75,6 +75,7 @@ build_routes(replicasets)
 --
 -- Test rebalancer local state.
 --
+vshard.storage.internal.is_master = true
 get_state = vshard.storage._rebalancer_request_state
 _bucket = box.schema.create_space('_bucket')
 pk = _bucket:create_index('pk')
@@ -86,6 +87,20 @@ get_state()
 
 _bucket:replace{1, consts.BUCKET.RECEIVING}
 get_state()
+vshard.storage.internal.is_master = false
+
+assert(not vshard.storage.internal.this_replicaset)
+vshard.storage.internal.this_replicaset = {                                     \
+    master = {                                                                  \
+        uuid = 'master_uuid'                                                    \
+    }                                                                           \
+}
+assert(not vshard.storage.internal.this_replica)
+vshard.storage.internal.this_replica = {uuid = 'replica_uuid'}
+_, err = get_state()
+assert(err.code == vshard.error.code.NON_MASTER)
+vshard.storage.internal.this_replicaset = nil
+vshard.storage.internal.this_replica = nil
 
 --
 -- Other tests.

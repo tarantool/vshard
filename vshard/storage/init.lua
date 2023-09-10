@@ -1793,6 +1793,11 @@ end
 -- Exception safe version of bucket_recv_xc.
 --
 local function bucket_recv(bucket_id, from, data, opts)
+    local status, ret, err
+    ret, err = check_is_master()
+    if not ret then
+        return nil, err
+    end
     -- Can understand both msgpack and normal args. That is done because having
     -- a separate bucket_recv_raw() function would mean the new vshard storages
     -- wouldn't be able to send buckets to the old ones which have only
@@ -1804,7 +1809,6 @@ local function bucket_recv(bucket_id, from, data, opts)
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         lfiber.sleep(0.01)
     end
-    local status, ret, err
     status, err = bucket_transfer_start(bucket_id)
     if not status then
         return nil, err
@@ -2124,6 +2128,10 @@ local function bucket_send(bucket_id, destination, opts)
         error('Usage: bucket_send(bucket_id, destination)')
     end
     local status, ret, err
+    ret, err = check_is_master()
+    if not ret then
+        return nil, err
+    end
     status, err = bucket_transfer_start(bucket_id)
     if not status then
         return nil, err
@@ -2969,6 +2977,10 @@ local function rebalancer_apply_routes(routes)
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED);
     end
+    local ok, err = check_is_master()
+    if not ok then
+        return nil, err
+    end
     assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool
     -- about problems with long polling. Apply routes in a fiber.
@@ -3119,6 +3131,10 @@ end
 -- @retval     nil Not SENT or not ACTIVE buckets were found.
 --
 local function rebalancer_request_state()
+    local ok, err = check_is_master()
+    if not ok then
+        return nil, err
+    end
     if not M.is_rebalancer_active or rebalancing_is_in_progress() then
         return
     end

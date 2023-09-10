@@ -455,3 +455,39 @@ test_group.test_bucket_recovery_quick_after_send_is_started = function(g)
         _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_uuid()})
 end
+
+test_group.test_master_exclusive_api = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].replicas.replica_1_a.master = false
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    local dst_bid = vtest.storage_first_bucket(g.replica_2_a)
+    g.replica_1_a:exec(function(dst_uuid, dst_bid)
+        ilt.assert(not ivshard.storage.internal.is_master)
+
+        local function is_error_non_master(ok, err)
+            ilt.assert_not_equals(err, nil)
+            ilt.assert_equals(err.code, iverror.code.NON_MASTER)
+            ilt.assert_equals(ok, nil)
+        end
+
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(bid, dst_uuid)
+        is_error_non_master(ok, err)
+        ilt.assert_equals(ivshard.storage.bucket_stat(bid).status,
+                          ivconst.BUCKET.ACTIVE)
+
+        ok, err = ivshard.storage.bucket_recv(dst_bid, dst_uuid, {})
+        is_error_non_master(ok, err)
+        ilt.assert_equals(box.space._bucket:get{dst_bid}, nil)
+
+        ok, err = ivshard.storage._call('rebalancer_apply_routes', {})
+        is_error_non_master(ok, err)
+
+        ok, err = ivshard.storage._call('rebalancer_request_state', {})
+        is_error_non_master(ok, err)
+    end, {g.replica_2_a:replicaset_uuid(), dst_bid})
+
+    vtest.cluster_cfg(g, global_cfg)
+end
