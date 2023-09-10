@@ -494,3 +494,39 @@ test_group.test_master_exclusive_api = function(g)
 
     vtest.cluster_cfg(g, global_cfg)
 end
+
+test_group.test_noactivity_timeout_for_explicit_master = function(g)
+    local bid = g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        local master = ivshard.storage.internal.replicasets[uuid].master
+        ilt.assert_not_equals(master, nil)
+        ilt.assert_not_equals(master.conn, nil)
+
+        local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
+        ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        ivtest.service_wait_for_new_ok(
+            ivshard.storage.internal.conn_manager_service,
+            {on_yield = function()
+                ivshard.storage.internal.conn_manager_fiber:wakeup()
+            end})
+        master = ivshard.storage.internal.replicasets[uuid].master
+        ilt.assert_not_equals(master, nil)
+        ilt.assert_equals(master.conn, nil)
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
+        _G.bucket_gc_wait()
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    g.replica_2_a:exec(function(uuid, bid)
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {g.replica_1_a:replicaset_uuid(), bid})
+end

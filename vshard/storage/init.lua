@@ -3595,10 +3595,34 @@ local function conn_manager_locate_masters(service)
     return is_all_done
 end
 
+local function conn_manager_collect_idle_conns()
+    local ts = fiber_clock()
+    local count = 0
+    for _, rs in pairs(M.replicasets) do
+        for _, replica in pairs(rs.replicas) do
+            local c = replica.conn
+            if c and replica.activity_ts and
+               replica.activity_ts + consts.REPLICA_NOACTIVITY_TIMEOUT < ts then
+                if replica == rs.master and rs.is_master_auto then
+                    assert(rs ~= M.this_replicaset)
+                    rs.master = nil
+                end
+                replica.conn = nil
+                c:close()
+                count = count + 1
+            end
+        end
+    end
+    if count > 0 then
+        log.info('Closed %s unused connections', count)
+    end
+end
+
 local function conn_manager_service_f(service)
     local module_version = M.module_version
     while module_version == M.module_version do
         service:next_iter()
+        conn_manager_collect_idle_conns()
         local timeout
         service:set_activity('master discovery')
         lfiber.testcancel()
@@ -3624,28 +3648,11 @@ local function conn_manager_f()
     M.conn_manager_service = nil
 end
 
-local function conn_manager_service_start()
+local function conn_manager_update()
     if not M.conn_manager_fiber then
         M.conn_manager_fiber = util.reloadable_fiber_create(
             'vshard.conn_man', M, 'conn_manager_f')
     end
-end
-
-local function conn_manager_service_stop()
-    if M.conn_manager_fiber then
-        M.conn_manager_fiber:cancel()
-        M.conn_manager_fiber = nil
-    end
-end
-
-local function conn_manager_update()
-    for _, rs in pairs(M.replicasets) do
-        if rs.is_master_auto then
-            conn_manager_service_start()
-            return
-        end
-    end
-    conn_manager_service_stop()
 end
 
 --------------------------------------------------------------------------------

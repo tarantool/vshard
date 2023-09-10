@@ -14,6 +14,7 @@
 --             down_ts = <timestamp of disconnect from the
 --                        replica>,
 --             backoff_ts = <timestamp when was sent into backoff state>,
+--             activity_ts = <timestamp when the replica was used last time>,
 --             backoff_err = <error object caused the backoff>,
 --             net_timeout = <current network timeout for calls,
 --                            doubled on each network fail until
@@ -208,6 +209,7 @@ end
 -- until a connection is established.
 --
 local function replicaset_connect_to_replica(replicaset, replica)
+    replica.activity_ts = fiber_clock()
     local conn = replica.conn
     if not conn or netbox_is_conn_dead(conn) then
         conn = netbox.connect(replica.uri, {
@@ -413,6 +415,7 @@ end
 --
 local function replica_call(replica, func, args, opts)
     assert(opts and opts.timeout)
+    replica.activity_ts = fiber_clock()
     local conn = replica.conn
     local net_status, storage_status, retval, error_object =
         pcall(conn.call, conn, func, args, opts)
