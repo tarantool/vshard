@@ -265,6 +265,21 @@ local function local_call(func_name, args)
     return pcall(netbox_self_call, netbox_self, func_name, args)
 end
 
+local function master_call(replicaset, func, args, opts)
+    local res, err = replicaset:callrw(func, args, opts)
+    if res == nil then
+        if err == nil then
+            return
+        end
+        err = lerror.make(err)
+        if err.code == lerror.code.NON_MASTER then
+            replicaset:update_master(err.replica_uuid, err.master_uuid)
+        end
+        return nil, err
+    end
+    return res
+end
+
 --
 -- Get number of buckets stored on this storage. Regardless of their state.
 --
@@ -1184,8 +1199,9 @@ local function recovery_step_by_type(type)
             goto continue
         end
         lfiber.testcancel()
-        local remote_bucket, err = destination:callrw(
-            'vshard.storage._call', {'recovery_bucket_stat', bucket_id})
+        local remote_bucket, err = master_call(
+            destination, 'vshard.storage._call',
+            {'recovery_bucket_stat', bucket_id})
         -- Check if it is not a bucket error, and this result can
         -- not be used to recovery anything. Try later.
         if remote_bucket == nil and err ~= nil then
@@ -2082,8 +2098,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
             limit = limit - 1
             if limit == 0 then
                 table.insert(data, {space.name, space_data})
-                status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                                {bucket_id, uuid, data}, opts)
+                status, err = master_call(
+                    replicaset, 'vshard.storage.bucket_recv',
+                    {bucket_id, uuid, data}, opts)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
@@ -2096,8 +2113,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         end
         table.insert(data, {space.name, space_data})
     end
-    status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, uuid, data}, opts)
+    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
+                              {bucket_id, uuid, data}, opts)
     if not status then
         return status, lerror.make(err)
     end
@@ -2126,9 +2143,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
     -- the same bucket is activated on the destination.
-    status, err = replicaset:callrw('vshard.storage.bucket_recv',
-                                    {bucket_id, uuid, {}, {is_last = true}},
-                                    opts)
+    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
+                              {bucket_id, uuid, {}, {is_last = true}}, opts)
     if not status then
         return status, lerror.make(err)
     end
@@ -3015,8 +3031,8 @@ local function rebalancer_download_states()
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(M.replicasets) do
-        local state =
-            replicaset:callrw('vshard.storage.rebalancer_request_state', {})
+        local state = master_call(
+            replicaset, 'vshard.storage.rebalancer_request_state', {})
         if state == nil then
             return
         end
@@ -3109,9 +3125,8 @@ local function rebalancer_service_f(service)
             service:set_activity('applying routes')
             local rs = M.replicasets[src_uuid]
             lfiber.testcancel()
-            local status, err =
-                rs:callrw('vshard.storage.rebalancer_apply_routes',
-                          {src_routes})
+            local status, err = master_call(
+                rs, 'vshard.storage.rebalancer_apply_routes', {src_routes})
             if not status then
                 log.error(service:set_status_error(
                     'Error during routes appying on "%s": %s. '..
