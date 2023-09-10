@@ -229,3 +229,61 @@ test_group.test_recovery = function(g)
         _G.bucket_gc_wait()
     end)
 end
+
+test_group.test_noactivity_timeout_for_auto_master = function(g)
+    local bid1, bid2 = g.replica_1_a:exec(function(uuid)
+        local bid1 = _G.get_first_bucket()
+        --
+        -- Use the master connection for anything.
+        --
+        local ok, err = ivshard.storage.bucket_send(bid1, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        ilt.assert_not_equals(
+            ivshard.storage.internal.replicasets[uuid].master, nil)
+        --
+        -- Wait for the noactivity timeout to expire. The connection must be
+        -- dropped. The master role is reset, because it is automatic and wasn't
+        -- validated for too long time. Might be outdated already. Better let it
+        -- be re-discovered again when needed.
+        --
+        local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
+        ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        ivtest.service_wait_for_new_ok(
+            ivshard.storage.internal.conn_manager_service,
+            {on_yield = function()
+                ivshard.storage.internal.conn_manager_fiber:wakeup()
+            end})
+        ilt.assert_equals(
+            ivshard.storage.internal.replicasets[uuid].master, nil)
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
+        --
+        -- Re-discover the connection and the master role.
+        --
+        local bid2 = _G.get_first_bucket()
+        ok, err = ivshard.storage.bucket_send(bid2, uuid,
+                                              {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        ilt.assert_not_equals(
+            ivshard.storage.internal.replicasets[uuid].master, nil)
+        _G.bucket_gc_wait()
+        return bid1, bid2
+    end, {g.replica_2_a:replicaset_uuid()})
+    --
+    -- Cleanup.
+    --
+    g.replica_2_a:exec(function(uuid, bid1, bid2)
+        local ok, err = ivshard.storage.bucket_send(bid1, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        ok, err = ivshard.storage.bucket_send(bid2, uuid,
+                                              {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {g.replica_1_a:replicaset_uuid(), bid1, bid2})
+end
