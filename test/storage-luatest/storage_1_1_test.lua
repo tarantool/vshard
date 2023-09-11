@@ -487,6 +487,9 @@ test_group.test_master_exclusive_api = function(g)
 
         ok, err = ivshard.storage._call('rebalancer_request_state', {})
         is_error_non_master(ok, err)
+
+        ok, err = ivshard.storage._call('recovery_bucket_stat', {bid})
+        is_error_non_master(ok, err)
     end, {g.replica_2_a:replicaset_uuid(), dst_bid})
 
     vtest.cluster_cfg(g, global_cfg)

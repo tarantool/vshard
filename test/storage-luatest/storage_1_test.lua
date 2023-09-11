@@ -139,3 +139,32 @@ test_group.test_truncate_space_clear = function(g)
        ilt.assert(box.space._truncate:get{sid} == nil)
     end)
 end
+
+test_group.test_recovery_bucket_stat = function(g)
+    g.replica_1_a:exec(function(bucket_count)
+        local stat, err = ivshard.storage._call('recovery_bucket_stat',
+                                                bucket_count + 1)
+        ilt.assert_equals(stat, nil)
+        ilt.assert_equals(err, nil)
+
+        local bid = _G.get_first_bucket()
+        stat, err = ivshard.storage._call('recovery_bucket_stat', bid)
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(stat.id, bid)
+        ilt.assert_equals(stat.status, ivconst.BUCKET.ACTIVE)
+        ilt.assert(not stat.is_transfering)
+    end, {cfg_template.bucket_count})
+
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].replicas.replica_1_a.master = false
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    g.replica_1_a:exec(function()
+        local stat, err = ivshard.storage._call('recovery_bucket_stat',
+                                                _G.get_first_bucket())
+        ilt.assert_equals(stat, nil)
+        ilt.assert_equals(err.code, iverror.code.NON_MASTER)
+    end)
+
+    vtest.cluster_cfg(g, global_cfg)
+end
