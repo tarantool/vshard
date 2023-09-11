@@ -1085,6 +1085,22 @@ local function rebalancing_is_in_progress()
     return f ~= nil and f:status() ~= 'dead'
 end
 
+local function recovery_bucket_stat(bid)
+    local ok, err = check_is_master()
+    if not ok then
+        return nil, err
+    end
+    local b = box.space._bucket:get{bid}
+    if b == nil then
+        return
+    end
+    return {
+        id = bid,
+        status = b.status,
+        is_transfering = M.rebalancer_transfering_buckets[bid],
+    }
+end
+
 --
 -- Check if a local bucket which is SENDING has actually finished the transfer
 -- and can be made SENT.
@@ -1168,12 +1184,11 @@ local function recovery_step_by_type(type)
             goto continue
         end
         lfiber.testcancel()
-        local remote_bucket, err =
-            destination:callrw('vshard.storage.bucket_stat', {bucket_id})
+        local remote_bucket, err = destination:callrw(
+            'vshard.storage._call', {'recovery_bucket_stat', bucket_id})
         -- Check if it is not a bucket error, and this result can
         -- not be used to recovery anything. Try later.
-        if not remote_bucket and (not err or err.type ~= 'ShardingError' or
-                                  err.code ~= lerror.code.WRONG_BUCKET) then
+        if remote_bucket == nil and err ~= nil then
             if is_step_empty then
                 if err == nil then
                     err = 'unknown'
@@ -3357,6 +3372,7 @@ service_call_api = setmetatable({
     bucket_test_gc = bucket_test_gc,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
+    recovery_bucket_stat = recovery_bucket_stat,
     storage_ref = storage_ref,
     storage_unref = storage_unref,
     storage_map = storage_map,

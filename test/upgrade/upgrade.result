@@ -181,6 +181,7 @@ vshard.storage._call('test_api', 1, 2, 3)
  |   - info
  |   - rebalancer_apply_routes
  |   - rebalancer_request_state
+ |   - recovery_bucket_stat
  |   - storage_map
  |   - storage_ref
  |   - storage_unref
