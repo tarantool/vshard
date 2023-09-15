@@ -444,6 +444,7 @@ end
 local function cluster_rebalancer_enable(g)
     local _, err =  cluster_exec_each(g, function()
         ivshard.storage.rebalancer_enable()
+        ivshard.storage.rebalancer_wakeup()
     end)
     t.assert_equals(err, nil, 'rebalancer enable')
 end
@@ -549,6 +550,26 @@ local function cluster_wait_fullsync(g)
             end
         end
     end
+end
+
+local function cluster_rebalancer_find_all(g)
+    local map, err = cluster_exec_each(g, function()
+        return ivshard.storage.internal.rebalancer_fiber ~= nil
+    end)
+    t.assert_equals(err, nil)
+    local names = {}
+    for name, res in pairs(map) do
+        if res then
+            table.insert(names, name)
+        end
+    end
+    return names
+end
+
+local function cluster_rebalancer_find(g)
+    local names = cluster_rebalancer_find_all(g)
+    t.assert_lt(#names, 2)
+    return names[1]
 end
 
 --
@@ -792,6 +813,7 @@ return {
     cluster_rebalancer_enable = cluster_rebalancer_enable,
     cluster_wait_vclock_all = cluster_wait_vclock_all,
     cluster_wait_fullsync = cluster_wait_fullsync,
+    cluster_rebalancer_find = cluster_rebalancer_find,
     storage_first_bucket = storage_first_bucket,
     storage_stop = storage_stop,
     storage_start = storage_start,
