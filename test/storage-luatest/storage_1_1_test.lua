@@ -346,3 +346,52 @@ test_group.test_bucket_double_recv = function(g)
     end, {vtest.storage_first_bucket(g.replica_1_a),
           g.replica_1_a:replicaset_uuid()})
 end
+
+--
+-- gh-433: SENT bucket could be deleted by GC before bucket_send() is completed.
+-- It could lead to a problem that bucket_send() would notice that in the end
+-- and treat as an error. The bucket should not be deleted while its transfer is
+-- still in progress.
+--
+test_group.test_bucket_send_last_step_gc = function(g)
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
+    end)
+    local bid = g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local f = ifiber.create(ivshard.storage.bucket_send, bid, uuid,
+                                {timeout = 1000000})
+        f:set_joinable(true)
+        rawset(_G, 'test_f', f)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(box.space._bucket:get{bid}.status,
+                              ivconst.BUCKET.SENT)
+        end)
+        ivtest.service_wait_for_new_ok(ivshard.storage.internal.gc_service, {
+            on_yield = ivshard.storage.garbage_collector_wakeup
+        })
+        ilt.assert_equals(box.space._bucket:get{bid}.status,
+                          ivconst.BUCKET.SENT)
+        ilt.assert_equals(ivshard.storage._call('bucket_test_gc', {bid}),
+                          {bids_not_ok = {bid}})
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
+    end)
+    g.replica_1_a:exec(function()
+        local f = _G.test_f
+        _G.test_f = nil
+        local f_ok, ok, err = f:join()
+        ilt.assert(f_ok)
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end)
+    g.replica_2_a:exec(function(bid, uuid)
+        local ok, err = ivshard.storage.bucket_send(bid, uuid)
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+end
