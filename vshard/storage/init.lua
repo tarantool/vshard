@@ -340,6 +340,7 @@ end
 local function bucket_transfer_end(bid)
     assert(M.rebalancer_transfering_buckets[bid])
     M.rebalancer_transfering_buckets[bid] = nil
+    bucket_generation_increment()
 end
 
 --
@@ -1808,6 +1809,9 @@ local function bucket_test_gc(bids)
     local _bucket = box.space._bucket
     local ref, bucket, status
     for i, bid in ipairs(bids) do
+        if M.rebalancer_transfering_buckets[bid] then
+            goto not_ok_bid
+        end
         bucket = _bucket:get(bid)
         status = bucket ~= nil and bucket.status or consts.BUCKET.GARBAGE
         if status ~= consts.BUCKET.GARBAGE and status ~= consts.BUCKET.SENT then
@@ -2415,10 +2419,14 @@ local function gc_bucket_process_sent_xc()
     local batch = table.new(limit, 0)
     local i = 0
     local is_done = true
+    local ref
     for _, b in _bucket.index.status:pairs(consts.BUCKET.SENT) do
         i = i + 1
         local bid = b.id
-        local ref = M.bucket_refs[bid]
+        if M.rebalancer_transfering_buckets[bid] then
+            goto continue
+        end
+        ref = M.bucket_refs[bid]
         if ref ~= nil then
             assert(ref.rw == 0)
             if ref.ro ~= 0 then
