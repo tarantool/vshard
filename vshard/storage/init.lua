@@ -3239,27 +3239,50 @@ end
 --
 local function rebalancer_cfg_find_instance(cfg)
     local target_uuid
+    local is_assigned
     for _, rs in pairs(cfg.sharding) do
+        if rs.rebalancer == false then
+            goto next_rs
+        end
         for replica_uuid, replica in pairs(rs.replicas) do
+            local is_rebalancer = rs.rebalancer or replica.rebalancer
+            local no_rebalancer = replica.rebalancer == false
+            if is_rebalancer and not is_assigned then
+                is_assigned = true
+                target_uuid = nil
+            end
             local ok = true
-            ok = ok and replica.master
+            ok = ok and not no_rebalancer
+            ok = ok and (replica.master or replica.rebalancer)
             ok = ok and (not target_uuid or replica_uuid < target_uuid)
+            ok = ok and (not is_assigned or is_rebalancer)
             if ok then
                 target_uuid = replica_uuid
             end
         end
+    ::next_rs::
     end
     return target_uuid
 end
 
 local function rebalancer_cfg_find_replicaset(cfg)
     local target_uuid
+    local is_assigned
     for rs_uuid, rs in pairs(cfg.sharding) do
+        local is_rebalancer = rs.rebalancer
+        local no_rebalancer = rs.rebalancer == false
+        if is_rebalancer and not is_assigned then
+            is_assigned = true
+            target_uuid = nil
+        end
         local ok = true
+        ok = ok and not no_rebalancer
         ok = ok and (rs.master == 'auto')
         ok = ok and (not target_uuid or rs_uuid < target_uuid)
+        ok = ok and (not is_assigned or is_rebalancer)
         if ok then
             target_uuid = rs_uuid
+            is_assigned = is_rebalancer
         end
     end
     return target_uuid
@@ -3272,6 +3295,15 @@ local function rebalancer_is_needed()
     local cfg = M.current_cfg
     local this_replica_uuid = M.this_replica.uuid
     local this_replicaset_uuid = M.this_replicaset.uuid
+
+    local this_replicaset_cfg = cfg.sharding[this_replicaset_uuid]
+    if this_replicaset_cfg.rebalancer == false then
+        return false
+    end
+    local this_replica_cfg = this_replicaset_cfg.replicas[this_replica_uuid]
+    if this_replica_cfg.rebalancer == false then
+        return false
+    end
 
     local uuid = rebalancer_cfg_find_instance(cfg)
     if uuid then
