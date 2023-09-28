@@ -157,3 +157,79 @@ test_group.test_rebalancer_location = function(g)
     vtest.cluster_cfg(g, global_cfg)
     wait_rebalancer_on_instance(g, 'replica_1_a')
 end
+
+test_group.test_locate_with_flag = function(g)
+    t.assert_equals(vtest.cluster_rebalancer_find(g), 'replica_1_a')
+    --
+    -- Assign to another replicaset, with a non-minimal UUID.
+    --
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].rebalancer = false
+    new_cfg_template.sharding[2].rebalancer = true
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_a')
+    --
+    -- Automatically move the rebalancer together with the master role.
+    --
+    new_cfg_template.sharding[2].replicas.replica_2_a.read_only = true
+    new_cfg_template.sharding[2].replicas.replica_2_b.read_only = false
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_b')
+    --
+    -- Assign to the replicaset with the maximal UUID.
+    --
+    new_cfg_template.sharding[2].rebalancer = false
+    new_cfg_template.sharding[3].rebalancer = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_3_a')
+    --
+    -- Assign explicitly to a read-only replica.
+    --
+    new_cfg_template.sharding[3].master = nil
+    new_cfg_template.sharding[3].replicas.replica_3_b.master = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_3_b')
+    --
+    -- Forbid the rebalancer on the min-UUID replicaset. Then the replicaset
+    -- with the next UUID is used.
+    --
+    new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].rebalancer = false
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_a')
+    --
+    -- Forbid to run on the current master. But on a replica it won't run
+    -- without an explicit flag. Hence no rebalancer at all.
+    --
+    new_cfg_template.sharding[2].replicas.replica_2_a.rebalancer = false
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g)
+    --
+    -- The master appears on another instance. The rebalancer can finally start.
+    --
+    new_cfg_template.sharding[2].replicas.replica_2_b.read_only = false
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_b')
+    --
+    -- Explicitly assign to a replica in a non-min-UUID replicaset. Without
+    -- setting this flag for any replicaset.
+    --
+    new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].rebalancer = nil
+    new_cfg_template.sharding[2].replicas.replica_2_b.rebalancer = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_b')
+    --
+    -- Cleanup.
+    --
+    vtest.cluster_cfg(g, global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_1_a')
+end

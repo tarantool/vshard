@@ -128,3 +128,86 @@ g.test_extract_vshard = function()
         replication_timeout = 10,
     })
 end
+
+g.test_rebalancer_flag = function()
+    local storage_1_a = {
+        uri = 'storage:storage@127.0.0.1:3301',
+        name = 'storage_1_a',
+    }
+    local replicaset_1 = {
+        replicas = {
+            storage_1_a_uuid = storage_1_a,
+        },
+    }
+    local storage_2_a = {
+        uri = 'storage:storage@127.0.0.1:3302',
+        name = 'storage_2_a',
+    }
+    local replicaset_2 = {
+        replicas = {
+            storage_2_a_uuid = storage_2_a,
+        },
+    }
+    local config = {
+        sharding = {
+            storage_1_uuid = replicaset_1,
+            storage_2_uuid = replicaset_2,
+        },
+    }
+    t.assert(vcfg.check(config))
+    --
+    -- Bad replica-rebalancer flag.
+    --
+    storage_1_a.rebalancer = 'test'
+    t.assert_error_msg_content_equals(
+        'Rebalancer flag must be boolean', vcfg.check, config)
+    storage_1_a.rebalancer = nil
+    --
+    -- Bad replicaset-rebalancer flag.
+    --
+    replicaset_1.rebalancer = 'test'
+    t.assert_error_msg_content_equals(
+        'Rebalancer flag must be boolean', vcfg.check, config)
+    replicaset_1.rebalancer = nil
+    --
+    -- Rebalancer flag for a replicaset and an instance.
+    --
+    storage_1_a.rebalancer = true
+    replicaset_1.rebalancer = true
+    t.assert_error_msg_content_equals(
+        'Found 2 rebalancer flags at storage_1_uuid and storage_1_a_uuid',
+        vcfg.check, config)
+    storage_1_a.rebalancer = nil
+    replicaset_1.rebalancer = nil
+    --
+    -- Rebalancer flag for 2 replicasets.
+    --
+    replicaset_1.rebalancer = true
+    replicaset_2.rebalancer = true
+    t.assert_error_msg_content_equals(
+        'Found 2 rebalancer flags at storage_1_uuid and storage_2_uuid',
+        vcfg.check, config)
+    replicaset_1.rebalancer = nil
+    replicaset_2.rebalancer = nil
+    --
+    -- Rebalancer flag for 2 instances.
+    --
+    storage_1_a.rebalancer = true
+    storage_2_a.rebalancer = true
+    t.assert_error_msg_content_equals(
+        'Found 2 rebalancer flags at storage_1_a_uuid and storage_2_a_uuid',
+        vcfg.check, config)
+    storage_1_a.rebalancer = nil
+    storage_2_a.rebalancer = nil
+    --
+    -- Conflicting rebalancer flag in one replicaset.
+    --
+    replicaset_1.rebalancer = false
+    storage_1_a.rebalancer = true
+    t.assert_error_msg_content_equals(
+        'Replicaset storage_1_uuid can\'t run the rebalancer, and yet it was '..
+        'explicitly assigned to its instance storage_1_a_uuid',
+        vcfg.check, config)
+    replicaset_1.rebalancer = nil
+    storage_1_a.rebalancer = nil
+end

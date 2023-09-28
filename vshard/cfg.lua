@@ -149,6 +149,7 @@ local replica_template = {
         type = 'boolean', name = "Master", is_optional = true,
         check = check_replica_master
     },
+    rebalancer = {type = 'boolean', name = 'Rebalancer flag', is_optional = true},
 }
 
 local function check_replicas(replicas)
@@ -169,6 +170,7 @@ local replicaset_template = {
         type = 'string', name = 'Master search mode', is_optional = true,
         check = check_replicaset_master
     },
+    rebalancer = {type = 'boolean', name = 'Rebalancer flag', is_optional = true},
 }
 
 --
@@ -211,6 +213,7 @@ local function check_sharding(sharding)
     local uris = {}
     local names = {}
     local is_all_weights_zero = true
+    local rebalancer_uuid
     for replicaset_uuid, replicaset in pairs(sharding) do
         if uuids[replicaset_uuid] then
             error(string.format('Duplicate uuid %s', replicaset_uuid))
@@ -223,7 +226,15 @@ local function check_sharding(sharding)
         if w == math.huge or w == -math.huge then
             error('Replicaset weight can not be Inf')
         end
+        if replicaset.rebalancer then
+            if rebalancer_uuid then
+                error(('Found 2 rebalancer flags at %s and %s'):format(
+                      rebalancer_uuid, replicaset_uuid))
+            end
+            rebalancer_uuid = replicaset_uuid
+        end
         validate_config(replicaset, replicaset_template)
+        local no_rebalancer = replicaset.rebalancer == false
         local is_master_auto = replicaset.master == 'auto'
         for replica_uuid, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
@@ -239,6 +250,18 @@ local function check_sharding(sharding)
                                     'master search is enabled, but found '..
                                     'master flag in replica uuid %s',
                                     replica_uuid))
+            end
+            if replica.rebalancer then
+                if rebalancer_uuid then
+                    error(('Found 2 rebalancer flags at %s and %s'):format(
+                          rebalancer_uuid, replica_uuid))
+                end
+                if no_rebalancer then
+                    error(('Replicaset %s can\'t run the rebalancer, and yet '..
+                           'it was explicitly assigned to its instance '..
+                           '%s'):format(replicaset_uuid, replica_uuid))
+                end
+                rebalancer_uuid = replica_uuid
             end
             -- Log warning in case replica.name duplicate is
             -- found. Message appears once for each unique

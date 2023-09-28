@@ -460,12 +460,12 @@ replica.uri = '127.0.0.1'
 lcfg.check(cfg)['sharding']
 ---
 - replicaset_uuid:
+    weight: 100000
     replicas:
       replica_uuid:
-        master: true
         uri: 127.0.0.1
         name: storage
-    weight: 100000
+        master: true
 ...
 replica.uri = 'user:password@localhost'
 ---
@@ -473,12 +473,12 @@ replica.uri = 'user:password@localhost'
 lcfg.check(cfg)['sharding']
 ---
 - replicaset_uuid:
+    weight: 100000
     replicas:
       replica_uuid:
-        master: true
         uri: user:password@localhost
         name: storage
-    weight: 100000
+        master: true
 ...
 replica.url = old_uri
 ---
