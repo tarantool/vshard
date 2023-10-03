@@ -3238,8 +3238,10 @@ end
 -- Find UUID of the instance which should run the rebalancer service.
 --
 local function rebalancer_cfg_find_instance(cfg)
+    assert(cfg.rebalancer_mode ~= 'off')
     local target_uuid
     local is_assigned
+    local is_auto = cfg.rebalancer_mode == 'auto'
     for _, rs in pairs(cfg.sharding) do
         if rs.rebalancer == false then
             goto next_rs
@@ -3253,7 +3255,7 @@ local function rebalancer_cfg_find_instance(cfg)
             end
             local ok = true
             ok = ok and not no_rebalancer
-            ok = ok and (replica.master or replica.rebalancer)
+            ok = ok and ((is_auto and replica.master) or replica.rebalancer)
             ok = ok and (not target_uuid or replica_uuid < target_uuid)
             ok = ok and (not is_assigned or is_rebalancer)
             if ok then
@@ -3266,8 +3268,10 @@ local function rebalancer_cfg_find_instance(cfg)
 end
 
 local function rebalancer_cfg_find_replicaset(cfg)
+    assert(cfg.rebalancer_mode ~= 'off')
     local target_uuid
     local is_assigned
+    local is_auto = cfg.rebalancer_mode == 'auto'
     for rs_uuid, rs in pairs(cfg.sharding) do
         local is_rebalancer = rs.rebalancer
         local no_rebalancer = rs.rebalancer == false
@@ -3278,6 +3282,7 @@ local function rebalancer_cfg_find_replicaset(cfg)
         local ok = true
         ok = ok and not no_rebalancer
         ok = ok and (rs.master == 'auto')
+        ok = ok and (is_auto or is_rebalancer)
         ok = ok and (not target_uuid or rs_uuid < target_uuid)
         ok = ok and (not is_assigned or is_rebalancer)
         if ok then
@@ -3293,6 +3298,9 @@ local function rebalancer_is_needed()
         return false
     end
     local cfg = M.current_cfg
+    if cfg.rebalancer_mode == 'off' then
+        return false
+    end
     local this_replica_uuid = M.this_replica.uuid
     local this_replicaset_uuid = M.this_replicaset.uuid
 

@@ -233,3 +233,62 @@ test_group.test_locate_with_flag = function(g)
     vtest.cluster_cfg(g, global_cfg)
     wait_rebalancer_on_instance(g, 'replica_1_a')
 end
+
+test_group.test_rebalancer_mode = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    --
+    -- Auto-mode won't ignore rebalancer flags. It can only do any difference
+    -- when the rebalancer is not specified explicitly.
+    --
+    new_cfg_template.rebalancer_mode = 'auto'
+    new_cfg_template.sharding[1].rebalancer = nil
+    new_cfg_template.sharding[2].rebalancer = true
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_a')
+    --
+    -- The rebalancer false-flags are taken into account.
+    --
+    new_cfg_template.sharding[1].rebalancer = false
+    new_cfg_template.sharding[2].rebalancer = false
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_3_a')
+    --
+    -- The flags don't matter then the rebalancer is off.
+    --
+    new_cfg_template.rebalancer_mode = 'off'
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, nil)
+    --
+    -- Manual with a rebalancer assigned explicitly to an instance.
+    --
+    new_cfg_template.rebalancer_mode = 'manual'
+    new_cfg_template.sharding[2].rebalancer = nil
+    new_cfg_template.sharding[2].replicas.replica_2_b.rebalancer = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_2_b')
+    --
+    -- Manual with a rebalancer assigned explicitly to a replicaset.
+    --
+    new_cfg_template.rebalancer_mode = 'manual'
+    new_cfg_template.sharding[2].replicas.replica_2_b.rebalancer = nil
+    new_cfg_template.sharding[3].rebalancer = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_3_a')
+    --
+    -- Manual with no explicitly assigned rebalancer means no rebalancer at all.
+    --
+    new_cfg_template.sharding[3].rebalancer = nil
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_rebalancer_on_instance(g, nil)
+    --
+    -- Cleanup.
+    --
+    vtest.cluster_cfg(g, global_cfg)
+    wait_rebalancer_on_instance(g, 'replica_1_a')
+end

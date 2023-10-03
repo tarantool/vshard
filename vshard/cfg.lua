@@ -208,6 +208,12 @@ local function check_discovery_mode(value)
     end
 end
 
+local function check_rebalancer_mode(value)
+    if value ~= 'auto' and value ~= 'manual' and value ~= 'off' then
+        error("Expected 'auto', 'manual', or 'off' for rebalancer_mode")
+    end
+end
+
 local function check_sharding(sharding)
     local uuids = {}
     local uris = {}
@@ -318,6 +324,13 @@ local cfg_template = {
         is_optional = true,
         default = consts.DEFAULT_REBALANCER_MAX_SENDING,
         max = consts.REBALANCER_MAX_SENDING_MAX
+    },
+    rebalancer_mode = {
+        type = 'string',
+        name = 'Rebalancer mode',
+        is_optional = true,
+        default = 'auto',
+        check = check_rebalancer_mode,
     },
     collect_bucket_garbage_interval = {
         name = 'Garbage bucket collect interval', is_deprecated = true,

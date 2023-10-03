@@ -211,3 +211,42 @@ g.test_rebalancer_flag = function()
     replicaset_1.rebalancer = nil
     storage_1_a.rebalancer = nil
 end
+
+g.test_rebalancer_mode = function()
+    local storage_1_a = {
+        uri = 'storage:storage@127.0.0.1:3301',
+        name = 'storage_1_a',
+    }
+    local replicaset_1 = {
+        replicas = {
+            storage_1_a_uuid = storage_1_a,
+        },
+    }
+    local config = {
+        sharding = {
+            storage_1_uuid = replicaset_1,
+        },
+    }
+    t.assert(vcfg.check(config))
+
+    local function check_all_flag_combinations()
+        t.assert(vcfg.check(config))
+        storage_1_a.rebalancer = true
+        t.assert(vcfg.check(config))
+        storage_1_a.rebalancer = nil
+        replicaset_1.rebalancer = true
+        t.assert(vcfg.check(config))
+        replicaset_1.rebalancer = false
+        t.assert(vcfg.check(config))
+        replicaset_1.rebalancer = nil
+        storage_1_a.rebalancer = false
+        t.assert(vcfg.check(config))
+        storage_1_a.rebalancer = nil
+    end
+    config.rebalancer_mode = 'auto'
+    check_all_flag_combinations()
+    config.rebalancer_mode = 'manual'
+    check_all_flag_combinations()
+    config.rebalancer_mode = 'off'
+    check_all_flag_combinations()
+end
