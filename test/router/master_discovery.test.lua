@@ -386,7 +386,7 @@ storage_b_uuid = util.name_to_uuid.storage_1_b
 
 assert(rs.master.uuid == storage_a_uuid)
 rs.master = nil
-rs.is_auto_master = false
+rs.is_master_auto = false
 
 -- When auto-search is disabled and master is not known, nothing will make it
 -- known. It is up to the config.
@@ -398,7 +398,7 @@ assert(not rs.master)
 
 -- With auto-search and not known master it is not assigned if a new master is
 -- not reported.
-rs.is_auto_master = true
+rs.is_master_auto = true
 -- But update returns true, because it makes sense to try a next request later
 -- when the master is found.
 assert(rs:update_master(storage_a_uuid))
@@ -419,7 +419,7 @@ assert(rs.master.uuid == storage_b_uuid)
 -- It does not depend on auto-search. Still returns true, because if the master
 -- was changed since the request was sent, it means it could be retried and
 -- might succeed.
-rs.is_auto_master = false
+rs.is_master_auto = false
 assert(rs:update_master(storage_a_uuid))
 assert(rs.master.uuid == storage_b_uuid)
 
@@ -433,7 +433,7 @@ assert(rs.master.uuid == storage_b_uuid)
 -- the current master should be reset. Because makes no sense to send more RW
 -- requests to him. But update returns true, because the current request could
 -- be retried after waiting for a new master discovery.
-rs.is_auto_master = true
+rs.is_master_auto = true
 assert(rs:update_master(storage_b_uuid))
 assert(rs.master == nil)
 

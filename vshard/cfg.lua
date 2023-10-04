@@ -223,7 +223,7 @@ local function check_sharding(sharding)
             error('Replicaset weight can not be Inf')
         end
         validate_config(replicaset, replicaset_template)
-        local is_auto_master = replicaset.master == 'auto'
+        local is_master_auto = replicaset.master == 'auto'
         for replica_uuid, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
                 error(string.format('Duplicate uri %s', replica.uri))
@@ -233,7 +233,7 @@ local function check_sharding(sharding)
                 error(string.format('Duplicate uuid %s', replica_uuid))
             end
             uuids[replica_uuid] = true
-            if is_auto_master and replica.master ~= nil then
+            if is_master_auto and replica.master ~= nil then
                 error(string.format('Can not specify master nodes when '..
                                     'master search is enabled, but found '..
                                     'master flag in replica uuid %s',

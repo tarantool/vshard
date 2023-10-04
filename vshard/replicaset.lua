@@ -29,7 +29,7 @@
 --      master = <master server from the array above>,
 --      master_cond = <condition variable signaled when the replicaset finds or
 --                     changes its master>,
---      is_auto_master = <true when is configured to find the master on
+--      is_master_auto = <true when is configured to find the master on
 --                        its own>,
 --      replica = <nearest available replica object>,
 --      balance_i = <index of a next replica in priority_list to
@@ -230,7 +230,7 @@ local function replicaset_wait_master(replicaset, timeout)
     -- Slow path.
     local deadline = fiber_clock() + timeout
     repeat
-        if not replicaset.is_auto_master or
+        if not replicaset.is_master_auto or
            not fiber_cond_wait(replicaset.master_cond, timeout) then
             return nil, lerror.vshard(lerror.code.MISSING_MASTER,
                                       replicaset.uuid)
@@ -779,7 +779,7 @@ local function rebind_replicasets(replicasets, old_replicasets)
         end
         if old_replicaset then
             -- Take a hint from the old replicaset who is the master now.
-            if replicaset.is_auto_master then
+            if replicaset.is_master_auto then
                 local master = old_replicaset.master
                 if master then
                     replicaset.master = replicaset.replicas[master.uuid]
@@ -788,8 +788,8 @@ local function rebind_replicasets(replicasets, old_replicasets)
             -- Stop waiting for master in the old replicaset. Its running
             -- requests won't find it anyway. Auto search works only for the
             -- most actual replicaset objects.
-            if old_replicaset.is_auto_master then
-                old_replicaset.is_auto_master = false
+            if old_replicaset.is_master_auto then
+                old_replicaset.is_master_auto = false
                 old_replicaset.master_cond:broadcast()
             end
         end
@@ -803,7 +803,7 @@ end
 --
 local function replicaset_update_master(replicaset, old_master_uuid,
                                         candidate_uuid)
-    local is_auto = replicaset.is_auto_master
+    local is_auto = replicaset.is_master_auto
     local replicaset_uuid = replicaset.uuid
     if old_master_uuid == candidate_uuid then
         -- It should not happen ever, but be ready to everything.
@@ -867,7 +867,7 @@ end
 local function replicaset_locate_master(replicaset)
     local is_done = true
     local is_nop = true
-    if not replicaset.is_auto_master then
+    if not replicaset.is_master_auto then
         return is_done, is_nop
     end
     local func = 'vshard.storage._call'
@@ -1195,7 +1195,7 @@ local function buildall(sharding_cfg)
             bucket_count = 0,
             lock = replicaset.lock,
             balance_i = 1,
-            is_auto_master = replicaset.master == 'auto',
+            is_master_auto = replicaset.master == 'auto',
             master_cond = fiber.cond(),
         }, replicaset_mt)
         local priority_list = {}
