@@ -3026,7 +3026,7 @@ end
 --
 local function rebalancer_apply_routes(routes)
     if is_this_replicaset_locked() then
-        return false, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED);
+        return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED);
     end
     assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool
