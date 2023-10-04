@@ -1225,7 +1225,7 @@ end
 local function master_search_set(router)
     local enable = false
     for _, rs in pairs(router.replicasets) do
-        if rs.is_auto_master then
+        if rs.is_master_auto then
             enable = true
             break
         end
