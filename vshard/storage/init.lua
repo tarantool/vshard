@@ -1026,6 +1026,18 @@ local function this_is_master()
            M.this_replica == M.this_replicaset.master
 end
 
+local function check_is_master()
+    if this_is_master() then
+        return true, nil
+    end
+    local master_uuid = M.this_replicaset.master
+    if master_uuid then
+        master_uuid = master_uuid.uuid
+    end
+    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.uuid,
+                              M.this_replicaset.uuid, master_uuid)
+end
+
 local function on_master_disable(new_func, old_func)
     local func = M._on_master_disable(new_func, old_func)
     -- If a trigger is set after storage.cfg(), then notify an
@@ -1389,16 +1401,9 @@ local function bucket_check_state(bucket_id, mode)
                                          bucket_id, bucket.destination)
         end
         reason = 'write is prohibited'
-    elseif M.this_replicaset.master ~= M.this_replica then
-        local master_uuid = M.this_replicaset.master
-        if master_uuid then
-            master_uuid = master_uuid.uuid
-        end
-        return bucket, lerror.vshard(lerror.code.NON_MASTER,
-                                     M.this_replica.uuid,
-                                     M.this_replicaset.uuid, master_uuid)
     else
-        return bucket
+        local _, err = check_is_master()
+        return bucket, err
     end
     local dst = bucket and bucket.destination or M.route_map[bucket_id]
     return bucket, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, reason,
