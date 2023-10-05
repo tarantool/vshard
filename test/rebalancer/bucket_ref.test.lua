@@ -149,7 +149,8 @@ while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 
 fiber_to_lock:cancel()
 while not send_result do fiber.sleep(0.01) end
-send_result
+assert(not send_result[1])
+util.portable_error(send_result[2])
 vshard.storage.buckets_info(1)
 
 -- Cleanup after the test.

@@ -1290,7 +1290,7 @@ local function recovery_service_f(service)
         end
         if module_version == M.module_version then
             service:set_activity(sleep_activity)
-            M.bucket_generation_cond:wait(sleep_time)
+            bucket_generation_wait(sleep_time)
         end
     ::continue::
     end
@@ -2068,8 +2068,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local deadline = fiber_clock() + timeout
     while ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
-        if not M.bucket_rw_lock_is_ready_cond:wait(timeout) then
-            return nil, lerror.timeout()
+        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
+        if not ok then
+            return nil, err
         end
         lfiber.testcancel()
     end
@@ -2580,7 +2581,7 @@ local function gc_bucket_service_f(service)
         M.bucket_gc_count = M.bucket_gc_count + 1
         if M.module_version == module_version then
             service:set_activity(sleep_activity)
-            M.bucket_generation_cond:wait(sleep_time)
+            bucket_generation_wait(sleep_time)
         end
     ::continue::
     end
@@ -2938,7 +2939,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
                  'Sleep for %d seconds', worker_throttle_count,
                  consts.REBALANCER_WORK_INTERVAL)
         worker_throttle_count = 0
-        if not quit_cond:wait(consts.REBALANCER_WORK_INTERVAL) then
+        if not fiber_cond_wait(quit_cond, consts.REBALANCER_WORK_INTERVAL) then
             log.info('The worker is back')
         end
 ::continue::
