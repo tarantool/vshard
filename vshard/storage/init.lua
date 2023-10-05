@@ -1137,6 +1137,7 @@ local function recovery_step_by_type(type)
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
     for _, bucket in _bucket.index.status:pairs(type) do
+        lfiber.testcancel()
         total = total + 1
         local bucket_id = bucket.id
         if M.rebalancer_transfering_buckets[bucket_id] then
@@ -1156,6 +1157,7 @@ local function recovery_step_by_type(type)
             end
             goto continue
         end
+        lfiber.testcancel()
         local remote_bucket, err =
             destination:callrw('vshard.storage.bucket_stat', {bucket_id})
         -- Check if it is not a bucket error, and this result can
@@ -1187,6 +1189,7 @@ local function recovery_step_by_type(type)
         if is_step_empty then
             log.info(start_format, type)
         end
+        lfiber.testcancel()
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.SENT}})
             recovered = recovered + 1
@@ -1230,6 +1233,7 @@ local function recovery_service_f(service)
         service:next_iter()
         if M.errinj.ERRINJ_RECOVERY_PAUSE then
             M.errinj.ERRINJ_RECOVERY_PAUSE = 1
+            lfiber.testcancel()
             lfiber.sleep(0.01)
             goto continue
         end
@@ -1239,6 +1243,7 @@ local function recovery_service_f(service)
         end
 
         service:set_activity('recovering sending')
+        lfiber.testcancel()
         ok, total, recovered = pcall(recovery_step_by_type,
                                      consts.BUCKET.SENDING)
         if not ok then
@@ -1250,6 +1255,7 @@ local function recovery_service_f(service)
         end
 
         service:set_activity('recovering receiving')
+        lfiber.testcancel()
         ok, total, recovered = pcall(recovery_step_by_type,
                                      consts.BUCKET.RECEIVING)
         if not ok then
@@ -1290,6 +1296,7 @@ local function recovery_service_f(service)
         end
         if module_version == M.module_version then
             service:set_activity(sleep_activity)
+            lfiber.testcancel()
             bucket_generation_wait(sleep_time)
         end
     ::continue::
@@ -2512,14 +2519,17 @@ local function gc_bucket_service_f(service)
         service:next_iter()
         if M.errinj.ERRINJ_BUCKET_GC_PAUSE then
             M.errinj.ERRINJ_BUCKET_GC_PAUSE = 1
+            lfiber.testcancel()
             lfiber.sleep(0.01)
             goto continue
         end
         if bucket_generation_collected ~= bucket_generation_current then
             service:set_activity('gc garbage')
+            lfiber.testcancel()
             status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
             if status then
                 service:set_activity('gc sent')
+                lfiber.testcancel()
                 status, is_done, err = gc_bucket_process_sent()
             end
             if not status then
@@ -2581,6 +2591,7 @@ local function gc_bucket_service_f(service)
         M.bucket_gc_count = M.bucket_gc_count + 1
         if M.module_version == module_version then
             service:set_activity(sleep_activity)
+            lfiber.testcancel()
             bucket_generation_wait(sleep_time)
         end
     ::continue::
@@ -3085,9 +3096,11 @@ local function rebalancer_service_f(service)
         while not M.is_rebalancer_active do
             log.info('Rebalancer is disabled. Sleep')
             M.rebalancer_service:set_activity('disabled')
+            lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
         end
         service:set_activity('downloading states')
+        lfiber.testcancel()
         local status, replicasets, total_bucket_active_count =
             pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
@@ -3101,6 +3114,7 @@ local function rebalancer_service_f(service)
             end
             log.info('Some buckets are not active, retry rebalancing later')
             service:set_activity('idling')
+            lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
             goto continue
         end
@@ -3126,6 +3140,7 @@ local function rebalancer_service_f(service)
                      balance_msg, consts.REBALANCER_IDLE_INTERVAL)
             service:set_status_ok()
             service:set_activity('idling')
+            lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
             goto continue
         end
@@ -3137,6 +3152,7 @@ local function rebalancer_service_f(service)
         for src_uuid, src_routes in pairs(routes) do
             service:set_activity('applying routes')
             local rs = M.replicasets[src_uuid]
+            lfiber.testcancel()
             local status, err =
                 rs:callrw('vshard.storage.rebalancer_apply_routes',
                           {src_routes})
@@ -3152,6 +3168,7 @@ local function rebalancer_service_f(service)
         log.info('Rebalance routes are sent. Schedule next wakeup after '..
                  '%f seconds', consts.REBALANCER_WORK_INTERVAL)
         service:set_activity('idling')
+        lfiber.testcancel()
         lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
 ::continue::
     end
