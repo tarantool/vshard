@@ -1978,87 +1978,6 @@ local function buckets_discovery(opts)
 end
 
 --
--- The only thing, that must be done to abort a master demote is
--- a reset of read_only.
---
-local function local_on_master_disable_abort()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg{read_only = false}
-    end
-end
-
---
--- Prepare to a master demotion. Before it, a master must stop
--- accept writes, and try to wait until all of its data is
--- replicated to each slave.
---
-local function local_on_master_disable_prepare()
-    log.info("Resigning from the replicaset master role...")
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = true})
-        sync(M.sync_timeout)
-    end
-end
-
---
--- This function executes when a master role is removed from local
--- instance during configuration
---
-local function local_on_master_disable()
-    M._on_master_disable:run()
-    -- Stop garbage collecting
-    if M.collect_bucket_garbage_fiber ~= nil then
-        M.collect_bucket_garbage_fiber:cancel()
-        M.collect_bucket_garbage_fiber = nil
-        log.info("GC stopped")
-    end
-    if M.recovery_fiber ~= nil then
-        M.recovery_fiber:cancel()
-        M.recovery_fiber = nil
-        log.info('Recovery stopped')
-    end
-    log.info("Resigned from the replicaset master role")
-end
-
---
--- The only thing, that must be done to abort a master promotion
--- is a set read_only back to true.
---
-local function local_on_master_enable_abort()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = true})
-    end
-end
-
---
--- Promote does not require sync, because a replica can not have a
--- data, that is not on a current master - the replica is read
--- only. But read_only can not be set to false here, because
--- until box.cfg is called, it can not be guaranteed, that the
--- promotion will be successful.
---
-local function local_on_master_enable_prepare()
-    log.info("Taking on replicaset master role...")
-end
---
--- This function executes whan a master role is added to local
--- instance during configuration
---
-local function local_on_master_enable()
-    if not M.current_cfg or M.current_cfg.read_only == nil then
-        box.cfg({read_only = false})
-    end
-    M._on_master_enable:run()
-    -- Start background process to collect garbage.
-    M.collect_bucket_garbage_fiber =
-        util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
-    M.recovery_fiber =
-        util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
-    -- TODO: check current status
-    log.info("Took on replicaset master role")
-end
-
---
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
@@ -3366,6 +3285,91 @@ end})
 
 local function service_call(service_name, ...)
     return service_call_api[service_name](...)
+end
+
+--------------------------------------------------------------------------------
+-- Master management
+--------------------------------------------------------------------------------
+
+--
+-- The only thing, that must be done to abort a master demote is
+-- a reset of read_only.
+--
+local function local_on_master_disable_abort()
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg{read_only = false}
+    end
+end
+
+--
+-- Prepare to a master demotion. Before it, a master must stop
+-- accept writes, and try to wait until all of its data is
+-- replicated to each slave.
+--
+local function local_on_master_disable_prepare()
+    log.info("Resigning from the replicaset master role...")
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = true})
+        sync(M.sync_timeout)
+    end
+end
+
+--
+-- This function executes when a master role is removed from local
+-- instance during configuration
+--
+local function local_on_master_disable()
+    M._on_master_disable:run()
+    -- Stop garbage collecting
+    if M.collect_bucket_garbage_fiber ~= nil then
+        M.collect_bucket_garbage_fiber:cancel()
+        M.collect_bucket_garbage_fiber = nil
+        log.info("GC stopped")
+    end
+    if M.recovery_fiber ~= nil then
+        M.recovery_fiber:cancel()
+        M.recovery_fiber = nil
+        log.info('Recovery stopped')
+    end
+    log.info("Resigned from the replicaset master role")
+end
+
+--
+-- The only thing, that must be done to abort a master promotion
+-- is a set read_only back to true.
+--
+local function local_on_master_enable_abort()
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = true})
+    end
+end
+
+--
+-- Promote does not require sync, because a replica can not have a
+-- data, that is not on a current master - the replica is read
+-- only. But read_only can not be set to false here, because
+-- until box.cfg is called, it can not be guaranteed, that the
+-- promotion will be successful.
+--
+local function local_on_master_enable_prepare()
+    log.info("Taking on replicaset master role...")
+end
+--
+-- This function executes whan a master role is added to local
+-- instance during configuration
+--
+local function local_on_master_enable()
+    if not M.current_cfg or M.current_cfg.read_only == nil then
+        box.cfg({read_only = false})
+    end
+    M._on_master_enable:run()
+    -- Start background process to collect garbage.
+    M.collect_bucket_garbage_fiber =
+        util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
+    M.recovery_fiber =
+        util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
+    -- TODO: check current status
+    log.info("Took on replicaset master role")
 end
 
 --------------------------------------------------------------------------------
