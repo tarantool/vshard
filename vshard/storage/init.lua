@@ -3151,6 +3151,62 @@ local function rebalancer_enable()
     M.is_rebalancer_active = true
 end
 
+--
+-- Find UUID of the instance which should run the rebalancer service.
+--
+local function rebalancer_cfg_find_instance(cfg)
+    local target_uuid
+    for _, rs in pairs(cfg.sharding) do
+        for replica_uuid, replica in pairs(rs.replicas) do
+            local ok = true
+            ok = ok and replica.master
+            ok = ok and (not target_uuid or replica_uuid < target_uuid)
+            if ok then
+                target_uuid = replica_uuid
+            end
+        end
+    end
+    return target_uuid
+end
+
+local function rebalancer_is_needed()
+    local cfg = M.current_cfg
+    local this_replica_uuid = M.this_replica.uuid
+    local uuid = rebalancer_cfg_find_instance(cfg)
+    if uuid then
+        return this_replica_uuid == uuid
+    end
+    return false
+end
+
+--
+-- Start or stop the rebalancer depending on the config and instance state.
+--
+local function rebalancer_role_update()
+    local need_rebalancer = rebalancer_is_needed()
+    if M.rebalancer_fiber then
+        if not need_rebalancer then
+            log.info('Stopping the rebalancer')
+            M.rebalancer_fiber:cancel()
+            M.rebalancer_fiber = nil
+            return
+        end
+    elseif need_rebalancer then
+        if not M.rebalancer_fiber then
+            log.info('Starting the rebalancer')
+            M.rebalancer_fiber =
+                util.reloadable_fiber_create('vshard.rebalancer', M,
+                                             'rebalancer_f')
+            return
+        end
+    end
+    if M.rebalancer_fiber then
+        log.info('Wakeup the rebalancer')
+        -- Configuration had changed. Time to check the balance.
+        M.rebalancer_fiber:wakeup()
+    end
+end
+
 --------------------------------------------------------------------------------
 -- API
 --------------------------------------------------------------------------------
@@ -3398,13 +3454,8 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
     local this_replicaset
     local this_replica
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
-    local min_master
     for _, rs in pairs(new_replicasets) do
         for replica_uuid, replica in pairs(rs.replicas) do
-            if (min_master == nil or replica_uuid < min_master.uuid) and
-               rs.master == replica then
-                min_master = replica
-            end
             if replica_uuid == this_replica_uuid then
                 assert(this_replicaset == nil)
                 this_replicaset = rs
@@ -3542,21 +3593,8 @@ local function storage_cfg(cfg, this_replica_uuid, is_reload)
         local_on_master_enable()
     end
 
-    if min_master == this_replica then
-        if not M.rebalancer_fiber then
-            M.rebalancer_fiber =
-                util.reloadable_fiber_create('vshard.rebalancer', M,
-                                             'rebalancer_f')
-        else
-            log.info('Wakeup rebalancer')
-            -- Configuration had changed. Time to rebalance.
-            M.rebalancer_fiber:wakeup()
-        end
-    elseif M.rebalancer_fiber then
-        log.info('Rebalancer location has changed to %s', min_master)
-        M.rebalancer_fiber:cancel()
-        M.rebalancer_fiber = nil
-    end
+    rebalancer_role_update()
+
     M.is_configured = true
     -- Destroy connections, not used in a new configuration.
     collectgarbage()
