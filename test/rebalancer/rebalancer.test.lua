@@ -230,8 +230,8 @@ test_run:switch('box_2_b')
 switch_rs1_master()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_2_b)
 
-while not test_run:grep_log('box_2_a', "rebalancer_f has been started") do fiber.sleep(0.1) end
-while not test_run:grep_log('box_1_a', "Rebalancer location has changed") do fiber.sleep(0.1) end
+while not test_run:grep_log('box_2_a', "Starting the rebalancer") do fiber.sleep(0.1) end
+while not test_run:grep_log('box_1_a', "Stopping the rebalancer") do fiber.sleep(0.1) end
 
 --
 -- gh-40: introduce custom replicaset weights. Weight allows to
