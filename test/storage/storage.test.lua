@@ -45,7 +45,10 @@ vshard.storage.info().replicasets[util.replicasets[2]] or vshard.storage.info()
 rs1 = vshard.storage.internal.replicasets[util.replicasets[1]]
 saved_master = rs1.master
 rs1.master = nil
+assert(vshard.storage.internal.is_master)
+vshard.storage.internal.is_master = false
 vshard.storage.info()
+vshard.storage.internal.is_master = true
 rs1.master = saved_master
 
 -- Sync API
