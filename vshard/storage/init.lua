@@ -3170,6 +3170,9 @@ local function rebalancer_cfg_find_instance(cfg)
 end
 
 local function rebalancer_is_needed()
+    if not M.is_configured then
+        return false
+    end
     local cfg = M.current_cfg
     local this_replica_uuid = M.this_replica.uuid
     local uuid = rebalancer_cfg_find_instance(cfg)
@@ -3347,28 +3350,40 @@ end
 -- Master management
 --------------------------------------------------------------------------------
 
+local function master_role_update()
+    if this_is_master() and M.is_configured then
+        if not M.collect_bucket_garbage_fiber then
+            M.collect_bucket_garbage_fiber =
+                util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
+        end
+        if not M.recovery_fiber then
+            M.recovery_fiber =
+                util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
+        end
+    else
+        if M.collect_bucket_garbage_fiber then
+            M.collect_bucket_garbage_fiber:cancel()
+            M.collect_bucket_garbage_fiber = nil
+            log.info("GC stopped")
+        end
+        if M.recovery_fiber ~= nil then
+            M.recovery_fiber:cancel()
+            M.recovery_fiber = nil
+            log.info('Recovery stopped')
+        end
+    end
+end
+
 local function master_on_disable()
     log.info("Stepping down from the master role")
     M._on_master_disable:run()
-    if M.collect_bucket_garbage_fiber ~= nil then
-        M.collect_bucket_garbage_fiber:cancel()
-        M.collect_bucket_garbage_fiber = nil
-        log.info("GC stopped")
-    end
-    if M.recovery_fiber ~= nil then
-        M.recovery_fiber:cancel()
-        M.recovery_fiber = nil
-        log.info('Recovery stopped')
-    end
+    master_role_update()
 end
 
 local function master_on_enable()
     log.info("Stepping up into the master role")
     M._on_master_enable:run()
-    M.collect_bucket_garbage_fiber =
-        util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
-    M.recovery_fiber =
-        util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
+    master_role_update()
 end
 
 --------------------------------------------------------------------------------
@@ -3491,6 +3506,11 @@ local function storage_cfg_context_extend(cfgctx)
     cfgctx.is_master_in_cfg = cfgctx.new_instance_cfg.master
 end
 
+local function storage_cfg_services_update()
+    master_role_update()
+    rebalancer_role_update()
+end
+
 local function storage_cfg_xc(cfgctx)
     storage_cfg_context_extend(cfgctx)
     local instance_uuid = cfgctx.instance_uuid
@@ -3536,6 +3556,8 @@ local function storage_cfg_xc(cfgctx)
     M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
     M.sync_timeout = new_cfg.sync_timeout
     M.current_cfg = new_cfg
+    storage_cfg_master_commit(cfgctx)
+    storage_cfg_services_update()
 
     local uri = luri.parse(M.this_replica.uri)
     schema_upgrade(is_first_cfg, cfgctx.is_master_in_cfg,
@@ -3550,10 +3572,11 @@ local function storage_cfg_xc(cfgctx)
         schema_install_triggers_delayed()
     end
 
-    storage_cfg_master_commit(cfgctx)
-    rebalancer_role_update()
-
     M.is_configured = true
+    -- If the config was the first one, some services could need to be updated
+    -- to take it into account. For example, to know that the _bucket was
+    -- created and is protected with all the triggers.
+    storage_cfg_services_update()
     -- Destroy connections, not used in a new configuration.
     collectgarbage()
 end
