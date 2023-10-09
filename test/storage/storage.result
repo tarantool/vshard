@@ -126,6 +126,13 @@ saved_master = rs1.master
 rs1.master = nil
 ---
 ...
+assert(vshard.storage.internal.is_master)
+---
+- true
+...
+vshard.storage.internal.is_master = false
+---
+...
 vshard.storage.info()
 ---
 - replicasets:
@@ -148,6 +155,9 @@ vshard.storage.info()
     status: slave
   alerts:
   - ['MISSING_MASTER', 'Master is not configured for replicaset <replicaset_1>']
+...
+vshard.storage.internal.is_master = true
+---
 ...
 rs1.master = saved_master
 ---

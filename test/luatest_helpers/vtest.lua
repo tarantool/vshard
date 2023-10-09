@@ -332,20 +332,29 @@ local function cluster_bootstrap(g, cfg)
     local masters = {}
     local etalon_balance = {}
     local replicaset_count = 0
-    for rs_uuid, rs in pairs(cfg.sharding) do
-        local is_master_found = false
-        for _, rep in pairs(rs.replicas) do
-            if rep.master then
-                t.assert(not is_master_found, 'only one master')
-                local server = g[rep.name]
-                t.assert_not_equals(server, nil, 'find master instance')
-                t.assert_equals(server:replicaset_uuid(), rs_uuid,
-                                'replicaset uuid')
-                masters[rs_uuid] = server
-                is_master_found = true
-            end
+    local master_info, err = cluster_exec_each(g, function()
+        local info = box.info
+        return {
+            is_master = ivshard.storage.internal.is_master,
+            rs_uuid = ivutil.replicaset_uuid(info),
+            uuid = info.uuid,
+        }
+    end)
+    t.assert_equals(err, nil)
+    for name, info in pairs(master_info) do
+        if info.is_master then
+            local rs_uuid = info.rs_uuid
+            local server = g[name]
+            t.assert_not_equals(server, nil, 'find master instance')
+            t.assert_equals(masters[rs_uuid], nil, 'only one master')
+            local rs_cfg = cfg.sharding[rs_uuid]
+            t.assert_not_equals(rs_cfg, nil)
+            t.assert_not_equals(rs_cfg.replicas[info.uuid], nil)
+            masters[info.rs_uuid] = server
         end
-        t.assert(is_master_found, 'found master')
+    end
+    for rs_uuid, rs in pairs(cfg.sharding) do
+        t.assert_not_equals(masters[rs_uuid], nil, 'found master')
         local weight = rs.weight
         if weight == nil then
             weight = 1

@@ -158,6 +158,8 @@ if not M then
         -- Flag whether the instance is enabled manually. It is true by default
         -- for backward compatibility with old vshard.
         is_enabled = true,
+        -- Flag whether this instance right now is in the master role.
+        is_master = false,
         -- Reference to the function-proxy to most of the public functions. It
         -- allows to avoid 'if's in each function by adding expensive
         -- conditional checks in one rarely used version of the wrapper and no
@@ -241,6 +243,9 @@ else
     end
     if M._on_bucket_event == nil then
         M._on_bucket_event = trigger.new('_on_bucket_event')
+    end
+    if M.is_master == nil then
+        M.is_master = M.this_replicaset.master == M.this_replica
     end
 end
 
@@ -1022,8 +1027,7 @@ local function schema_upgrade(is_first_cfg, is_master, username, password)
 end
 
 local function this_is_master()
-    return M.this_replicaset and M.this_replicaset.master and
-           M.this_replica == M.this_replicaset.master
+    return M.is_master
 end
 
 local function check_is_master()
@@ -3376,12 +3380,14 @@ end
 
 local function master_on_disable()
     log.info("Stepping down from the master role")
+    M.is_master = false
     M._on_master_disable:run()
     master_role_update()
 end
 
 local function master_on_enable()
     log.info("Stepping up into the master role")
+    M.is_master = true
     M._on_master_enable:run()
     master_role_update()
 end
@@ -3560,13 +3566,12 @@ local function storage_cfg_xc(cfgctx)
     storage_cfg_services_update()
 
     local uri = luri.parse(M.this_replica.uri)
-    schema_upgrade(is_first_cfg, cfgctx.is_master_in_cfg,
-                   uri.login, uri.password)
+    schema_upgrade(is_first_cfg, this_is_master(), uri.login, uri.password)
 
     -- Check for master specifically. On master _bucket space must exist.
     -- Because it should have done the schema bootstrap. Shall not ever try to
     -- do anything delayed.
-    if cfgctx.is_master_in_cfg or box.space._bucket then
+    if this_is_master() or box.space._bucket then
         schema_install_triggers()
     else
         schema_install_triggers_delayed()
@@ -3687,7 +3692,7 @@ local function storage_info(opts)
             end
             ::cont::
         end
-    elseif this_master then
+    elseif this_is_master() then
         state.replication.status = 'master'
         local replica_count = 0
         local not_available_replicas = 0
