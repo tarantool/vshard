@@ -151,6 +151,7 @@ local function cluster_new(g, cfg)
     local all_servers = {}
     local masters = {}
     local replicas = {}
+    local master_map = {}
     for replicaset_uuid, replicaset in pairs(cfg.sharding) do
         -- Luatest depends on box.cfg being ready and listening. Need to
         -- configure it before vshard.storage.cfg().
@@ -169,7 +170,21 @@ local function cluster_new(g, cfg)
             box_cfg.replicaset_uuid = replicaset_uuid
             box_cfg.listen = helpers.instance_uri(replica.name)
             -- Need to specify read-only explicitly to know how is master.
-            box_cfg.read_only = not replica.master
+            local is_master
+            if replica.read_only ~= nil then
+                is_master = not replica.read_only
+            else
+                is_master = replica.master
+            end
+            if is_master then
+                local prev_uuid = master_map[replicaset_uuid]
+                if prev_uuid then
+                    error('On bootstrap each replicaset has to have exactly '..
+                          'one master')
+                end
+                master_map[replicaset_uuid] = replica_uuid
+            end
+            box_cfg.read_only = not is_master
             box_cfg.memtx_use_mvcc_engine = cfg.memtx_use_mvcc_engine
             local server = g.cluster:build_server({
                 alias = name,
@@ -184,7 +199,7 @@ local function cluster_new(g, cfg)
             g.cluster:add_server(server)
 
             table.insert(all_servers, server)
-            if replica.master then
+            if is_master then
                 table.insert(masters, server)
             else
                 table.insert(replicas, server)
