@@ -3652,13 +3652,12 @@ local function storage_cfg_context_extend(cfgctx)
         error('Usage: cfg(configuration, this_replica_uuid)')
     end
     local full_cfg = lcfg.check(cfgctx.full_cfg, M.current_cfg)
-    local new_cfg, new_box_cfg = lcfg.split(full_cfg)
+    local new_cfg = lcfg.extract_vshard(full_cfg)
     if new_cfg.weights or new_cfg.zone then
         error('Weights and zone are not allowed for storage configuration')
     end
     cfgctx.new_cfg = new_cfg
     cfgctx.old_cfg = M.current_cfg
-    cfgctx.new_box_cfg = new_box_cfg
 
     local replicaset_uuid = storage_cfg_find_replicaset_uuid_for_instance(
         new_cfg, instance_uuid)
@@ -3678,6 +3677,7 @@ local function storage_cfg_context_extend(cfgctx)
     local new_rs_cfg = new_cfg.sharding[replicaset_uuid]
     cfgctx.new_replicaset_cfg = new_rs_cfg
     cfgctx.new_instance_cfg = new_rs_cfg.replicas[instance_uuid]
+    cfgctx.new_box_cfg = lcfg.extract_box(full_cfg, cfgctx.new_instance_cfg)
     cfgctx.is_master_in_cfg = cfgctx.new_instance_cfg.master
     cfgctx.is_master_auto = new_rs_cfg.master == 'auto'
 end
