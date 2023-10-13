@@ -1201,7 +1201,8 @@ local function recovery_step_by_type(type)
         lfiber.testcancel()
         local remote_bucket, err = master_call(
             destination, 'vshard.storage._call',
-            {'recovery_bucket_stat', bucket_id})
+            {'recovery_bucket_stat', bucket_id},
+            {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
         -- Check if it is not a bucket error, and this result can
         -- not be used to recovery anything. Try later.
         if remote_bucket == nil and err ~= nil then
@@ -2035,7 +2036,11 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     ref.rw_lock = true
     exception_guard.ref = ref
     exception_guard.drop_rw_lock = true
-    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    if not opts or not opts.timeout then
+        opts = opts and table.copy(opts) or {}
+        opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    end
+    local timeout = opts.timeout
     local deadline = fiber_clock() + timeout
     while ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
@@ -3032,7 +3037,8 @@ local function rebalancer_download_states()
     local total_bucket_active_count = 0
     for uuid, replicaset in pairs(M.replicasets) do
         local state = master_call(
-            replicaset, 'vshard.storage.rebalancer_request_state', {})
+            replicaset, 'vshard.storage.rebalancer_request_state', {},
+            {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
             return
         end
@@ -3126,7 +3132,8 @@ local function rebalancer_service_f(service)
             local rs = M.replicasets[src_uuid]
             lfiber.testcancel()
             local status, err = master_call(
-                rs, 'vshard.storage.rebalancer_apply_routes', {src_routes})
+                rs, 'vshard.storage.rebalancer_apply_routes', {src_routes},
+                {timeout = consts.REBALANCER_APPLY_ROUTES_TIMEOUT})
             if not status then
                 log.error(service:set_status_error(
                     'Error during routes appying on "%s": %s. '..
