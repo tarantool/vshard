@@ -141,6 +141,7 @@ local replica_template = {
         name = 'listen',
         check = check_uri_listen,
         is_optional = true,
+        is_overriding_box = true,
     },
     name = {type = 'string', name = "Name", is_optional = true},
     zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},
@@ -330,19 +331,36 @@ local cfg_template = {
 }
 
 --
--- Split it into vshard_cfg and box_cfg parts.
+-- Extract vshard own options from a merged config also having box options.
 --
-local function cfg_split(cfg)
+local function cfg_extract_vshard(root_cfg)
     local vshard_cfg = {}
-    local box_cfg = {}
-    for k, v in pairs(cfg) do
+    for k, v in pairs(root_cfg) do
         if cfg_template[k] then
             vshard_cfg[k] = v
-        else
+        end
+    end
+    return vshard_cfg
+end
+
+--
+-- Extract box options from a merged config also having vshard options. The
+-- replica options values are in priority.
+--
+local function cfg_extract_box(root_cfg, replica_cfg)
+    local box_cfg = {}
+    for k, v in pairs(root_cfg) do
+        if not cfg_template[k] then
             box_cfg[k] = v
         end
     end
-    return vshard_cfg, box_cfg
+    for k, v in pairs(replica_cfg) do
+        local template = replica_template[k]
+        if not template or template.is_overriding_box then
+            box_cfg[k] = v
+        end
+    end
+    return box_cfg
 end
 
 --
@@ -378,5 +396,6 @@ end
 
 return {
     check = cfg_check,
-    split = cfg_split,
+    extract_vshard = cfg_extract_vshard,
+    extract_box = cfg_extract_box,
 }

@@ -1260,7 +1260,8 @@ end
 
 local function router_cfg(router, cfg, is_reload)
     cfg = lcfg.check(cfg, router.current_cfg)
-    local vshard_cfg, box_cfg = lcfg.split(cfg)
+    local vshard_cfg = lcfg.extract_vshard(cfg)
+    local box_cfg = lcfg.extract_box(cfg, {})
     if not M.replicasets then
         log.info('Starting router configuration')
     else

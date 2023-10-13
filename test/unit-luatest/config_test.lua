@@ -91,3 +91,40 @@ g.test_replica_listen = function()
     t.assert_equals(rep_1_a.uri, url1, 'uri value')
     t.assert_equals(rep_1_a.listen, {url1, url2}, 'listen value')
 end
+
+g.test_extract_vshard = function()
+    local config = {
+        sharding = 1,
+        weights = 2,
+        bucket_count = 3,
+        listen = 4,
+        replication = 5,
+        read_only = 6,
+        test = 7,
+    }
+    t.assert_equals(vcfg.extract_vshard(config), {
+        sharding = 1,
+        weights = 2,
+        bucket_count = 3,
+    })
+    -- Empty instance config.
+    t.assert_equals(vcfg.extract_box(config, {}), {
+        listen = 4,
+        replication = 5,
+        read_only = 6,
+        -- Unknown options are all considered belonging to box.
+        test = 7,
+    })
+    -- Merge with the instance config.
+    t.assert_equals(vcfg.extract_box(config, {
+        read_only = 8,
+        listen = 9,
+        replication_timeout = 10
+    }), {
+        listen = 9,
+        replication = 5,
+        read_only = 8,
+        test = 7,
+        replication_timeout = 10,
+    })
+end
