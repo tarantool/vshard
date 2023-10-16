@@ -31,6 +31,10 @@
 --                     changes its master>,
 --      is_master_auto = <true when is configured to find the master on
 --                        its own>,
+--      on_master_required = <trigger invoked every time when a new master call
+--                            stumbles upon not knowing the master's location>,
+--      master_wait_count = <number of fibers right now waiting for the master to be
+--                           discovered>,
 --      replica = <nearest available replica object>,
 --      balance_i = <index of a next replica in priority_list to
 --                   use for a load-balanced request>,
@@ -229,15 +233,25 @@ local function replicaset_wait_master(replicaset, timeout)
     end
     -- Slow path.
     local deadline = fiber_clock() + timeout
-    repeat
+    replicaset.master_wait_count = replicaset.master_wait_count + 1
+    if replicaset.on_master_required then
+        pcall(replicaset.on_master_required)
+    end
+    while true do
+        master = replicaset.master
+        if master then
+            break
+        end
         if not replicaset.is_master_auto or
            not fiber_cond_wait(replicaset.master_cond, timeout) then
-            return nil, lerror.vshard(lerror.code.MISSING_MASTER,
-                                      replicaset.uuid)
+            timeout = lerror.vshard(lerror.code.MISSING_MASTER,
+                                    replicaset.uuid)
+            break
         end
         timeout = deadline - fiber_clock()
-        master = replicaset.master
-    until master
+    end
+    assert(replicaset.master_wait_count > 0)
+    replicaset.master_wait_count = replicaset.master_wait_count - 1
     return master, timeout
 end
 
@@ -995,6 +1009,7 @@ local replicaset_mt = {
         callbre = replicaset_template_multicallro(true, true);
         map_call = replicaset_map_call,
         update_master = replicaset_update_master,
+        locate_master = replicaset_locate_master,
     };
     __tostring = replicaset_tostring;
 }
@@ -1197,6 +1212,7 @@ local function buildall(sharding_cfg)
             balance_i = 1,
             is_master_auto = replicaset.master == 'auto',
             master_cond = fiber.cond(),
+            master_wait_count = 0,
         }, replicaset_mt)
         local priority_list = {}
         for replica_uuid, replica in pairs(replicaset.replicas) do

@@ -1495,6 +1495,7 @@ error_messages
   - Use replicaset:connect_master(...) instead of replicaset.connect_master(...)
   - Use replicaset:connect_replica(...) instead of replicaset.connect_replica(...)
   - Use replicaset:down_replica_priority(...) instead of replicaset.down_replica_priority(...)
+  - Use replicaset:locate_master(...) instead of replicaset.locate_master(...)
   - Use replicaset:map_call(...) instead of replicaset.map_call(...)
   - Use replicaset:up_replica_priority(...) instead of replicaset.up_replica_priority(...)
   - Use replicaset:update_master(...) instead of replicaset.update_master(...)
