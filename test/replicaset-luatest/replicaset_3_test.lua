@@ -207,3 +207,38 @@ test_group.test_map_call = function(g)
         _G.test_sleep_is_called = nil
     end)
 end
+
+test_group.test_locate_master_when_no_conn_object = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs_cfg = new_cfg_template.sharding[1]
+    rs_cfg.master = 'auto'
+    rs_cfg.replicas.replica_1_a.master = nil
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    local replicasets = vreplicaset.buildall(new_global_cfg)
+    local _, rs = next(replicasets)
+    t.assert_equals(rs.master, nil)
+    for _, r in pairs(rs.replicas) do
+        t.assert_equals(r.conn, nil)
+    end
+    t.assert(rs.is_master_auto)
+    --
+    -- First attempt to locate the masters only creates the connections, but
+    -- doesn't wait for their establishment. The call is supposed to be retried
+    -- later.
+    --
+    local is_all_done, is_all_nop, last_err =
+        vreplicaset.locate_masters(replicasets)
+    t.assert_equals(last_err, nil)
+    t.assert(not is_all_done)
+    t.assert(not is_all_nop)
+    for _, r in pairs(rs.replicas) do
+        t.assert_not_equals(r.conn, nil)
+        r.conn:wait_connected(vtest.wait_timeout)
+    end
+    is_all_done, is_all_nop, last_err =
+        vreplicaset.locate_masters(replicasets)
+    t.assert_equals(last_err, nil)
+    t.assert(is_all_done)
+    t.assert(not is_all_nop)
+    t.assert_equals(rs.master, rs.replicas[g.replica_1_a:instance_uuid()])
+end
