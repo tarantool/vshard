@@ -907,7 +907,7 @@ local function replicaset_locate_master(replicaset)
     local async_opts = {is_async = true}
     local replicaset_uuid = replicaset.uuid
     for replica_uuid, replica in pairs(replicaset.replicas) do
-        local conn = replica.conn
+        local conn = replicaset_connect_to_replica(replicaset, replica)
         if conn:is_connected() then
             ok, f = pcall(conn.call, conn, func, args, async_opts)
             if not ok then
