@@ -782,6 +782,7 @@ return {
     service_wait_for_new_ok = service_wait_for_new_ok,
     service_wait_for_error = service_wait_for_error,
     service_wait_for_new_error = service_wait_for_new_error,
+    service_wait_for_new_status = service_wait_for_new_status,
     service_wait_for_activity = service_wait_for_activity,
     wait_for_not_nil = wait_for_not_nil,
     wait_for_nil = wait_for_nil,
