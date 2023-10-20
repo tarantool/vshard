@@ -1103,7 +1103,10 @@ end
 --
 -- Check if a local bucket can become active.
 --
-local function recovery_local_bucket_is_active(_, remote_bucket)
+local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
+    if M.rebalancer_transfering_buckets[local_bucket.id] then
+        return false
+    end
     if not remote_bucket then
         return true
     end
@@ -1252,6 +1255,7 @@ local function recovery_service_f(service)
 
     ::sleep::
         if not is_all_recovered then
+            service:set_status('recovering')
             bucket_generation_recovered = -1
         else
             service:set_status_ok()

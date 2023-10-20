@@ -395,3 +395,63 @@ test_group.test_bucket_send_last_step_gc = function(g)
         _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_uuid()})
 end
+
+--
+-- Recovery shouldn't touch SENDING bucket whose transfer is in progress, even
+-- if the target instance doesn't have the same RECEIVING bucket. The first
+-- bucket_recv() could just not arrive yet or still wasn't processed.
+--
+test_group.test_bucket_recovery_quick_after_send_is_started = function(g)
+    g.replica_2_a:exec(function()
+        rawset(_G, 'test_recv_f', ivshard.storage.bucket_recv)
+        rawset(_G, 'test_is_recv_blocked', true)
+        ivshard.storage.bucket_recv = function(...)
+            while _G.test_is_recv_blocked do
+                ifiber.sleep(0.01)
+            end
+            return _G.test_recv_f(...)
+        end
+    end)
+    local bid = g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local f = ifiber.new(ivshard.storage.bucket_send, bid, uuid,
+                             {timeout = iwait_timeout})
+        f:set_joinable(true)
+        rawset(_G, 'test_f', f)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            assert(box.space._bucket:get{bid}.status == ivconst.BUCKET.SENDING)
+        end)
+        ivtest.service_wait_for_new_status(
+            ivshard.storage.internal.recovery_service, 'recovering', {
+                on_yield = ivshard.storage.recovery_wakeup,
+                timeout = iwait_timeout
+            })
+        ilt.assert_equals(box.space._bucket:get{bid}.status,
+                          ivconst.BUCKET.SENDING)
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+    g.replica_2_a:exec(function()
+        _G.test_is_recv_blocked = false
+    end)
+    g.replica_1_a:exec(function()
+        local f = _G.test_f
+        _G.test_f = nil
+        local f_ok, ok, err = f:join()
+        ilt.assert(f_ok)
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end)
+    --
+    -- Cleanup.
+    --
+    g.replica_2_a:exec(function(bid, uuid)
+        _G.test_is_recv_blocked = nil
+        ivshard.storage.bucket_recv = _G.test_recv_f
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+end
