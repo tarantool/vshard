@@ -33,6 +33,7 @@ jobs:
           - '2.8'
           - '2.10'
           - 'release-master'
+          - 'pr/8630'
 
     env:
       TNT_RELEASE_PATH: /home/runner/tnt-release
@@ -40,7 +41,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'release') != true
+        if: matrix.tarantool != 'release-master' && matrix.tarantool != 'pr/8630'
         uses: tarantool/setup-tarantool@v2
         with:
           tarantool-version: ${{ matrix.tarantool }}
@@ -72,8 +73,18 @@ jobs:
           fetch-depth: 0
           submodules: true
 
+      - name: Clone tarantool fork with ${{ matrix.tarantool }}
+        if: matrix.tarantool == 'pr/8630'
+        uses: actions/checkout@v3
+        with:
+          repository: curiousgeorgiy/tarantool
+          ref: gh-8147-tuple-formats-in-iproto-responses
+          path: tarantool
+          fetch-depth: 0
+          submodules: true
+
       - name: Build tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'release') && steps.cache-tnt-release.outputs.cache-hit != 'true'
+        if: (startsWith(matrix.tarantool, 'release') && steps.cache-tnt-release.outputs.cache-hit != 'true') || matrix.tarantool == 'pr/8630'
         run: |
           sudo apt-get -y install build-essential cmake make zlib1g-dev libreadline-dev libncurses5-dev \
             libssl-dev libunwind-dev libicu-dev python3 python3-yaml python3-six python3-gevent
@@ -83,7 +94,7 @@ jobs:
           make && make DESTDIR=${TNT_RELEASE_PATH} install
 
       - name: Install tarantool ${{ matrix.tarantool }}
-        if: startsWith(matrix.tarantool, 'release')
+        if: startsWith(matrix.tarantool, 'release') || matrix.tarantool == 'pr/8630'
         # Workaround as actions/cache cannot restore data to /usr/local
         run: sudo cp -rvP ${TNT_RELEASE_PATH}/usr/local/* /usr/local/
 
