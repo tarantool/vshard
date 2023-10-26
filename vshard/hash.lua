@@ -39,7 +39,7 @@ end
 -- double.
 --
 local function mpcrc32(shard_key)
-    if type(shard_key) ~= 'table' then
+    if type(shard_key) ~= 'table' and not box.tuple.is(shard_key) then
         return ldigest.crc32(mpcrc32_one(shard_key))
     else
         local crc32 = ldigest.crc32.new()
