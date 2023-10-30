@@ -261,3 +261,88 @@ test_group.test_on_bucket_event = function(g)
         box.space.data2:drop()
     end)
 end
+
+--
+-- gh-434: bucket_send() shouldn't change the transfer flags if a transfer for
+-- the same bucket is already in progress.
+--
+test_group.test_bucket_double_send = function(g)
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
+    end)
+    local bid = g.replica_1_a:exec(function(uuid)
+        local transfer_flags =
+            ivshard.storage.internal.rebalancer_transfering_buckets
+        local bid = _G.get_first_bucket()
+        local f = ifiber.create(ivshard.storage.bucket_send, bid, uuid,
+                                {timeout = 100000})
+        f:set_joinable(true)
+        rawset(_G, 'test_f', f)
+        ilt.assert(transfer_flags[bid])
+        local ok, err = ivshard.storage.bucket_send(bid, uuid)
+        ilt.assert_equals(err.code, iverror.code.WRONG_BUCKET)
+        ilt.assert(not ok)
+        -- Before the bug was fixed, the second send would clear the flag, thus
+        -- leaving the first sending unprotected.
+        ilt.assert(transfer_flags[bid])
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
+    end)
+    g.replica_1_a:exec(function(bid)
+        local transfer_flags =
+            ivshard.storage.internal.rebalancer_transfering_buckets
+        local f = _G.test_f
+        _G.test_f = nil
+        local f_ok, ok, err = f:join(iwait_timeout)
+        ilt.assert_equals(err, nil)
+        ilt.assert(f_ok)
+        ilt.assert(ok)
+        ilt.assert(not transfer_flags[bid])
+        _G.bucket_gc_wait()
+    end, {bid})
+    --
+    -- Cleanup.
+    --
+    g.replica_2_a:exec(function(bid, uuid)
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+end
+
+--
+-- gh-434: bucket_recv() shouldn't change the transfer flags if a transfer for
+-- the same bucket is already in progress.
+--
+test_group.test_bucket_double_recv = function(g)
+    g.replica_2_a:exec(function(bid, uuid)
+        local transfer_flags =
+            ivshard.storage.internal.rebalancer_transfering_buckets
+        local f = ifiber.create(ivshard.storage.bucket_recv, bid, uuid, {})
+        f:set_joinable(true)
+        ilt.assert(transfer_flags[bid])
+        local ok, err = ivshard.storage.bucket_recv(bid, uuid, {})
+        -- Before the bug was fixed, the second recv would clear the flag, thus
+        -- leaving the first recv unprotected.
+        ilt.assert(transfer_flags[bid])
+        ilt.assert_equals(err.code, iverror.code.WRONG_BUCKET)
+        ilt.assert(not ok)
+        local f_ok
+        f_ok, ok, err = f:join(iwait_timeout)
+        ilt.assert(not transfer_flags[bid])
+        ilt.assert_equals(err, nil)
+        ilt.assert(f_ok)
+        ilt.assert(ok)
+        --
+        -- Cleanup.
+        --
+        _G.bucket_recovery_wait()
+        _G.bucket_gc_wait()
+        ilt.assert_equals(box.space._bucket:get{bid}, nil)
+    end, {vtest.storage_first_bucket(g.replica_1_a),
+          g.replica_1_a:replicaset_uuid()})
+end

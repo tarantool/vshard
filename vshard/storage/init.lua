@@ -328,6 +328,20 @@ local function bucket_generation_increment()
     M.bucket_generation_cond:broadcast()
 end
 
+local function bucket_transfer_start(bid)
+    if M.rebalancer_transfering_buckets[bid] then
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
+                                  'transfer is already in progress', nil)
+    end
+    M.rebalancer_transfering_buckets[bid] = true
+    return true
+end
+
+local function bucket_transfer_end(bid)
+    assert(M.rebalancer_transfering_buckets[bid])
+    M.rebalancer_transfering_buckets[bid] = nil
+end
+
 --
 -- Handle a bad update of _bucket space.
 --
@@ -1763,9 +1777,13 @@ local function bucket_recv(bucket_id, from, data, opts)
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         lfiber.sleep(0.01)
     end
-    M.rebalancer_transfering_buckets[bucket_id] = true
-    local status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
-    M.rebalancer_transfering_buckets[bucket_id] = nil
+    local status, ret, err
+    status, err = bucket_transfer_start(bucket_id)
+    if not status then
+        return nil, err
+    end
+    status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
+    bucket_transfer_end(bucket_id)
     if status then
         if ret then
             return ret
@@ -2155,14 +2173,18 @@ local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
-    M.rebalancer_transfering_buckets[bucket_id] = true
+    local status, ret, err
+    status, err = bucket_transfer_start(bucket_id)
+    if not status then
+        return nil, err
+    end
     local exception_guard = {}
-    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
-                                   exception_guard)
+    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
+                             exception_guard)
     if exception_guard.drop_rw_lock then
         exception_guard.ref.rw_lock = false
     end
-    M.rebalancer_transfering_buckets[bucket_id] = nil
+    bucket_transfer_end(bucket_id)
     if status then
         if ret then
             return ret
