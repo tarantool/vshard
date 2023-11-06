@@ -39,3 +39,5 @@ jobs:
 
       - run: cmake .
       - run: make test-force
+        env:
+          TEST_RUN_RETRIES: 3
