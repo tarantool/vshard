@@ -20,7 +20,8 @@ local cfg_template = {
             },
         },
     },
-    bucket_count = 20
+    bucket_count = 20,
+    test_user_grant_range = 'super',
 }
 local global_cfg
 
