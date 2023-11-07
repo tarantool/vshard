@@ -79,13 +79,13 @@ local type_validate = {
 }
 
 local function validate_config(config, template, check_arg)
-    for key, template_value in pairs(template) do
+    for key, tv in pairs(template) do
         local value = config[key]
-        local name = template_value.name
-        local expected_type = template_value.type
-        if template_value.is_deprecated then
+        local name = tv.name
+        local expected_type = tv.type
+        if tv.is_deprecated then
             if value ~= nil then
-                local reason = template_value.reason
+                local reason = tv.reason
                 if reason then
                     reason = '. '..reason
                 else
@@ -94,17 +94,17 @@ local function validate_config(config, template, check_arg)
                 log.warn('Option "%s" is deprecated'..reason, name)
             end
         elseif value == nil then
-            if not template_value.is_optional then
+            if not tv.is_optional then
                 error(string.format('%s must be specified', name))
             else
-                config[key] = template_value.default
+                config[key] = tv.default
             end
         else
             if type(expected_type) == 'string' then
                 if not type_validate[expected_type](value) then
                     error(string.format('%s must be %s', name, expected_type))
                 end
-                local max = template_value.max
+                local max = tv.max
                 if max and value > max then
                     error(string.format('%s must not be greater than %s', name,
                                         max))
@@ -123,8 +123,8 @@ local function validate_config(config, template, check_arg)
                                         'types: %s', name, types))
                 end
             end
-            if template_value.check then
-                template_value.check(value, check_arg)
+            if tv.check then
+                tv.check(value, check_arg)
             end
         end
     end
