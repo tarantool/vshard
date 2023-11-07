@@ -250,3 +250,43 @@ g.test_rebalancer_mode = function()
     config.rebalancer_mode = 'off'
     check_all_flag_combinations()
 end
+
+g.test_enum = function()
+    local config = {
+        sharding = {
+            storage_1_uuid = {
+                replicas = {}
+            },
+        },
+    }
+    t.assert(vcfg.check(config), 'normal config')
+
+    config.sharding.storage_1_uuid.master = 'auto'
+    t.assert(vcfg.check(config))
+
+    config.sharding.storage_1_uuid.master = 'bad'
+    t.assert_error_msg_content_equals(
+        "Master search mode must be enum {'auto', nil}",
+        vcfg.check, config)
+
+    config.sharding.storage_1_uuid.master = nil
+    for _, v in pairs({'on', 'off', 'once'}) do
+        config.discovery_mode = v
+        t.assert(vcfg.check(config))
+    end
+    config.discovery_mode = 'bad'
+    t.assert_error_msg_content_equals(
+        "Discovery mode must be enum {'on', 'off', 'once', nil}",
+        vcfg.check, config)
+    config.discovery_mode = nil
+
+    for _, v in pairs({'auto', 'manual', 'off'}) do
+        config.rebalancer_mode = v
+        t.assert(vcfg.check(config))
+    end
+    config.rebalancer_mode = 'bad'
+    t.assert_error_msg_content_equals(
+        "Rebalancer mode must be enum {'auto', 'manual', 'off', nil}",
+        vcfg.check, config)
+    config.rebalancer_mode = nil
+end
