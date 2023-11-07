@@ -38,12 +38,6 @@ local function check_replica_master(master, ctx)
     end
 end
 
-local function check_replicaset_master(master)
-    if master ~= 'auto' then
-        error('Only "auto" master is supported')
-    end
-end
-
 local function is_number(v)
     return type(v) == 'number' and v == v
 end
@@ -70,7 +64,7 @@ end
 
 local type_descriptors = {
     -- check(self, template, value)
-    -- tostring(self)
+    -- tostring(self, template)
 
     ['string'] = {
         check = function(self, _, v) return type(v) == 'string' end,
@@ -108,6 +102,27 @@ local type_descriptors = {
         check = function(self, _, v) return type(v) == 'table' end,
         tostring = type_tostring_trivial,
     },
+    ['enum'] = {
+        check = function(self, tv, v)
+            for _, vi in pairs(tv.enum) do
+                if vi == v then
+                    return true
+                end
+            end
+            return false
+        end,
+        tostring = function(self, tv)
+            local values = {}
+            for _, v in pairs(tv.enum) do
+                assert(type(v) == 'string')
+                table.insert(values, ("'%s'"):format(v))
+            end
+            if tv.is_optional then
+                table.insert(values, 'nil')
+            end
+            return ('enum {%s}'):format(table.concat(values, ', '))
+        end,
+    },
 }
 for name, td in pairs(type_descriptors) do
     td.name = name
@@ -138,7 +153,7 @@ local function validate_config(config, template, check_arg)
             if type(expected_type) == 'string' then
                 local td = type_descriptors[expected_type]
                 if not td:check(tv, value) then
-                    error(string.format('%s must be %s', name, td:tostring()))
+                    error(string.format('%s must be %s', name, td:tostring(tv)))
                 end
                 local max = tv.max
                 if max and value > max then
@@ -156,7 +171,7 @@ local function validate_config(config, template, check_arg)
                 if not is_valid_type_found then
                     local types = {}
                     for _, t in pairs(expected_type) do
-                        table.insert(types, type_descriptors[t]:tostring())
+                        table.insert(types, type_descriptors[t]:tostring(tv))
                     end
                     types = table.concat(types, ', ')
                     error(string.format('%s must be one of the following '..
@@ -207,8 +222,8 @@ local replicaset_template = {
     },
     lock = {type = 'boolean', name = 'Lock', is_optional = true},
     master = {
-        type = 'string', name = 'Master search mode', is_optional = true,
-        check = check_replicaset_master
+        type = 'enum', name = 'Master search mode', is_optional = true,
+        enum = {'auto'},
     },
     rebalancer = {type = 'boolean', name = 'Rebalancer flag', is_optional = true},
 }
@@ -239,18 +254,6 @@ local function cfg_check_weights(weights)
                 error('Weight of own zone must be either nil or 0')
             end
         end
-    end
-end
-
-local function check_discovery_mode(value)
-    if value ~= 'on' and value ~= 'off' and value ~= 'once' then
-        error("Expected 'on', 'off', or 'once' for discovery_mode")
-    end
-end
-
-local function check_rebalancer_mode(value)
-    if value ~= 'auto' and value ~= 'manual' and value ~= 'off' then
-        error("Expected 'auto', 'manual', or 'off' for rebalancer_mode")
     end
 end
 
@@ -366,11 +369,11 @@ local cfg_template = {
         max = consts.REBALANCER_MAX_SENDING_MAX
     },
     rebalancer_mode = {
-        type = 'string',
+        type = 'enum',
         name = 'Rebalancer mode',
         is_optional = true,
         default = 'auto',
-        check = check_rebalancer_mode,
+        enum = {'auto', 'manual', 'off'},
     },
     collect_bucket_garbage_interval = {
         name = 'Garbage bucket collect interval', is_deprecated = true,
@@ -393,8 +396,8 @@ local cfg_template = {
         is_optional = true, default = consts.DEFAULT_FAILOVER_PING_TIMEOUT
     },
     discovery_mode = {
-        type = 'string', name = 'Discovery mode: on, off, once',
-        is_optional = true, default = 'on', check = check_discovery_mode
+        type = 'enum', name = 'Discovery mode',
+        is_optional = true, default = 'on', enum = {'on', 'off', 'once'},
     },
     sched_ref_quota = {
         name = 'Scheduler storage ref quota', type = 'non-negative number',

@@ -642,14 +642,14 @@ replicaset.master = 'non-auto'
 ...
 util.check_error(lcfg.check, cfg)
 ---
-- Only "auto" master is supported
+- Master search mode must be enum {'auto', nil}
 ...
 replicaset.master = 123
 ---
 ...
 util.check_error(lcfg.check, cfg)
 ---
-- Master search mode must be string
+- Master search mode must be enum {'auto', nil}
 ...
 replica.master = true
 ---
