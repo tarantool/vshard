@@ -64,19 +64,54 @@ local function is_positive_integer(v)
     return is_positive_number(v) and math.floor(v) == v
 end
 
-local type_validate = {
-    ['string'] = function(v) return type(v) == 'string' end,
-    ['non-empty string'] = function(v)
-        return type(v) == 'string' and #v > 0
-    end,
-    ['boolean'] = function(v) return type(v) == 'boolean' end,
-    ['number'] = is_number,
-    ['non-negative number'] = is_non_negative_number,
-    ['positive number'] = is_positive_number,
-    ['non-negative integer'] = is_non_negative_integer,
-    ['positive integer'] = is_positive_integer,
-    ['table'] = function(v) return type(v) == 'table' end,
+local function type_tostring_trivial(self)
+    return self.name
+end
+
+local type_descriptors = {
+    -- check(self, template, value)
+    -- tostring(self)
+
+    ['string'] = {
+        check = function(self, _, v) return type(v) == 'string' end,
+        tostring = type_tostring_trivial,
+    },
+    ['non-empty string'] = {
+        check = function(self, _, v) return type(v) == 'string' and #v > 0 end,
+        tostring = type_tostring_trivial,
+    },
+    ['boolean'] = {
+        check = function(self, _, v) return type(v) == 'boolean' end,
+        tostring = type_tostring_trivial,
+    },
+    ['number'] = {
+        check = function(self, _, v) return is_number(v) end,
+        tostring = type_tostring_trivial,
+    },
+    ['non-negative number'] = {
+        check = function(self, _, v) return is_non_negative_number(v) end,
+        tostring = type_tostring_trivial,
+    },
+    ['positive number'] = {
+        check = function(self, _, v) return is_positive_number(v) end,
+        tostring = type_tostring_trivial,
+    },
+    ['non-negative integer'] = {
+        check = function(self, _, v) return is_non_negative_integer(v) end,
+        tostring = type_tostring_trivial,
+    },
+    ['positive integer'] = {
+        check = function(self, _, v) return is_positive_integer(v) end,
+        tostring = type_tostring_trivial,
+    },
+    ['table'] = {
+        check = function(self, _, v) return type(v) == 'table' end,
+        tostring = type_tostring_trivial,
+    },
 }
+for name, td in pairs(type_descriptors) do
+    td.name = name
+end
 
 local function validate_config(config, template, check_arg)
     for key, tv in pairs(template) do
@@ -101,8 +136,9 @@ local function validate_config(config, template, check_arg)
             end
         else
             if type(expected_type) == 'string' then
-                if not type_validate[expected_type](value) then
-                    error(string.format('%s must be %s', name, expected_type))
+                local td = type_descriptors[expected_type]
+                if not td:check(tv, value) then
+                    error(string.format('%s must be %s', name, td:tostring()))
                 end
                 local max = tv.max
                 if max and value > max then
@@ -112,13 +148,17 @@ local function validate_config(config, template, check_arg)
             else
                 local is_valid_type_found = false
                 for _, t in pairs(expected_type) do
-                    if type_validate[t](value) then
+                    if type_descriptors[t]:check(tv, value) then
                         is_valid_type_found = true
                         break
                     end
                 end
                 if not is_valid_type_found then
-                    local types = table.concat(expected_type, ', ')
+                    local types = {}
+                    for _, t in pairs(expected_type) do
+                        table.insert(types, type_descriptors[t]:tostring())
+                    end
+                    types = table.concat(types, ', ')
                     error(string.format('%s must be one of the following '..
                                         'types: %s', name, types))
                 end
