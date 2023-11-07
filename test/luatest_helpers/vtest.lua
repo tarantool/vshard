@@ -75,6 +75,10 @@ local function error_is_timeout(err)
            err.message == 'Timeout exceeded') or err.type == 'TimedOut'
 end
 
+local function clear_test_cfg_options(cfg)
+    cfg.test_user_grant_range = nil
+end
+
 --
 -- Build a valid vshard config by a template. A template does not specify
 -- anything volatile such as URIs, UUIDs - these are installed at runtime.
@@ -218,8 +222,14 @@ local function cluster_new(g, cfg)
             local user = box.session.user()
             box.session.su('admin')
 
+            local grant_range = cfg.test_user_grant_range
+            ivtest.clear_test_cfg_options(cfg)
             ivshard.storage.cfg(cfg, box.info.uuid)
-            box.schema.user.grant('storage', 'super')
+
+            if grant_range ~= nil then
+                box.schema.user.grant('storage', grant_range, nil, nil,
+                                      {if_not_exists = true})
+            end
 
             box.session.su(user)
         end, {cfg})
@@ -227,6 +237,7 @@ local function cluster_new(g, cfg)
     for _, replica in pairs(replicas) do
         replica:wait_for_readiness()
         replica:exec(function(cfg)
+            ivtest.clear_test_cfg_options(cfg)
             ivshard.storage.cfg(cfg, box.info.uuid)
         end, {cfg})
     end
@@ -413,6 +424,7 @@ end
 local function cluster_cfg(g, cfg)
     -- No support yet for dynamic node addition and removal. Only reconfig.
     local _, err = cluster_exec_each(g, function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
         return ivshard.storage.cfg(cfg, box.info.uuid)
     end, {cfg})
     t.assert_equals(err, nil, 'storage reconfig')
@@ -587,6 +599,7 @@ end
 local function storage_start(storage, cfg)
     storage:start()
     local _, err = storage:exec(function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
         return ivshard.storage.cfg(cfg, box.info.uuid)
     end, {cfg})
     t.assert_equals(err, nil, 'storage cfg on start')
@@ -597,6 +610,7 @@ end
 --
 local function router_cfg(router, cfg)
     router:exec(function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
         ivshard.router.cfg(cfg)
     end, {cfg})
 end
@@ -834,4 +848,5 @@ return {
     wait_for_nil = wait_for_nil,
     sourcedir = sourcedir,
     vardir = vardir,
+    clear_test_cfg_options = clear_test_cfg_options,
 }

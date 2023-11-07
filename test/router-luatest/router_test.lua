@@ -22,7 +22,8 @@ local cfg_template = {
             },
         },
     },
-    bucket_count = 100
+    bucket_count = 100,
+    test_user_grant_range = 'super',
 }
 local global_cfg = vtest.config_new(cfg_template)
 
@@ -462,6 +463,7 @@ g.test_enable_disable = function(g)
         _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
     end)
     router:exec(function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
         rawset(_G, 'fiber_static', ifiber.new(ivshard.router.cfg, cfg))
         rawset(_G, 'fiber_new', ifiber.new(ivshard.router.new,
                                            'new_router', cfg))
@@ -581,6 +583,7 @@ g.test_simultaneous_cfg = function()
 
     router:exec(function(cfg)
         ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
+        ivtest.clear_test_cfg_options(cfg)
         rawset(_G, 'fiber_cfg_static', ifiber.new(ivshard.router.cfg, cfg))
         rawset(_G, 'fiber_cfg_new', ifiber.new(ivshard.router.new,
                                                'new_router', cfg))
@@ -590,6 +593,7 @@ g.test_simultaneous_cfg = function()
 
     local function routers_cfg()
         return router:exec(function(cfg)
+            ivtest.clear_test_cfg_options(cfg)
             local static_router = ivshard.router.internal.routers._static_router
             local new_router = ivshard.router.internal.routers.new_router
             local _, err1 = pcall(ivshard.router.cfg, cfg)
