@@ -1369,9 +1369,12 @@ local function recovery_f()
     assert(not M.recovery_service)
     local service = lservice_info.new('recovery')
     M.recovery_service = service
-    pcall(recovery_service_f, service)
+    local ok, err = pcall(recovery_service_f, service)
     assert(M.recovery_service == service)
     M.recovery_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --
@@ -2595,9 +2598,12 @@ local function gc_bucket_f()
     assert(not M.gc_service)
     local service = lservice_info.new('gc')
     M.gc_service = service
-    pcall(gc_bucket_service_f, service)
+    local ok, err = pcall(gc_bucket_service_f, service)
     assert(M.gc_service == service)
     M.gc_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --
@@ -3014,13 +3020,16 @@ local function rebalancer_apply_routes_f(routes)
     assert(not M.routes_applier_service)
     local service = lservice_info.new('routes_applier')
     M.routes_applier_service = service
-    pcall(rebalancer_service_apply_routes_f, service, routes)
+    local ok, err = pcall(rebalancer_service_apply_routes_f, service, routes)
     -- Delay service destruction in order to check states and errors
     while M.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY do
         lfiber.sleep(0.001)
     end
     assert(M.routes_applier_service == service)
     M.routes_applier_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --
@@ -3176,9 +3185,12 @@ local function rebalancer_f()
     assert(not M.rebalancer_service)
     local service = lservice_info.new('rebalancer')
     M.rebalancer_service = service
-    pcall(rebalancer_service_f, service)
+    local ok, err = pcall(rebalancer_service_f, service)
     assert(M.rebalancer_service == service)
     M.rebalancer_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --
@@ -3596,9 +3608,12 @@ local function instance_watch_f()
     assert(not M.instance_watch_service)
     local service = lservice_info.new('instance_watch')
     M.instance_watch_service = service
-    pcall(instance_watch_service_f, service)
+    local ok, err = pcall(instance_watch_service_f, service)
     assert(M.instance_watch_service == service)
     M.instance_watch_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 local function instance_watch_update()
@@ -3683,9 +3698,12 @@ local function conn_manager_f()
     assert(not M.conn_manager_service)
     local service = lservice_info.new('conn_manager')
     M.conn_manager_service = service
-    pcall(conn_manager_service_f, service)
+    local ok, err = pcall(conn_manager_service_f, service)
     assert(M.conn_manager_service == service)
     M.conn_manager_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 local function conn_manager_update()
