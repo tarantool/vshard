@@ -409,9 +409,12 @@ local function discovery_f(router)
     assert(not router.discovery_service)
     local service = lservice_info.new('discovery')
     router.discovery_service = service
-    pcall(discovery_service_f, router, service)
+    local ok, err = pcall(discovery_service_f, router, service)
     assert(router.discovery_service == service)
     router.discovery_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --
@@ -1133,9 +1136,12 @@ local function failover_f(router)
     assert(not router.failover_service)
     local service = lservice_info.new('failover')
     router.failover_service = service
-    pcall(failover_service_f, router, service)
+    local ok, err = pcall(failover_service_f, router, service)
     assert(router.failover_service == service)
     router.failover_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -1217,9 +1223,12 @@ local function master_search_f(router)
     assert(not router.master_search_service)
     local service = lservice_info.new('master_search')
     router.master_search_service = service
-    pcall(master_search_service_f, router, service)
+    local ok, err = pcall(master_search_service_f, router, service)
     assert(router.master_search_service == service)
     router.master_search_service = nil
+    if not ok then
+        error(err)
+    end
 end
 
 local function master_search_set(router)
