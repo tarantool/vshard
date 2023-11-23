@@ -3659,7 +3659,6 @@ local function conn_manager_collect_idle_conns()
             if c and replica.activity_ts and
                replica.activity_ts + consts.REPLICA_NOACTIVITY_TIMEOUT < ts then
                 if replica == rs.master and rs.is_master_auto then
-                    assert(rs ~= M.this_replicaset)
                     rs.master = nil
                 end
                 replica.conn = nil
