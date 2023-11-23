@@ -287,3 +287,36 @@ test_group.test_noactivity_timeout_for_auto_master = function(g)
         _G.bucket_gc_wait()
     end, {g.replica_1_a:replicaset_uuid(), bid1, bid2})
 end
+
+test_group.test_conn_manager_connect_self = function(g)
+    vtest.cluster_rebalancer_enable(g)
+    t.assert_equals(vtest.cluster_rebalancer_find(g), 'replica_1_a')
+
+    g.replica_1_a:exec(function(uuid)
+        -- Create connections using rebalancer
+        local rebalancer = ivshard.storage.internal.rebalancer_service
+        ivtest.service_wait_for_new_ok(rebalancer,
+            {on_yield = ivshard.storage.rebalancer_wakeup})
+
+        -- Assert, that connection to self is created.
+        local replicaset = ivshard.storage.internal.replicasets[uuid]
+        ilt.assert_not_equals(replicaset.master, nil)
+
+        local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
+        ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        local conn_manager = ivshard.storage.internal.conn_manager_service
+        ivtest.service_wait_for_new_ok(conn_manager, {on_yield = function()
+            ivshard.storage.internal.conn_manager_fiber:wakeup()
+        end})
+        ilt.assert_equals(replicaset.master, nil)
+        ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
+    end, {g.replica_1_a:replicaset_uuid()})
+
+    -- Check, that assert not fails
+    local err_msg = 'conn_manager_f has been failed'
+    t.assert_equals(g.replica_1_a:grep_log(err_msg), nil)
+
+    -- Cleanup
+    vtest.cluster_rebalancer_disable(g)
+end
