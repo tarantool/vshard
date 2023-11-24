@@ -46,7 +46,7 @@ end)
 test_group.test_sharded_spaces = function(g)
     g.replica_1_a:exec(function(engine)
         ilt.assert_not_equals(engine, nil)
-        local vinternal = ivshard.storage.internal
+        local vschema = require('vshard.storage.schema')
         --
         -- gh-96: public API to see all sharded spaces.
         --
@@ -75,10 +75,10 @@ test_group.test_sharded_spaces = function(g)
         -- gh-74: allow to choose any name for shard indexes.
         --
         s1k:rename('vbuckets')
-        vinternal.shard_index = 'vbuckets'
+        vschema.shard_index = 'vbuckets'
         ilt.assert_items_equals(get_sharded_names(), {s1.name})
         s1k:rename('bucket_id_tmp')
-        vinternal.shard_index = 'bucket_id'
+        vschema.shard_index = 'bucket_id'
         ilt.assert_items_equals(get_sharded_names(), {})
         s1k:rename('bucket_id')
 
@@ -91,10 +91,10 @@ test_group.test_sharded_spaces = function(g)
         --
         -- gh-111: cache sharded spaces based on schema version
         --
-        local cached_spaces = vinternal.cached_find_sharded_spaces()
-        ilt.assert_is(cached_spaces, vinternal.cached_find_sharded_spaces())
+        local cached_spaces = vschema.find_sharded_spaces()
+        ilt.assert_is(cached_spaces, vschema.find_sharded_spaces())
         s1 = box.schema.create_space('test', {engine = engine})
-        ilt.assert_is_not(cached_spaces, vinternal.cached_find_sharded_spaces())
+        ilt.assert_is_not(cached_spaces, vschema.find_sharded_spaces())
         s1:drop()
     end, {g.params.engine})
 end

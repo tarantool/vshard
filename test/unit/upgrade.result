@@ -20,24 +20,26 @@ _ = test_run:switch("newdefault")
 util = require('util')
  | ---
  | ...
-
+vschema = require('vshard.storage.schema')
+ | ---
+ | ...
 vshard = require('vshard')
  | ---
  | ...
 
-upgrade = vshard.storage.internal.schema_upgrade_master
+upgrade = vschema.upgrade
  | ---
  | ...
-handlers = vshard.storage.internal.schema_upgrade_handlers
+handlers = vschema.upgrade_handlers
  | ---
  | ...
-version_make = vshard.storage.internal.schema_version_make
+version_make = vschema.version_make
  | ---
  | ...
-curr_version = vshard.storage.internal.schema_current_version
+curr_version = vschema.current_version
  | ---
  | ...
-schema_bootstrap = vshard.storage.internal.schema_bootstrap
+schema_bootstrap = vschema.bootstrap_first_version
  | ---
  | ...
 
@@ -160,7 +162,7 @@ end;
 upgrade_trace = {};
  | ---
  | ...
-errinj = vshard.storage.internal.errinj;
+errinj = vschema.errinj;
  | ---
  | ...
 

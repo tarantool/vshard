@@ -32,12 +32,8 @@ test_run:switch('storage_1_a')
 if is_at_least_3_0 then                                                         \
     local t = box.space._schema:get{'vshard_version'}                           \
     assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
-    assert(vshard.storage.internal.schema_current_version ~= nil)               \
-    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
 else                                                                            \
     assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
-    assert(vshard.storage.internal.schema_current_version == nil)               \
-    assert(vshard.storage.internal.schema_latest_version == nil)                \
 end
 
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
@@ -51,12 +47,8 @@ test_run:switch('storage_2_a')
 if is_at_least_3_0 then                                                         \
     local t = box.space._schema:get{'vshard_version'}                           \
     assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
-    assert(vshard.storage.internal.schema_current_version ~= nil)               \
-    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
 else                                                                            \
     assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
-    assert(vshard.storage.internal.schema_current_version == nil)               \
-    assert(vshard.storage.internal.schema_latest_version == nil)                \
 end
 bucket_count = vshard.consts.DEFAULT_BUCKET_COUNT / 2
 first_bucket = vshard.consts.DEFAULT_BUCKET_COUNT / 2 + 1
@@ -75,17 +67,19 @@ test_run:cmd('stop server storage_1_b')
 test_run:cmd('start server storage_1_b')
 
 test_run:switch('storage_1_a')
+vschema = require('vshard.storage.schema')
 box.space._schema:get({'vshard_version'})
-vshard.storage.internal.schema_current_version()
-vshard.storage.internal.schema_latest_version
+vschema.current_version()
+vschema.latest_version
 vshard.storage._call ~= nil
 vshard.storage._call('test_api', 1, 2, 3)
 
 test_run:switch('storage_1_b')
+vschema = require('vshard.storage.schema')
 test_run:wait_lsn('storage_1_b', 'storage_1_a')
 box.space._schema:get({'vshard_version'})
-vshard.storage.internal.schema_current_version()
-vshard.storage.internal.schema_latest_version
+vschema.current_version()
+vschema.latest_version
 vshard.storage._call ~= nil
 
 test_run:switch('default')

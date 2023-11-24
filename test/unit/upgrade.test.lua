@@ -9,14 +9,14 @@ _ = test_run:cmd("start server newdefault")
 _ = test_run:switch("newdefault")
 
 util = require('util')
-
+vschema = require('vshard.storage.schema')
 vshard = require('vshard')
 
-upgrade = vshard.storage.internal.schema_upgrade_master
-handlers = vshard.storage.internal.schema_upgrade_handlers
-version_make = vshard.storage.internal.schema_version_make
-curr_version = vshard.storage.internal.schema_current_version
-schema_bootstrap = vshard.storage.internal.schema_bootstrap
+upgrade = vschema.upgrade
+handlers = vschema.upgrade_handlers
+version_make = vschema.version_make
+curr_version = vschema.current_version
+schema_bootstrap = vschema.bootstrap_first_version
 
 user = 'storage'
 password = 'storage'
@@ -100,7 +100,7 @@ function stat_update()
 end;
 
 upgrade_trace = {};
-errinj = vshard.storage.internal.errinj;
+errinj = vschema.errinj;
 
 for _, handler in pairs(handlers) do
     table.insert(upgrade_trace, string.format('Upgrade to %s', handler.version))

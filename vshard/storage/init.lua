@@ -19,6 +19,7 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.replicaset', 'vshard.util', 'vshard.service_info',
         'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
+        'vshard.storage.schema'
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -34,6 +35,7 @@ local lregistry = require('vshard.registry')
 local lservice_info = require('vshard.service_info')
 local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
+local lschema = require('vshard.storage.schema')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
@@ -74,11 +76,6 @@ if not M then
         -- operation in bucket related transaction. All supported
         -- types of trigger are inside vshard.consts.BUCKET_EVENT.
         _on_bucket_event = trigger.new('_on_bucket_event'),
-        -- Index which is a trigger to shard its space by numbers in
-        -- this index. It must have at first part either unsigned,
-        -- or integer or number type and be not nullable. Values in
-        -- this part are considered as bucket identifiers.
-        shard_index = nil,
         -- Bucket count stored on all replicasets.
         total_bucket_count = 0,
         errinj = {
@@ -90,7 +87,6 @@ if not M then
             ERRINJ_LAST_SEND_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
             ERRINJ_RECOVERY_PAUSE = false,
-            ERRINJ_UPGRADE = false,
             ERRINJ_DISCOVERY = false,
             ERRINJ_BUCKET_GC_PAUSE = false,
             ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false,
@@ -716,33 +712,6 @@ end
 -- Schema
 --------------------------------------------------------------------------------
 
-local schema_version_mt = {
-    __tostring = function(self)
-        return string.format('{%s}', table.concat(self, '.'))
-    end,
-    __serialize = function(self)
-        return tostring(self)
-    end,
-    __eq = function(l, r)
-        return l[1] == r[1] and l[2] == r[2] and l[3] == r[3] and l[4] == r[4]
-    end,
-    __lt = function(l, r)
-        for i = 1, 4 do
-            local diff = l[i] - r[i]
-            if diff < 0 then
-                return true
-            elseif diff > 0 then
-                return false
-            end
-        end
-        return false;
-    end,
-}
-
-local function schema_version_make(ver)
-    return setmetatable(ver, schema_version_mt)
-end
-
 local function schema_install_triggers()
     local _bucket = box.space._bucket
     if M.bucket_on_replace then
@@ -811,169 +780,8 @@ local function schema_install_triggers_delayed()
     M.schema_on_replace = schema_install_on_replace
 end
 
--- VShard versioning works in 4 numbers: major, minor, patch, and
--- a last helper number incremented on every schema change, if
--- first 3 numbers stay not changed. That happens when users take
--- the latest master version not having a tag yet. They couldn't
--- upgrade if not the 4th number changed inside one tag.
-
--- The schema first time appeared with 0.1.16. So this function
--- describes schema before that - 0.1.15.
-local function schema_init_0_1_15_0(username, password)
-    log.info("Initializing schema %s", schema_version_make({0, 1, 15, 0}))
-    box.schema.user.create(username, {
-        password = password,
-        if_not_exists = true,
-    })
-    -- Replication may has not been granted, if user exists.
-    box.schema.user.grant(username, 'replication', nil, nil,
-                          {if_not_exists = true})
-
-    local bucket = box.schema.space.create('_bucket')
-    bucket:format({
-        {'id', 'unsigned'},
-        {'status', 'string'},
-        {'destination', 'string', is_nullable = true}
-    })
-    bucket:create_index('pk', {parts = {'id'}})
-    bucket:create_index('status', {parts = {'status'}, unique = false})
-
-    local storage_api = {
-        'vshard.storage.sync',
-        'vshard.storage.call',
-        'vshard.storage.bucket_force_create',
-        'vshard.storage.bucket_force_drop',
-        'vshard.storage.bucket_collect',
-        'vshard.storage.bucket_send',
-        'vshard.storage.bucket_recv',
-        'vshard.storage.bucket_stat',
-        'vshard.storage.buckets_count',
-        'vshard.storage.buckets_info',
-        'vshard.storage.buckets_discovery',
-        'vshard.storage.rebalancer_request_state',
-        'vshard.storage.rebalancer_apply_routes',
-    }
-
-    for _, name in ipairs(storage_api) do
-        box.schema.func.create(name, {setuid = true})
-        box.schema.user.grant(username, 'execute', 'function', name)
-    end
-
-    box.space._schema:replace({'vshard_version', 0, 1, 15, 0})
-end
-
-local function schema_upgrade_to_0_1_16_0(username)
-    -- Since 0.1.16.0 the old versioning by
-    -- 'oncevshard:storage:<number>' is dropped because it is not
-    -- really extendible nor understandable.
-    log.info("Insert 'vshard_version' into _schema")
-    box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
-    box.space._schema:delete({'oncevshard:storage:1'})
-
-    -- vshard.storage._call() is supposed to replace some internal
-    -- functions exposed in _func; to allow introduction of new
-    -- functions on replicas; to allow change of internal
-    -- functions without touching the schema.
-    local func = 'vshard.storage._call'
-    log.info('Create function %s()', func)
-    box.schema.func.create(func, {setuid = true})
-    box.schema.user.grant(username, 'execute', 'function', func)
-    -- Don't drop old functions in the same version. Removal can
-    -- happen only after 0.1.16. Or there should appear support of
-    -- rebalancing from too old versions. Drop of these functions
-    -- now would immediately make it impossible to rebalance from
-    -- old instances.
-end
-
-local function schema_downgrade_from_0_1_16_0()
-    log.info("Remove 'vshard_version' from _schema")
-    box.space._schema:replace({'oncevshard:storage:1'})
-    box.space._schema:delete({'vshard_version'})
-
-    local func = 'vshard.storage._call'
-    log.info('Remove function %s()', func)
-    box.schema.func.drop(func, {if_exists = true})
-end
-
---
--- Make vshard.storage.bucket_recv() understand raw args as msgpack object. It
--- doesn't necessarily make it faster, but is essential to preserve the original
--- tuples as is, without their contortion through Lua tables. It would break
--- field types like MP_BIN (varbinary).
---
-local function schema_upgrade_bucket_recv_raw()
-    if not util.feature.msgpack_object then
-        return
-    end
-    if box.func == nil then
-        return
-    end
-    local name = 'vshard.storage.bucket_recv'
-    local func = box.func[name]
-    if func == nil then
-        return
-    end
-    if func.takes_raw_args then
-        return
-    end
-    log.info("Upgrade %s to accept args as msgpack", name)
-    box.begin()
-    local ok, err = pcall(function()
-        -- Preserve all the possible grants which could be given to the
-        -- function. Don't just drop and re-create.
-        local priv_space = box.space._priv
-        local func_space = box.space._func
-        local privs = priv_space.index.object:select{'function', func.id}
-        local priv_pk_parts = priv_space.index.primary.parts
-
-        -- Extract the old function.
-        for _, p in pairs(privs) do
-            priv_space:delete(util.tuple_extract_key(p, priv_pk_parts))
-        end
-        local tuple = func_space:delete(func.id)
-
-        -- Insert the updated version. Can't update it in-place, _func doesn't
-        -- support that.
-        tuple = tuple:update({{'=', 'opts.takes_raw_args', true}})
-        func_space:insert(tuple)
-        for _, p in pairs(privs) do
-            priv_space:insert(p)
-        end
-    end)
-    if ok then
-        ok, err = pcall(box.commit)
-        if ok then
-            return
-        end
-    end
-    box.rollback()
-    log.error("Couldn't upgrade %s to accept args as msgpack: %s", name, err)
-end
-
---
--- Upgrade schema features which depend on Tarantool version and are not bound
--- to a certain vshard version.
---
-local function schema_upgrade_core_features()
-    -- In future it could make sense to store core feature set version in
-    -- addition to vshard own schema version, but it would be an overkill while
-    -- the feature is just one.
-    schema_upgrade_bucket_recv_raw()
-end
-
-local function schema_current_version()
-    local version = box.space._schema:get({'vshard_version'})
-    if version == nil then
-        return schema_version_make({0, 1, 15, 0})
-    else
-        return schema_version_make(version:totable(2))
-    end
-end
-
-local schema_latest_version = schema_version_make({0, 1, 16, 0})
-
 local function schema_upgrade_replica()
-    local version = schema_current_version()
+    local version = lschema.current_version()
     -- Replica can't do upgrade - it is read-only. And it
     -- shouldn't anyway - that would conflict with master doing
     -- the same. So the upgrade is either non-critical, and the
@@ -986,104 +794,16 @@ local function schema_upgrade_replica()
     -- For example, from 1.2.3.4 to 1.7.8.9, when it is assumed
     -- that a safe upgrade should go 1.2.3.4 -> 1.2.4.1 ->
     -- 1.3.1.1 and so on step by step.
-    if version ~= schema_latest_version then
+    if version ~= lschema.latest_version then
         log.info('Replica\' vshard schema version is not latest - current '..
                  '%s vs latest %s, but the replica still can work', version,
-                 schema_latest_version)
+                 lschema.latest_version)
     end
     -- In future for hard changes the replica may be suspended
     -- until its schema is synced with master. Or it may
     -- reject to upgrade in case of incompatible changes. Now
     -- there are too few versions so as such problems could
     -- appear.
-end
-
--- Every handler should be atomic. It is either applied whole, or
--- not applied at all. Atomic upgrade helps to downgrade in case
--- something goes wrong. At least by doing restart with the latest
--- successfully applied version. However, atomicity does not
--- prohibit yields, in case the upgrade, for example, affects huge
--- number of tuples (_bucket records, maybe).
-local schema_upgrade_handlers = {
-    {
-        version = schema_version_make({0, 1, 16, 0}),
-        upgrade = schema_upgrade_to_0_1_16_0,
-        downgrade = schema_downgrade_from_0_1_16_0
-    },
-}
-
-local function schema_upgrade_master(target_version, username, password)
-    local _schema = box.space._schema
-    local is_old_versioning = _schema:get({'oncevshard:storage:1'}) ~= nil
-    local version = schema_current_version()
-    local is_bootstrap = not box.space._bucket
-
-    if is_bootstrap then
-        schema_init_0_1_15_0(username, password)
-    elseif is_old_versioning then
-        log.info("The instance does not have 'vshard_version' record. "..
-                 "It is 0.1.15.0.")
-    end
-    assert(schema_upgrade_handlers[#schema_upgrade_handlers].version ==
-           schema_latest_version)
-    local prev_version = version
-    local ok, err1, err2
-    local errinj = M.errinj.ERRINJ_UPGRADE
-    for _, handler in pairs(schema_upgrade_handlers) do
-        local next_version = handler.version
-        if next_version > target_version then
-            break
-        end
-        if next_version > version then
-            log.info("Upgrade vshard schema to %s", next_version)
-            if errinj == 'begin' then
-                ok, err1 = false, 'Errinj in begin'
-            else
-                ok, err1 = pcall(handler.upgrade, username)
-                if ok and errinj == 'end' then
-                    ok, err1 = false, 'Errinj in end'
-                end
-            end
-            if not ok then
-                -- Rollback in case the handler started a
-                -- transaction before the exception.
-                box.rollback()
-                log.info("Couldn't upgrade schema to %s: '%s'. Revert to %s",
-                         next_version, err1, prev_version)
-                ok, err2 = pcall(handler.downgrade)
-                if not ok then
-                    log.info("Couldn't downgrade schema to %s - fatal error: "..
-                             "'%s'", prev_version, err2)
-                    os.exit(-1)
-                end
-                error(err1)
-            end
-            ok, err1 = pcall(_schema.replace, _schema,
-                             {'vshard_version', unpack(next_version)})
-            if not ok then
-                log.info("Upgraded schema to %s but couldn't update _schema "..
-                         "'vshard_version' - fatal error: '%s'", next_version,
-                         err1)
-                os.exit(-1)
-            end
-            log.info("Successful vshard schema upgrade to %s", next_version)
-        end
-        prev_version = next_version
-    end
-end
-
-local function schema_upgrade(is_first_cfg, is_master, username, password)
-    if is_master then
-        schema_upgrade_master(schema_latest_version, username, password)
-        -- Core features can only change with Tarantool exe update, which means
-        -- it won't happen on reconfig nor on hot reload. Enough to do it when
-        -- configured first time.
-        if is_first_cfg then
-            schema_upgrade_core_features()
-        end
-    else
-        return schema_upgrade_replica()
-    end
 end
 
 local function this_is_master()
@@ -1942,38 +1662,10 @@ local function bucket_test_gc(bids)
 end
 
 --
--- Find spaces with index having the specified (in cfg) name.
--- The function result is cached using `schema_version`.
--- @retval Map of type {space_id = <space object>}.
---
-local sharded_spaces_cache_schema_version = nil
-local sharded_spaces_cache = nil
-local function find_sharded_spaces()
-    local schema_version = util.schema_version()
-    if sharded_spaces_cache_schema_version == schema_version then
-        return sharded_spaces_cache
-    end
-    local spaces = {}
-    local idx = M.shard_index
-    for k, space in pairs(box.space) do
-        if type(k) == 'number' and space.index[idx] ~= nil then
-            local parts = space.index[idx].parts
-            local p = parts[1].type
-            if p == 'unsigned' or p == 'integer' or p == 'number' then
-                spaces[k] = space
-            end
-        end
-    end
-    sharded_spaces_cache_schema_version = schema_version
-    sharded_spaces_cache = spaces
-    return spaces
-end
-
---
 -- Public wrapper for sharded spaces list getter.
 --
 local function storage_sharded_spaces()
-    return table.deepcopy(find_sharded_spaces())
+    return table.deepcopy(lschema.find_sharded_spaces())
 end
 
 if M.errinj.ERRINJ_RELOAD then
@@ -1992,8 +1684,8 @@ local function bucket_collect(bucket_id)
         return nil, err
     end
     local data = {}
-    local spaces = find_sharded_spaces()
-    local idx = M.shard_index
+    local spaces = lschema.find_sharded_spaces()
+    local idx = lschema.shard_index
     for _, space in pairs(spaces) do
         assert(space.index[idx] ~= nil)
         local space_data = space.index[idx]:select({bucket_id})
@@ -2109,9 +1801,9 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, uuid)
     end
     local data = {}
-    local spaces = find_sharded_spaces()
+    local spaces = lschema.find_sharded_spaces()
     local limit = consts.BUCKET_CHUNK_SIZE
-    local idx = M.shard_index
+    local idx = lschema.shard_index
     local bucket_generation = M.bucket_generation
     local sendg = consts.BUCKET.SENDING
 
@@ -2290,7 +1982,7 @@ end
 -- @param status Bucket status for guard checks.
 --
 local function gc_bucket_in_space_xc(space, bucket_id, status)
-    local bucket_index = space.index[M.shard_index]
+    local bucket_index = space.index[lschema.shard_index]
     if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
         return
     end
@@ -2333,7 +2025,7 @@ end
 local function gc_bucket_drop_xc(status, route_map)
     local limit = consts.BUCKET_CHUNK_SIZE
     local _bucket = box.space._bucket
-    local sharded_spaces = find_sharded_spaces()
+    local sharded_spaces = lschema.find_sharded_spaces()
     for _, b in _bucket.index.status:pairs(status) do
         local id = b.id
         local ref = M.bucket_refs[id]
@@ -2654,7 +2346,7 @@ local function bucket_delete_garbage(bucket_id, opts)
         error('Can not delete not garbage bucket. Use "{force=true}" to '..
               'ignore this attention')
     end
-    local sharded_spaces = find_sharded_spaces()
+    local sharded_spaces = lschema.find_sharded_spaces()
     for _, space in pairs(sharded_spaces) do
         local status, err = gc_bucket_in_space(space, bucket_id, bucket_status)
         if not status then
@@ -3901,7 +3593,6 @@ local function storage_cfg_xc(cfgctx)
     local instance_uuid = cfgctx.instance_uuid
     local replicaset_uuid = cfgctx.replicaset_uuid
     local new_cfg = cfgctx.new_cfg
-    local is_first_cfg = not M.current_cfg
     if M.replicasets then
         log.info("Starting reconfiguration of replica %s", instance_uuid)
     else
@@ -3940,6 +3631,7 @@ local function storage_cfg_xc(cfgctx)
     end
     lref.cfg()
     lsched.cfg(new_cfg)
+    lschema.cfg(new_cfg)
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets
@@ -3948,15 +3640,18 @@ local function storage_cfg_xc(cfgctx)
     M.total_bucket_count = new_cfg.bucket_count
     M.rebalancer_disbalance_threshold = new_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
-    M.shard_index = new_cfg.shard_index
     M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
     M.sync_timeout = new_cfg.sync_timeout
     M.current_cfg = new_cfg
     storage_cfg_master_commit(cfgctx)
     storage_cfg_services_update()
 
-    local uri = luri.parse(M.this_replica.uri)
-    schema_upgrade(is_first_cfg, this_is_master(), uri.login, uri.password)
+    if this_is_master() then
+        local uri = luri.parse(M.this_replica.uri)
+        lschema.upgrade(lschema.latest_version, uri.login, uri.password)
+    else
+        schema_upgrade_replica()
+    end
 
     -- Check for master specifically. On master _bucket space must exist.
     -- Because it should have done the schema bootstrap. Shall not ever try to
@@ -4322,7 +4017,6 @@ M.conn_manager_f = conn_manager_f
 M.gc_bucket_drop = gc_bucket_drop
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
-M.cached_find_sharded_spaces = find_sharded_spaces
 M.route_dispenser = {
     create = route_dispenser_create,
     put = route_dispenser_put,
@@ -4331,12 +4025,6 @@ M.route_dispenser = {
     pop = route_dispenser_pop,
     sent = route_dispenser_sent,
 }
-M.schema_latest_version = schema_latest_version
-M.schema_current_version = schema_current_version
-M.schema_upgrade_master = schema_upgrade_master
-M.schema_upgrade_handlers = schema_upgrade_handlers
-M.schema_version_make = schema_version_make
-M.schema_bootstrap = schema_init_0_1_15_0
 M.bucket_state_edges = bucket_state_edges
 
 M.bucket_are_all_rw = bucket_are_all_rw_public
