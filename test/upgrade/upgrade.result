@@ -68,12 +68,8 @@ test_run:switch('storage_1_a')
 if is_at_least_3_0 then                                                         \
     local t = box.space._schema:get{'vshard_version'}                           \
     assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
-    assert(vshard.storage.internal.schema_current_version ~= nil)               \
-    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
 else                                                                            \
     assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
-    assert(vshard.storage.internal.schema_current_version == nil)               \
-    assert(vshard.storage.internal.schema_latest_version == nil)                \
 end
  | ---
  | ...
@@ -102,12 +98,8 @@ test_run:switch('storage_2_a')
 if is_at_least_3_0 then                                                         \
     local t = box.space._schema:get{'vshard_version'}                           \
     assert(table.equals(t:totable(), {'vshard_version', 0, 1, 16, 0}))          \
-    assert(vshard.storage.internal.schema_current_version ~= nil)               \
-    assert(vshard.storage.internal.schema_latest_version ~= nil)                \
 else                                                                            \
     assert(box.space._schema:get{'oncevshard:storage:1'} ~= nil)                \
-    assert(vshard.storage.internal.schema_current_version == nil)               \
-    assert(vshard.storage.internal.schema_latest_version == nil)                \
 end
  | ---
  | ...
@@ -158,15 +150,18 @@ test_run:switch('storage_1_a')
  | ---
  | - true
  | ...
+vschema = require('vshard.storage.schema')
+ | ---
+ | ...
 box.space._schema:get({'vshard_version'})
  | ---
  | - ['vshard_version', 0, 1, 16, 0]
  | ...
-vshard.storage.internal.schema_current_version()
+vschema.current_version()
  | ---
  | - '{0.1.16.0}'
  | ...
-vshard.storage.internal.schema_latest_version
+vschema.latest_version
  | ---
  | - '{0.1.16.0}'
  | ...
@@ -195,6 +190,9 @@ test_run:switch('storage_1_b')
  | ---
  | - true
  | ...
+vschema = require('vshard.storage.schema')
+ | ---
+ | ...
 test_run:wait_lsn('storage_1_b', 'storage_1_a')
  | ---
  | ...
@@ -202,11 +200,11 @@ box.space._schema:get({'vshard_version'})
  | ---
  | - ['vshard_version', 0, 1, 16, 0]
  | ...
-vshard.storage.internal.schema_current_version()
+vschema.current_version()
  | ---
  | - '{0.1.16.0}'
  | ...
-vshard.storage.internal.schema_latest_version
+vschema.latest_version
  | ---
  | - '{0.1.16.0}'
  | ...
