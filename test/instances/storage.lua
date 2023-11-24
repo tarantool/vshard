@@ -13,6 +13,7 @@ _G.ivconst = require('vshard.consts')
 _G.ivutil = require('vshard.util')
 _G.iverror = require('vshard.error')
 _G.ivtest = require('test.luatest_helpers.vtest')
+_G.itable_new = require('table.new')
 
 _G.iwait_timeout = _G.ivtest.wait_timeout
 
@@ -67,6 +68,20 @@ end
 local function get_first_bucket()
     local res = index_min(box.space._bucket.index.status, vconst.BUCKET.ACTIVE)
     return res ~= nil and res.id or nil
+end
+
+local function get_n_buckets(n)
+    if n <= 0 then
+        error('Invalid number of buckets')
+    end
+    local ids = _G.itable_new(0, n)
+    for _, tuple in box.space._bucket.index.status:pairs(vconst.BUCKET.ACTIVE) do
+        table.insert(ids, tuple.id)
+        if #ids == n then
+            return ids
+        end
+    end
+    error('Not enough buckets')
 end
 
 local function session_set(key, value)
@@ -167,6 +182,7 @@ _G.box_error = box_error
 _G.echo = echo
 _G.get_uuid = get_uuid
 _G.get_first_bucket = get_first_bucket
+_G.get_n_buckets = get_n_buckets
 _G.session_set = session_set
 _G.session_get = session_get
 _G.bucket_gc_wait = bucket_gc_wait
