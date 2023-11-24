@@ -225,3 +225,117 @@ test_group.test_bucket_skip_validate = function(g)
         internal.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE = false
     end)
 end
+
+test_group.test_ref_with_lookup = function(g)
+    g.replica_1_a:exec(function()
+        local res, err, _
+        local timeout = 0.1
+        local rid = 42
+        local bids = _G.get_n_buckets(2)
+        local bid_extra = 3001
+
+        -- Check for a single bucket.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bids[1]}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {rid = rid, moved = {}})
+        _, err = ivshard.storage._call('storage_unref', rid)
+        ilt.assert_equals(err, nil)
+
+        -- Check for multiple buckets.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bids[1], bids[2]}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {rid = rid, moved = {}})
+        _, err = ivshard.storage._call('storage_unref', rid)
+        ilt.assert_equals(err, nil)
+
+        -- Check for double referencing.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bids[1], bids[1]}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {rid = rid, moved = {}})
+        _, err = ivshard.storage._call('storage_unref', rid)
+        ilt.assert_equals(err, nil)
+        _, err = ivshard.storage._call('storage_unref', rid)
+        t.assert_str_contains(err.message,
+                              'Can not delete a storage ref: no ref')
+
+        -- Check for an absent bucket.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bids[1], bids[2], bid_extra}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {rid = rid, moved = {bid_extra}})
+        ivshard.storage._call('storage_unref', rid)
+
+        -- Check that we do not create a reference if there are no buckets.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bid_extra}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {rid = nil, moved = {bid_extra}})
+        res, err = ivshard.storage._call('storage_unref', rid)
+        t.assert_str_contains(err.message,
+                              'Can not delete a storage ref: no ref')
+        ilt.assert_equals(res, nil)
+
+        -- Check for a timeout.
+        -- Emulate a case when all buckets are not writable.
+        local func = ivshard.storage.internal.bucket_are_all_rw
+        ivshard.storage.internal.bucket_are_all_rw = function() return false end
+        res, err = ivshard.storage._call(
+            'storage_ref_with_lookup',
+            rid,
+            timeout,
+            {bids[1]}
+        )
+        ivshard.storage.internal.bucket_are_all_rw = func
+        t.assert_str_contains(err.message, 'Timeout exceeded')
+        ilt.assert_equals(res, nil)
+        -- Check that the reference was not created.
+        res, err = ivshard.storage._call('storage_unref', rid)
+        t.assert_str_contains(err.message,
+                              'Can not delete a storage ref: no ref')
+        ilt.assert_equals(res, nil)
+    end)
+end
+
+test_group.test_absent_buckets = function(g)
+    g.replica_1_a:exec(function()
+        local res, err = ivshard.storage._call(
+            'storage_absent_buckets',
+            {_G.get_first_bucket()}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {})
+    end)
+
+    g.replica_1_a:exec(function()
+        local bid_extra = 3001
+        local res, err = ivshard.storage._call(
+            'storage_absent_buckets',
+            {_G.get_first_bucket(), bid_extra}
+        )
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {bid_extra})
+    end)
+end
