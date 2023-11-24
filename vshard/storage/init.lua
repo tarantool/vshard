@@ -3181,6 +3181,70 @@ local function storage_ref(rid, timeout)
 end
 
 --
+-- Lookup for absent active buckets.
+--
+-- @param bucket_ids List of bucket identifiers.
+-- @return A dictionary with a list of bucket identifiers which are
+--         not present on the current instance.
+--
+local function storage_absent_buckets(bucket_ids)
+    local status = consts.BUCKET
+    local moved_buckets = {}
+    for _, bucket_id in pairs(bucket_ids) do
+        local bucket = box.space._bucket:get{bucket_id}
+        if not bucket or bucket.status ~= status.ACTIVE then
+            table.insert(moved_buckets, bucket_id)
+        end
+    end
+    return { moved = moved_buckets }
+end
+
+--
+-- Bind a new storage ref to the current box session and check
+-- that all the buckets are present. Is used as a part of the
+-- partial Map-Reduce API.
+--
+-- @param rid Unique reference ID.
+-- @param timeout Seconds.
+-- @param bucket_ids List of bucket identifiers.
+-- @return A dictionary with reference id and a list of bucket identifiers
+--         which are not present on the current instance. If all the buckets
+--         are absent, the reference is not created and a nil reference id
+--         with the list of absent buckets is returned.
+--
+local function storage_ref_with_lookup(rid, timeout, bucket_ids)
+    local moved = storage_absent_buckets(bucket_ids).moved
+    if #moved == #bucket_ids then
+        -- Take an advantage that moved buckets are returned in the same
+        -- order as in the input list.
+        local do_match = true
+        local next_moved = next(moved)
+        local next_passed = next(bucket_ids)
+        ::continue::
+        if next_moved then
+            if next_moved == next_passed then
+                next_moved = next(moved, next_moved)
+                next_passed = next(bucket_ids, next_passed)
+                goto continue
+            else
+                do_match = false
+            end
+        end
+        if do_match then
+            -- If all the passed buckets are absent, there is no need
+            -- to create a ref.
+            return {rid = nil, moved = moved}
+        end
+    end
+
+    local ok, err = storage_ref(rid, timeout)
+    if not ok then
+        return nil, err
+    end
+    return {rid = rid, moved = moved}
+end
+
+--
 -- Drop a storage ref from the current box session. Is used as a part of
 -- Map-Reduce API.
 --
@@ -3234,7 +3298,9 @@ service_call_api = setmetatable({
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
+    storage_absent_buckets = storage_absent_buckets,
     storage_ref = storage_ref,
+    storage_ref_with_lookup = storage_ref_with_lookup,
     storage_unref = storage_unref,
     storage_map = storage_map,
     info = storage_service_info,
