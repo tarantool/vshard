@@ -467,6 +467,15 @@ local function storage_first_bucket(storage)
 end
 
 --
+-- Get n active buckets from the storage.
+--
+local function storage_get_n_buckets(storage, n)
+    return storage:exec(function(n)
+        return _G.get_n_buckets(n)
+    end, {n})
+end
+
+--
 -- Disable rebalancer on all storages.
 --
 local function cluster_rebalancer_disable(g)
@@ -854,6 +863,7 @@ return {
     cluster_wait_fullsync = cluster_wait_fullsync,
     cluster_rebalancer_find = cluster_rebalancer_find,
     storage_first_bucket = storage_first_bucket,
+    storage_get_n_buckets = storage_get_n_buckets,
     storage_stop = storage_stop,
     storage_start = storage_start,
     router_new = router_new,
