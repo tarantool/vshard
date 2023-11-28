@@ -168,3 +168,17 @@ test_group.test_recovery_bucket_stat = function(g)
 
     vtest.cluster_cfg(g, global_cfg)
 end
+
+test_group.test_local_call = function(g)
+    -- box.func was introduced in 2.2.1.
+    t.run_only_if(vutil.version_is_at_least(2, 2, 1, nil, 0, 0))
+    g.replica_1_a:exec(function()
+        local body = [[function(a, b) return a + b end]]
+        box.schema.func.create('sum', {body = body})
+        local bid = _G.get_first_bucket()
+        local ok, ret = ivshard.storage.call(bid, 'read', 'sum', {1, 2})
+        ilt.assert_equals(ret, 3)
+        ilt.assert_equals(ok, true)
+        box.func.sum:drop()
+    end)
+end

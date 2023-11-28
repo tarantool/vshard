@@ -265,8 +265,27 @@ end
 -- The function returns pcall() as is, because is used from places where
 -- exceptions are not allowed.
 --
-local function local_call(func_name, args)
+local local_call
+
+if util.version_is_at_least(3, 0, 0, 'beta', 1, 18) then
+
+local_call = function(func_name, args)
     return pcall(netbox_self_call, netbox_self, func_name, args)
+end
+
+else -- < 3.0.0-beta1-18
+
+-- net_box.self.call() doesn't work with C stored and Lua persistent
+-- functions before 3.0.0-beta1-18, so we try to call it via func.call
+-- API prior to using net_box.self API.
+local_call = function(func_name, args)
+    local func = box.func and box.func[func_name]
+    if not func then
+        return pcall(netbox_self_call, netbox_self, func_name, args)
+    end
+    return pcall(func.call, func, args)
+end
+
 end
 
 local function master_call(replicaset, func, args, opts)
