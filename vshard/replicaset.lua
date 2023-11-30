@@ -1177,6 +1177,7 @@ local replicaset_mt = {
         up_replica_priority = replicaset_up_replica_priority;
         wait_connected = replicaset_wait_connected,
         wait_connected_all = replicaset_wait_connected_all,
+        wait_master = replicaset_wait_master,
         call = replicaset_master_call;
         callrw = replicaset_master_call;
         callro = replicaset_template_multicallro(false, false);

@@ -800,6 +800,47 @@ local function router_call(router, bucket_id, opts, ...)
 end
 
 --
+-- Wait until all masters in the list are connected.
+--
+-- @param replicasets List of replicasets.
+-- @param timeout Timeout in seconds.
+--
+-- @return In case of success - remaining timeout.
+--
+-- @return In case of error - nil, err, UUID of the failed replicaset.
+--
+local function wait_connected_to_masters(replicasets, timeout)
+    local master, id
+    local err, err_id
+
+    -- Start connecting to all masters in parallel.
+    local deadline = fiber_clock() + timeout
+    for _, replicaset in pairs(replicasets) do
+        master, err = replicaset:wait_master(timeout)
+        id = replicaset.id
+        if not master then
+            err_id = id
+            goto fail
+        end
+        replicaset:connect_replica(master)
+        timeout = deadline - fiber_clock()
+    end
+
+    -- Wait until all connections are established.
+    for _, replicaset in pairs(replicasets) do
+        timeout, err = replicaset:wait_connected(timeout)
+        if not timeout then
+            err_id = replicaset.id
+            goto fail
+        end
+    end
+    do return timeout end
+
+    ::fail::
+    return nil, err, err_id
+end
+
+--
 -- Consistent Map-Reduce. The given function is called on all masters in the
 -- cluster with a guarantee that in case of success it was executed with all
 -- buckets being accessible for reads and writes.
@@ -863,14 +904,17 @@ local function router_map_callrw(router, func, args, opts)
     --
     -- Ref stage: send.
     --
+    -- Netbox async requests work only with active connections. Need to wait
+    -- for the connection explicitly.
+    local rs_list = table_new(0, #replicasets)
+    for _, rs in pairs(replicasets) do
+        table.insert(rs_list, rs)
+    end
+    timeout, err, err_id = wait_connected_to_masters(rs_list, timeout)
+    if not timeout then
+        goto fail
+    end
     for id, rs in pairs(replicasets) do
-        -- Netbox async requests work only with active connections. Need to wait
-        -- for the connection explicitly.
-        timeout, err = rs:wait_connected(timeout)
-        if timeout == nil then
-            err_id = id
-            goto fail
-        end
         res, err = rs:callrw('vshard.storage._call',
                               {'storage_ref', rid, timeout}, opts_ref)
         if res == nil then
@@ -1033,6 +1077,7 @@ local function router_map_part_callrw(router, bucket_ids, func, args, opts)
     local grouped_buckets
     local err, err_id, res, ok, map
     local call_args
+    local rs_list
     local replicasets = {}
     local preallocated = false
     local futures = {}
@@ -1054,6 +1099,18 @@ local function router_map_part_callrw(router, bucket_ids, func, args, opts)
             goto fail
         end
         timeout = deadline - fiber_clock()
+
+        -- Netbox async requests work only with active connections.
+        -- So, first need to wait for the master connection explicitly.
+        rs_list = table_new(0, #grouped_buckets)
+        for uuid, _ in pairs(grouped_buckets) do
+            replicaset = router.replicasets[uuid]
+            table.insert(rs_list, replicaset)
+        end
+        timeout, err, err_id = wait_connected_to_masters(rs_list, timeout)
+        if not timeout then
+            goto fail
+        end
 
         -- Send ref requests with timeouts to the replicasets.
         futures = table_new(0, #grouped_buckets)
