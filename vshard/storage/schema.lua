@@ -1,5 +1,6 @@
 local llog = require('log')
 local lutil = require('vshard.util')
+local lvexports = require('vshard.storage.exports')
 
 local MODULE_INTERNALS = '__module_vshard_storage_schema'
 -- Update when change behaviour of anything in the file, to be able to reload.
@@ -53,6 +54,19 @@ local function schema_version_make(ver)
     return setmetatable(ver, schema_version_mt)
 end
 
+local function schema_find_exports_for_vshard_version(version)
+    if type(version) == 'table' then
+        version = table.concat(version, '.')
+    end
+    local prev_exports = lvexports.log[1]
+    for _, exports in pairs(lvexports.log) do
+        if exports.version == version then
+            return exports
+        end
+    end
+    return prev_exports
+end
+
 --
 -- VShard versioning works in 4 numbers: major, minor, patch, and a last helper
 -- number incremented on every schema change, if first 3 numbers stay not
@@ -80,129 +94,26 @@ local function schema_init_0_1_15_0(username, password)
     bucket:create_index('pk', {parts = {'id'}})
     bucket:create_index('status', {parts = {'status'}, unique = false})
 
-    local storage_api = {
-        'vshard.storage.sync',
-        'vshard.storage.call',
-        'vshard.storage.bucket_force_create',
-        'vshard.storage.bucket_force_drop',
-        'vshard.storage.bucket_collect',
-        'vshard.storage.bucket_send',
-        'vshard.storage.bucket_recv',
-        'vshard.storage.bucket_stat',
-        'vshard.storage.buckets_count',
-        'vshard.storage.buckets_info',
-        'vshard.storage.buckets_discovery',
-        'vshard.storage.rebalancer_request_state',
-        'vshard.storage.rebalancer_apply_routes',
-    }
-    for _, name in ipairs(storage_api) do
-        box.schema.func.create(name, {setuid = true})
-        box.schema.user.grant(username, 'execute', 'function', name)
-    end
+    local exports = lvexports.log[1]
+    assert(exports.version == '0.1.15.0')
+    exports = lvexports.compile(exports)
+    lvexports.deploy_funcs(exports)
+    lvexports.deploy_privs(exports, username)
     box.space._schema:replace({'vshard_version', 0, 1, 15, 0})
 end
 
-local function schema_upgrade_to_0_1_16_0(username)
+local function schema_upgrade_to_0_1_16_0()
     -- Since 0.1.16.0 the old versioning by 'oncevshard:storage:<number>' is
     -- dropped because it is not really extendible nor understandable.
     llog.info("Insert 'vshard_version' into _schema")
     box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
     box.space._schema:delete({'oncevshard:storage:1'})
-
-    -- vshard.storage._call() is supposed to replace some internal functions
-    -- exposed in _func; to allow introduction of new functions on replicas; to
-    -- allow change of internal functions without touching the schema.
-    local func = 'vshard.storage._call'
-    llog.info('Create function %s()', func)
-    box.schema.func.create(func, {setuid = true})
-    box.schema.user.grant(username, 'execute', 'function', func)
-    -- Don't drop old functions in the same version. Removal can happen only
-    -- after 0.1.16. Or there should appear support of rebalancing from too old
-    -- versions. Drop of these functions now would immediately make it
-    -- impossible to rebalance from old instances.
 end
 
 local function schema_downgrade_from_0_1_16_0()
     llog.info("Remove 'vshard_version' from _schema")
     box.space._schema:replace({'oncevshard:storage:1'})
     box.space._schema:delete({'vshard_version'})
-
-    local func = 'vshard.storage._call'
-    llog.info('Remove function %s()', func)
-    box.schema.func.drop(func, {if_exists = true})
-end
-
---
--- Make vshard.storage.bucket_recv() understand raw args as msgpack object. It
--- doesn't necessarily make it faster, but is essential to preserve the original
--- tuples as is, without their contortion through Lua tables. It would break
--- field types like MP_BIN (varbinary).
---
-local function schema_upgrade_bucket_recv_raw()
-    if not lutil.feature.msgpack_object then
-        return
-    end
-    if box.func == nil then
-        return
-    end
-    local name = 'vshard.storage.bucket_recv'
-    local func = box.func[name]
-    if func == nil then
-        return
-    end
-    if func.takes_raw_args then
-        return
-    end
-    llog.info("Upgrade %s to accept args as msgpack", name)
-    box.begin()
-    local ok, err = pcall(function()
-        -- Preserve all the possible grants which could be given to the
-        -- function. Don't just drop and re-create.
-        local priv_space = box.space._priv
-        local func_space = box.space._func
-        local privs = priv_space.index.object:select{'function', func.id}
-        local priv_pk_parts = priv_space.index.primary.parts
-
-        -- Extract the old function.
-        for _, p in pairs(privs) do
-            priv_space:delete(lutil.tuple_extract_key(p, priv_pk_parts))
-        end
-        local tuple = func_space:delete(func.id)
-
-        -- Insert the updated version. Can't update it in-place, _func doesn't
-        -- support that.
-        tuple = tuple:update({{'=', 'opts.takes_raw_args', true}})
-        func_space:insert(tuple)
-        for _, p in pairs(privs) do
-            priv_space:insert(p)
-        end
-    end)
-    if ok then
-        ok, err = pcall(box.commit)
-        if ok then
-            return
-        end
-    end
-    box.rollback()
-    llog.error("Couldn't upgrade %s to accept args as msgpack: %s", name, err)
-end
-
---
--- Upgrade schema features which depend on Tarantool version and are not bound
--- to a certain vshard version.
---
-local function schema_upgrade_core_features()
-    -- Core features can only change with Tarantool exe update, which means it
-    -- won't happen on reconfig nor on hot reload. Enough to do it when
-    -- configured first time.
-    if M.is_core_up_to_date then
-        return
-    end
-    -- In future it could make sense to store core feature set version in
-    -- addition to vshard own schema version, but it would be an overkill while
-    -- the feature is just one.
-    schema_upgrade_bucket_recv_raw()
-    M.is_core_up_to_date = true
 end
 
 local function schema_current_version()
@@ -212,6 +123,20 @@ local function schema_current_version()
     else
         return schema_version_make(version:totable(2))
     end
+end
+
+--
+-- Upgrade schema features which depend on Tarantool version and are not bound
+-- to a certain vshard version.
+--
+local function schema_upgrade_core_features()
+    if M.is_core_up_to_date then
+        return
+    end
+    local version = schema_current_version()
+    local exports = schema_find_exports_for_vshard_version(version)
+    lvexports.deploy_funcs(lvexports.compile(exports))
+    M.is_core_up_to_date = true
 end
 
 local schema_latest_version = schema_version_make({0, 1, 16, 0})
@@ -256,7 +181,14 @@ local function schema_upgrade(target_version, username, password)
             if errinj == 'begin' then
                 ok, err1 = false, 'Errinj in begin'
             else
-                ok, err1 = pcall(handler.upgrade, username)
+                ok, err1 = pcall(function()
+                    local exports = schema_find_exports_for_vshard_version(
+                        next_version)
+                    exports = lvexports.compile(exports)
+                    handler.upgrade()
+                    lvexports.deploy_funcs(exports)
+                    lvexports.deploy_privs(exports, username)
+                end)
                 if ok and errinj == 'end' then
                     ok, err1 = false, 'Errinj in end'
                 end
@@ -267,7 +199,14 @@ local function schema_upgrade(target_version, username, password)
                 box.rollback()
                 llog.info("Couldn't upgrade schema to %s: '%s'. Revert to %s",
                           next_version, err1, prev_version)
-                ok, err2 = pcall(handler.downgrade)
+                ok, err2 = pcall(function()
+                    local exports = schema_find_exports_for_vshard_version(
+                        prev_version)
+                    exports = lvexports.compile(exports)
+                    handler.downgrade()
+                    lvexports.deploy_funcs(exports)
+                    lvexports.deploy_privs(exports, username)
+                end)
                 if not ok then
                     llog.info("Couldn't downgrade schema to %s - fatal error: "..
                               "'%s'", prev_version, err2)

@@ -19,7 +19,8 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.replicaset', 'vshard.util', 'vshard.service_info',
         'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
-        'vshard.storage.schema'
+        'vshard.storage.schema', 'vshard.storage.export_log',
+        'vshard.storage.exports'
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil

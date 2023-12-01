@@ -418,6 +418,7 @@ else
 end
 
 return {
+    core_version = tnt_version,
     uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
     reloadable_fiber_create = reloadable_fiber_create,
@@ -429,6 +430,7 @@ return {
     table_copy_yield = table_copy_yield,
     table_minus_yield = table_minus_yield,
     table_extend = table_extend,
+    table_equals = table_equals,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
     index_min = index_min,
