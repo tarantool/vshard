@@ -221,6 +221,22 @@ local function cluster_new(g, cfg)
 
             local grant_range = cfg.test_user_grant_range
             ivtest.clear_test_cfg_options(cfg)
+
+            if cfg.schema_management_mode == 'manual_access' then
+                local vexports = require('vshard.storage.exports')
+                local username = 'storage'
+                box.schema.user.create(username, {
+                    password = username,
+                    -- Yes, intentionally false to ensure that the user wasn't
+                    -- created by vshard.
+                    if_not_exists = false,
+                })
+                local exports = vexports.log[#vexports.log]
+                exports = vexports.compile(exports)
+                vexports.deploy_funcs(exports)
+                vexports.deploy_privs(exports, username)
+                box.schema.user.grant(username, 'replication')
+            end
             ivshard.storage.cfg(cfg, box.info.uuid)
 
             if grant_range ~= nil then

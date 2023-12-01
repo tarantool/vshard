@@ -410,7 +410,11 @@ local cfg_template = {
     box_cfg_mode = {
         name = 'Box.cfg mode', type = 'enum', is_optional = true,
         default = 'auto', enum = {'auto', 'manual'},
-    }
+    },
+    schema_management_mode = {
+        name = 'Schema management mode', type = 'enum',
+        is_optional = true, default = 'auto', enum = {'auto', 'manual_access'},
+    },
 }
 
 --

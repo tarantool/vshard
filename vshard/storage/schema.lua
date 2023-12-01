@@ -19,6 +19,9 @@ if not M then
         -- and be not nullable. Values in this part are considered as bucket
         -- identifiers.
         shard_index = nil,
+        -- How to manage the schema. Auto - do everything automatically,
+        -- manual - expect some things to be done externally outside of vshard.
+        management_mode = 'auto',
         errinj = {
             ERRINJ_UPGRADE = false,
         },
@@ -78,12 +81,6 @@ end
 --
 local function schema_init_0_1_15_0(username, password)
     llog.info("Initializing schema %s", schema_version_make({0, 1, 15, 0}))
-    box.schema.user.create(username, {
-        password = password,
-        if_not_exists = true,
-    })
-    box.schema.user.grant(username, 'replication', nil, nil,
-                          {if_not_exists = true})
 
     local bucket = box.schema.space.create('_bucket')
     bucket:format({
@@ -94,11 +91,19 @@ local function schema_init_0_1_15_0(username, password)
     bucket:create_index('pk', {parts = {'id'}})
     bucket:create_index('status', {parts = {'status'}, unique = false})
 
-    local exports = lvexports.log[1]
-    assert(exports.version == '0.1.15.0')
-    exports = lvexports.compile(exports)
-    lvexports.deploy_funcs(exports)
-    lvexports.deploy_privs(exports, username)
+    if M.management_mode == 'auto' then
+        box.schema.user.create(username, {
+            password = password,
+            if_not_exists = true,
+        })
+        box.schema.user.grant(username, 'replication', nil, nil,
+                              {if_not_exists = true})
+        local exports = lvexports.log[1]
+        assert(exports.version == '0.1.15.0')
+        exports = lvexports.compile(exports)
+        lvexports.deploy_funcs(exports)
+        lvexports.deploy_privs(exports, username)
+    end
     box.space._schema:replace({'vshard_version', 0, 1, 15, 0})
 end
 
@@ -130,7 +135,7 @@ end
 -- to a certain vshard version.
 --
 local function schema_upgrade_core_features()
-    if M.is_core_up_to_date then
+    if M.is_core_up_to_date or M.management_mode ~= 'auto' then
         return
     end
     local version = schema_current_version()
@@ -186,8 +191,10 @@ local function schema_upgrade(target_version, username, password)
                         next_version)
                     exports = lvexports.compile(exports)
                     handler.upgrade()
-                    lvexports.deploy_funcs(exports)
-                    lvexports.deploy_privs(exports, username)
+                    if M.management_mode == 'auto' then
+                        lvexports.deploy_funcs(exports)
+                        lvexports.deploy_privs(exports, username)
+                    end
                 end)
                 if ok and errinj == 'end' then
                     ok, err1 = false, 'Errinj in end'
@@ -204,8 +211,10 @@ local function schema_upgrade(target_version, username, password)
                         prev_version)
                     exports = lvexports.compile(exports)
                     handler.downgrade()
-                    lvexports.deploy_funcs(exports)
-                    lvexports.deploy_privs(exports, username)
+                    if M.management_mode == 'auto' then
+                        lvexports.deploy_funcs(exports)
+                        lvexports.deploy_privs(exports, username)
+                    end
                 end)
                 if not ok then
                     llog.info("Couldn't downgrade schema to %s - fatal error: "..
@@ -259,6 +268,7 @@ end
 
 local function schema_cfg(cfg)
     M.shard_index = cfg.shard_index
+    M.management_mode = cfg.schema_management_mode
 end
 
 M.current_version = schema_current_version
