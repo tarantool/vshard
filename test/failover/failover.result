@@ -102,7 +102,7 @@ test_run:switch('router_1')
 ---
 - true
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
@@ -356,7 +356,7 @@ test_run:switch('router_2')
 ---
 - true
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 priority_order()
@@ -394,7 +394,7 @@ test_run:switch('router_3')
 ---
 - true
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 priority_order()
@@ -432,7 +432,7 @@ test_run:switch('router_4')
 ---
 - true
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 priority_order()
@@ -473,7 +473,7 @@ log.info(string.rep('padding', 200))
 cfg.failover_ping_timeout = 0.0000001
 ---
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 while not test_run:grep_log('router_1', 'Ping error from', 1000) do fiber.sleep(0.01) end
@@ -511,7 +511,7 @@ err
 cfg.failover_ping_timeout = nil
 ---
 ...
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 ---
 ...
 test_run:switch('default')

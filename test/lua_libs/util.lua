@@ -215,6 +215,23 @@ local function map_bucket_protection(test_run, cluster, value)
         [[vshard.storage.internal.is_bucket_protected = ...]], value)
 end
 
+local function box_router_cfg(cfg, router)
+    local vcfg = require('vshard.cfg')
+    local vshard_cfg = vcfg.extract_vshard(cfg)
+    local box_cfg = vcfg.extract_box(cfg, {})
+    box.cfg(box_cfg)
+    if router == nil then
+        -- Static router configuration
+        return vshard.router.cfg(vshard_cfg)
+    end
+    if type(router) == 'table' then
+        -- Named router reconfiguration
+        return router:cfg(vshard_cfg)
+    end
+    -- Named router creation
+    return vshard.router.new(router, vshard_cfg)
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -231,4 +248,5 @@ return {
     git_checkout = git_checkout,
     portable_error = portable_error,
     is_timeout_error = is_timeout_error,
+    box_router_cfg = box_router_cfg,
 }

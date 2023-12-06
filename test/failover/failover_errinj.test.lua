@@ -16,7 +16,7 @@ test_run:cmd('create server router_1 with script="failover/router_1.lua"')
 test_run:cmd('start server router_1')
 test_run:switch('router_1')
 
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 -- Check that already run failover step is restarted on
 -- configuration change (if some replicasets are removed from
 -- config).

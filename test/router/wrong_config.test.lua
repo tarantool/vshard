@@ -9,7 +9,7 @@ _ = test_run:cmd("start server router_3")
 _ = test_run:switch("router_3")
 
 cfg.bucket_count = 3000
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 vshard.router.bootstrap()
 
 --
@@ -17,7 +17,7 @@ vshard.router.bootstrap()
 -- configured improperly.
 --
 cfg.bucket_count = 1000
-r = vshard.router.new('gh-179', cfg)
+r = util.box_router_cfg(cfg, 'gh-179')
 while r:info().bucket.available_rw ~= 3000 do                                   \
     r:discovery_wakeup()                                                        \
     fiber.sleep(0.1)                                                            \
