@@ -39,7 +39,8 @@ local cfg_template = {
             },
         },
     },
-    bucket_count = 30
+    bucket_count = 30,
+    replication_timeout = 0.1,
 }
 local global_cfg
 
