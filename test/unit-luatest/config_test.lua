@@ -289,4 +289,14 @@ g.test_enum = function()
         "Rebalancer mode must be enum {'auto', 'manual', 'off', nil}",
         vcfg.check, config)
     config.rebalancer_mode = nil
+
+    for _, v in pairs({'auto', 'manual'}) do
+        config.box_cfg_mode = v
+        t.assert(vcfg.check(config))
+    end
+    config.box_cfg_mode = 'bad'
+    t.assert_error_msg_content_equals(
+        "Box.cfg mode must be enum {'auto', 'manual', nil}",
+        vcfg.check, config)
+    config.box_cfg_mode = nil
 end
