@@ -407,6 +407,10 @@ local cfg_template = {
         name = 'Scheduler bucket move quota', type = 'non-negative number',
         is_optional = true, default = consts.DEFAULT_SCHED_MOVE_QUOTA
     },
+    box_cfg_mode = {
+        name = 'Box.cfg mode', type = 'enum', is_optional = true,
+        default = 'auto', enum = {'auto', 'manual'},
+    }
 }
 
 --

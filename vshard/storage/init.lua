@@ -3888,6 +3888,14 @@ local function storage_cfg_xc(cfgctx)
     else
         log.info("Starting configuration of replica %s", instance_uuid)
     end
+    if cfgctx.new_cfg.box_cfg_mode == 'manual' then
+        if type(box.cfg) == 'function' then
+            local msg = "Box must be configured, when box_cfg_mode is 'manual'"
+            error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
+        end
+        log.info("Box configuration was skipped due to the 'manual' " ..
+                 "box_cfg_mode")
+    end
 
     local new_replicasets = lreplicaset.buildall(new_cfg)
     for _, rs in pairs(new_replicasets) do
@@ -3900,7 +3908,7 @@ local function storage_cfg_xc(cfgctx)
         error('Error injection: cfg')
     end
 
-    if not cfgctx.is_reload then
+    if cfgctx.new_cfg.box_cfg_mode ~= 'manual' and not cfgctx.is_reload then
         storage_cfg_master_prepare(cfgctx)
         storage_cfg_build_local_box_cfg(cfgctx)
 
