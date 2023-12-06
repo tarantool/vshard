@@ -18,6 +18,7 @@ local cfg_template = {
     },
     bucket_count = 20,
     box_cfg_mode = 'manual',
+    replication_timeout = 0.1,
 }
 
 local global_cfg

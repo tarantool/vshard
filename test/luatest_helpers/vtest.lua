@@ -87,9 +87,6 @@ local function config_new(templ)
     local res = table.deepcopy(templ)
     local sharding = {}
     res.sharding = sharding
-    -- Is supposed to intensify reconnects when replication and listen URIs
-    -- change.
-    res.replication_timeout = 0.1
     for i, replicaset_templ in pairs(templ.sharding) do
         local replicaset_uuid = replicaset_name_to_uuid(i)
         local replicas = {}
