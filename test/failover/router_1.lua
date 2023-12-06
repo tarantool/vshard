@@ -11,6 +11,7 @@ os = require('os')
 fiber = require('fiber')
 local names = dofile('names.lua')
 log = require('log')
+util = require('util')
 rs_uuid = names.rs_uuid
 replica_uuid = names.replica_uuid
 local port

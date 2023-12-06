@@ -12,4 +12,5 @@ configs = dofile('configs.lua')
 
 -- Start the database with sharding
 vshard = require('vshard')
+util = require('util')
 box.cfg{}

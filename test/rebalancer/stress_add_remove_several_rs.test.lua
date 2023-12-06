@@ -39,10 +39,10 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 
 test_run:switch('router_1')
-util = require('rebalancer_utils')
-vshard.router.cfg(cfg)
+rebalancer_util = require('rebalancer_utils')
+util.box_router_cfg(cfg)
 vshard.router.discovery_wakeup()
-util.start_loading()
+rebalancer_util.start_loading()
 
 -- At first, add one replicaset.
 
@@ -65,7 +65,7 @@ fiber.sleep(0.5)
 
 test_run:switch('router_1')
 add_replicaset()
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 fiber.sleep(0.5)
 
 test_run:switch('box_1_a')
@@ -106,14 +106,14 @@ fiber.sleep(0.5)
 
 test_run:switch('router_1')
 add_second_replicaset()
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 fiber.sleep(0.5)
 
 test_run:switch('box_1_a')
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 test_run:switch('router_1')
-util.stop_loading()
-util.check_loading_result()
+rebalancer_util.stop_loading()
+rebalancer_util.check_loading_result()
 
 test_run:switch('box_1_a')
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
@@ -133,7 +133,7 @@ check_consistency()
 -- rebalancing and remove second one.
 --
 test_run:switch('router_1')
-util.start_loading()
+rebalancer_util.start_loading()
 test_run:switch('box_4_a')
 remove_second_replicaset_first_stage()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_4_a)
@@ -148,7 +148,7 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 fiber.sleep(0.5)
 test_run:switch('router_1')
 remove_second_replicaset_first_stage()
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 fiber.sleep(0.5)
 test_run:switch('box_1_a')
 remove_second_replicaset_first_stage()
@@ -173,10 +173,10 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 fiber.sleep(0.5)
 test_run:switch('router_1')
 remove_replicaset_first_stage()
-vshard.router.cfg(cfg)
+util.box_router_cfg(cfg)
 fiber.sleep(0.5)
-util.stop_loading()
-util.check_loading_result()
+rebalancer_util.stop_loading()
+rebalancer_util.check_loading_result()
 
 test_run:switch('box_1_a')
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}

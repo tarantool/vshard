@@ -87,7 +87,7 @@ _ = test_run:switch('router_1')
 not vshard.router.static.collect_lua_garbage
 cfg.collect_lua_garbage = true
 cfg.invalid_option = 'kek'
-vshard.router.cfg(cfg)
+string.match(require('util').check_error(vshard.router.cfg, cfg, 'invalid_option'), 'Unrecognized cfg options')
 not vshard.router.static.collect_lua_garbage
 cfg.invalid_option = nil
 cfg.collect_lua_garbage = nil
