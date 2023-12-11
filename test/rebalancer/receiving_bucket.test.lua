@@ -33,8 +33,12 @@ create_simple_space('test3', {engine = 'vinyl'})
 create_simple_space('test4')
 create_simple_space('test5', {engine = 'vinyl'})
 
-for i = 1, 10000 do box.space.test:replace{i, 1, 1} box.space.test2:replace{i, 1, 2} box.space.test3:replace{i, 1, 3} end
-for i = 1, 500 do box.space.test4:replace{i, 1, 4} box.space.test5:replace{i, 1, 5} end
+box.begin() for i = 1, 10000 do box.space.test:replace{i, 1, 1} box.space.test2:replace{i, 1, 2} end box.commit()
+box.begin() for i = 1, 10000 do box.space.test3:replace{i, 1, 3} end box.commit()
+
+box.begin() for i = 1, 500 do box.space.test4:replace{i, 1, 4} end box.commit()
+box.begin() for i = 1, 500 do box.space.test5:replace{i, 1, 5} end box.commit()
+
 box.snapshot()
 box.space.test:count()
 box.space.test2:count()
