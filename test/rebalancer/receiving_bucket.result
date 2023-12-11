@@ -173,9 +173,13 @@ res, util.portable_error(err)
 - type: ClientError
   message: Error injection 'the bucket is received partially'
 ...
-box.space._bucket:get{1}
+status = box.space._bucket:get{1}.status
 ---
-- [1, 'sending', '<replicaset_1>']
+...
+-- Could be active if recovered quickly enough.
+assert(status == 'sending' or status == 'active')
+---
+- true
 ...
 _ = test_run:switch('box_1_a')
 ---

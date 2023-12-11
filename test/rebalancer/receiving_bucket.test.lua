@@ -65,7 +65,9 @@ vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
 _ = test_run:switch('box_2_a')
 res, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 10})
 res, util.portable_error(err)
-box.space._bucket:get{1}
+status = box.space._bucket:get{1}.status
+-- Could be active if recovered quickly enough.
+assert(status == 'sending' or status == 'active')
 _ = test_run:switch('box_1_a')
 while box.space._bucket:get{1} do fiber.sleep(0.01) end
 vshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
