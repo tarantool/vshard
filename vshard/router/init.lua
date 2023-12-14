@@ -56,8 +56,6 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
-        -- Flag whether box.info.status is acceptable.
-        is_loaded = false,
 
         ----------------------- Map-Reduce -----------------------
         -- Storage Ref ID. It must be unique for each ref request
@@ -1698,20 +1696,7 @@ end
 -- the beginning of instance's lifetime.
 --
 local function router_api_call_unsafe(func, router, ...)
-    -- box.info is quite expensive. Avoid calling it again when the instance
-    -- is finally loaded.
-    if not M.is_loaded then
-        if type(box.cfg) == 'function' then
-            local msg = 'box seems not to be configured'
-            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
-        end
-        local status = box.info.status
-        if status ~= 'running' then
-            local msg = ('instance status is "%s"'):format(status)
-            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
-        end
-        M.is_loaded = true
-    end
+    -- Router can be started on instance with unconfigured box.cfg.
     if not router.is_configured then
         local msg = 'router is not configured'
         return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))

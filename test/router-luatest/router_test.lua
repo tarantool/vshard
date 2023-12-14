@@ -458,40 +458,19 @@ g.test_enable_disable = function(g)
     -- gh-291: router enable/disable
     --
     local router = vtest.router_new(g, 'router_1')
-    -- do not allow router's configuration to complete
-    router:exec(function()
-        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
-    end)
     router:exec(function(cfg)
         ivtest.clear_test_cfg_options(cfg)
-        rawset(_G, 'fiber_static', ifiber.new(ivshard.router.cfg, cfg))
-        rawset(_G, 'fiber_new', ifiber.new(ivshard.router.new,
-                                           'new_router', cfg))
+        -- Do not allow router's configuration to complete.
+        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
+        rawset(_G, 'fiber_static', ifiber.create(ivshard.router.cfg, cfg))
+        rawset(_G, 'fiber_new', ifiber.create(ivshard.router.new,
+                                              'new_router', cfg))
         _G.fiber_static:set_joinable(true)
         _G.fiber_new:set_joinable(true)
-    end, {global_cfg})
-
-    local err1, err2 = router:exec(function()
-        -- emulate unconfigured box
-        local old_box_cfg = box.cfg
-        box.cfg = function(...) return old_box_cfg(...) end
-
         local routers = ivshard.router.internal.routers
         rawset(_G, 'static_router', routers._static_router)
         rawset(_G, 'new_router', routers.new_router)
-        local _, err_1 = pcall(_G.static_router.info, _G.static_router)
-        local _, err_2 = pcall(_G.new_router.info, _G.new_router)
-
-        box.cfg = old_box_cfg
-        return err_1, err_2
-    end)
-    assert_errors_equals(err1, err2, 'box seems not to be configured')
-
-    -- set box status to loading
-    router:exec(function()
-        rawset(_G, 'old_box_info', box.info)
-        box.info = {status = 'loading'}
-    end)
+    end, {global_cfg})
 
     local echo_func = function()
         return router:exec(function(timeout)
@@ -505,15 +484,7 @@ g.test_enable_disable = function(g)
         end, {vtest.wait_timeout})
     end
 
-    err1, err2 = echo_func()
-    assert_errors_equals(err1, err2, 'instance status is "loading"')
-
-    -- restore proper box configuration
-    router:exec(function()
-        box.info = _G.old_box_info
-    end)
-
-    err1, err2 = echo_func()
+    local err1, err2 = echo_func()
     assert_errors_equals(err1, err2, 'router is not configured')
 
     -- unblock router's configuration and wait until it's finished
