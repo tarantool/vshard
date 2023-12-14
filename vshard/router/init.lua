@@ -1270,29 +1270,34 @@ end
 local function router_cfg(router, cfg, is_reload)
     cfg = lcfg.check(cfg, router.current_cfg)
     local vshard_cfg = lcfg.extract_vshard(cfg)
-    local box_cfg = lcfg.extract_box(cfg, {})
     if not M.replicasets then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
-    log.info("Calling box.cfg()...")
-    for k, v in pairs(box_cfg) do
-        log.info({[k] = v})
-    end
-    -- It is considered that all possible errors during cfg
-    -- process occur only before this place.
-    -- This check should be placed as late as possible.
-    if M.errinj.ERRINJ_CFG then
-        error('Error injection: cfg')
-    end
-    if not is_reload then
-        box.cfg(box_cfg)
-        log.info("Box has been configured")
-        while M.errinj.ERRINJ_CFG_DELAY do
-            lfiber.sleep(0.01)
+    if vshard_cfg.box_cfg_mode ~= 'manual' then
+        local box_cfg = lcfg.extract_box(cfg, {})
+        log.info("Calling box.cfg()...")
+        for k, v in pairs(box_cfg) do
+            log.info({[k] = v})
         end
+        -- It is considered that all possible errors during cfg
+        -- process occur only before this place.
+        -- This check should be placed as late as possible.
+        if M.errinj.ERRINJ_CFG then
+            error('Error injection: cfg')
+        end
+        if not is_reload then
+            box.cfg(box_cfg)
+            log.info("Box has been configured")
+            while M.errinj.ERRINJ_CFG_DELAY do
+                lfiber.sleep(0.01)
+            end
+        end
+    else
+        log.info("Box configuration was skipped due to the 'manual' " ..
+                 "box_cfg_mode")
     end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
