@@ -209,9 +209,9 @@ cfg.collect_lua_garbage = true
 cfg.invalid_option = 'kek'
 ---
 ...
-string.match(require('util').check_error(vshard.router.cfg, cfg, 'invalid_option'), 'Unrecognized cfg options')
+vshard.router.cfg(cfg)
 ---
-- Unrecognized cfg options
+- error: 'Incorrect value for option ''invalid_option'': unexpected option'
 ...
 not vshard.router.static.collect_lua_garbage
 ---

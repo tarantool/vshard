@@ -37,10 +37,10 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 -- Test the first case of described above.
 --
 test_run:switch('router_1')
-rebalancer_util = require('rebalancer_utils')
-util.box_router_cfg(cfg)
+util = require('rebalancer_utils')
+vshard.router.cfg(cfg)
 vshard.router.discovery_wakeup()
-rebalancer_util.start_loading()
+util.start_loading()
 
 test_run:switch('default')
 test_run:create_cluster(REPLICASET_3, 'rebalancer')
@@ -65,15 +65,15 @@ fiber.sleep(0.5)
 
 test_run:switch('router_1')
 add_replicaset()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 fiber.sleep(0.5)
 
 test_run:switch('box_1_a')
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 test_run:switch('router_1')
-rebalancer_util.stop_loading()
-rebalancer_util.check_loading_result()
+util.stop_loading()
+util.check_loading_result()
 
 test_run:switch('box_1_a')
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
@@ -95,7 +95,7 @@ check_consistency()
 -- out.
 --
 test_run:switch('router_1')
-rebalancer_util.start_loading()
+util.start_loading()
 test_run:switch('box_3_a')
 remove_replicaset_first_stage()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_3_a)
@@ -128,15 +128,15 @@ fiber.sleep(0.5)
 
 test_run:switch('router_1')
 remove_replicaset_first_stage()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 fiber.sleep(0.5)
 
 test_run:switch('box_1_a')
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 
 test_run:switch('router_1')
-rebalancer_util.stop_loading()
-rebalancer_util.check_loading_result()
+util.stop_loading()
+util.check_loading_result()
 
 test_run:switch('box_1_a')
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
@@ -153,7 +153,7 @@ check_consistency()
 -- When buckets are moved out from third replicaset, remove it
 -- from config.
 test_run:switch('router_1')
-rebalancer_util.start_loading()
+util.start_loading()
 test_run:switch('box_2_a')
 remove_replicaset_second_stage()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
@@ -178,9 +178,9 @@ test_run:switch('default')
 test_run:drop_cluster(REPLICASET_3)
 test_run:switch('router_1')
 remove_replicaset_second_stage()
-util.box_router_cfg(cfg)
-rebalancer_util.stop_loading()
-rebalancer_util.check_loading_result()
+vshard.router.cfg(cfg)
+util.stop_loading()
+util.check_loading_result()
 alerts = vshard.router.info().alerts
 for _, a in ipairs(alerts) do assert(a[1] == 'SUBOPTIMAL_REPLICA' or a[1] == 'UNKNOWN_BUCKETS') end
 

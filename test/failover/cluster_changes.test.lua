@@ -28,12 +28,12 @@ test_run:switch('router_1')
 -- First test case: reverse weights, when only replica exists,
 -- and no replica candidate.
 --
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 wait_state('All replicas are ok')
 vshard.router.info().alerts
 
 reverse_weights()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 vshard.router.info()
 wait_state('All replicas are ok')
 vshard.router.info()
@@ -71,7 +71,7 @@ vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 --
 test_run:switch('router_1')
 remove_some_replicas()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 info = vshard.router.info()
 while #info.alerts ~= 6 do fiber.sleep(0.1) info = vshard.router.info() end
 info
@@ -90,7 +90,7 @@ vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 --
 test_run:switch('router_1')
 add_some_replicas()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 #vshard.router.info().alerts > 1
 wait_state('All replicas are ok')
 vshard.router.info()

@@ -23,7 +23,7 @@ test_run:cmd('start server router_1')
 test_run:switch('router_1')
 add_replicaset()
 add_second_replicaset()
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 
 --
 -- Test on the storages restarts during intensive loading and

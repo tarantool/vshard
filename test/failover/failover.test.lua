@@ -52,7 +52,7 @@ test_run:cmd('switch default')
 --
 create_router('router_1')
 test_run:switch('router_1')
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
 priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
@@ -143,7 +143,7 @@ test_run:switch('default')
 
 create_router('router_2')
 test_run:switch('router_2')
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
@@ -152,7 +152,7 @@ test_run:switch('default')
 
 create_router('router_3')
 test_run:switch('router_3')
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
@@ -161,7 +161,7 @@ test_run:switch('default')
 
 create_router('router_4')
 test_run:switch('router_4')
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 priority_order()
 vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
 vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
@@ -174,7 +174,7 @@ vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
 test_run:switch('router_1')
 log.info(string.rep('padding', 200))
 cfg.failover_ping_timeout = 0.0000001
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'Ping error from', 1000) do fiber.sleep(0.01) end
 
 t = string.rep('a', 1024 * 1024 * 500)
@@ -187,7 +187,7 @@ res, err = future:wait_result(5)
 err
 #res[1]
 cfg.failover_ping_timeout = nil
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 
 test_run:switch('default')
 kill_router('router_1')

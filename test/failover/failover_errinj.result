@@ -43,7 +43,7 @@ test_run:switch('router_1')
 ---
 - true
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 -- Check that already run failover step is restarted on

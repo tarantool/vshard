@@ -67,7 +67,7 @@ add_replicaset()
 add_second_replicaset()
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 --
