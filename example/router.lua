@@ -14,13 +14,11 @@ replicasets = {'cbf06940-0790-498b-948d-042b62cf3d29',
 
 -- Call a configuration provider
 cfg = dofile('localcfg.lua')
--- vshard.router.cfg doesn't support box.cfg options.
-cfg = require('vshard.cfg').extract_vshard(cfg)
 if arg[1] == 'discovery_disable' then
     cfg.discovery_mode = 'off'
 end
+cfg.listen = 3300
 
-box.cfg{listen = 3300}
 -- Start the database with sharding
 vshard = require('vshard')
 vshard.router.cfg(cfg)

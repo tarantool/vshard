@@ -2,7 +2,6 @@ local log = require('log')
 local lfiber = require('fiber')
 local lmsgpack = require('msgpack')
 local table_new = require('table.new')
-local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 
 local MODULE_INTERNALS = '__module_vshard_router'
@@ -57,6 +56,8 @@ if not M then
         -- This counter is used to restart background fibers with
         -- new reloaded code.
         module_version = 0,
+        -- Flag whether box.info.status is acceptable.
+        is_loaded = false,
 
         ----------------------- Map-Reduce -----------------------
         -- Storage Ref ID. It must be unique for each ref request
@@ -1266,29 +1267,32 @@ end
 -- Configuration
 --------------------------------------------------------------------------------
 
-local function router_cfg(router, cfg)
+local function router_cfg(router, cfg, is_reload)
     cfg = lcfg.check(cfg, router.current_cfg)
     local vshard_cfg = lcfg.extract_vshard(cfg)
     local box_cfg = lcfg.extract_box(cfg, {})
-    if next(box_cfg) then
-        -- Router doesn't any box.cfg options.
-        error(string.format('Unrecognized cfg options:\n%s',
-                            yaml_encode(box_cfg)))
-    end
     if not M.replicasets then
         log.info('Starting router configuration')
     else
         log.info('Starting router reconfiguration')
     end
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
+    log.info("Calling box.cfg()...")
+    for k, v in pairs(box_cfg) do
+        log.info({[k] = v})
+    end
     -- It is considered that all possible errors during cfg
     -- process occur only before this place.
     -- This check should be placed as late as possible.
     if M.errinj.ERRINJ_CFG then
         error('Error injection: cfg')
     end
-    while M.errinj.ERRINJ_CFG_DELAY do
-        lfiber.sleep(0.01)
+    if not is_reload then
+        box.cfg(box_cfg)
+        log.info("Box has been configured")
+        while M.errinj.ERRINJ_CFG_DELAY do
+            lfiber.sleep(0.01)
+        end
     end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
@@ -1329,13 +1333,13 @@ local function router_cfg(router, cfg)
     router.is_configured = true
 end
 
-local function router_cfg_fiber_safe(router, cfg)
+local function router_cfg_fiber_safe(router, cfg, is_reload)
     if router.is_cfg_in_progress then
         error(lerror.vshard(lerror.code.ROUTER_CFG_IS_IN_PROGRESS, router.name))
     end
 
     router.is_cfg_in_progress = true
-    local ok, err = pcall(router_cfg, router, cfg)
+    local ok, err = pcall(router_cfg, router, cfg, is_reload)
     router.is_cfg_in_progress = false
     if not ok then
         error(err)
@@ -1689,6 +1693,20 @@ end
 -- the beginning of instance's lifetime.
 --
 local function router_api_call_unsafe(func, router, ...)
+    -- box.info is quite expensive. Avoid calling it again when the instance
+    -- is finally loaded.
+    if not M.is_loaded then
+        if type(box.cfg) == 'function' then
+            local msg = 'box seems not to be configured'
+            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+        end
+        local status = box.info.status
+        if status ~= 'running' then
+            local msg = ('instance status is "%s"'):format(status)
+            return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
+        end
+        M.is_loaded = true
+    end
     if not router.is_configured then
         local msg = 'router is not configured'
         return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
@@ -1726,7 +1744,7 @@ end
 
 local router_mt = {
     __index = {
-        cfg = router_cfg_fiber_safe,
+        cfg = function(router, cfg) return router_cfg_fiber_safe(router, cfg, false) end,
         info = router_make_api(router_info),
         buckets_info = router_make_api(router_buckets_info),
         call = router_make_api(router_call),
@@ -1824,7 +1842,7 @@ local function legacy_cfg(cfg)
         end
     else
         -- Reconfigure
-        router_cfg_fiber_safe(router, cfg)
+        router_cfg_fiber_safe(router, cfg, false)
     end
 end
 
@@ -1853,7 +1871,7 @@ else
         if router.api_call_cache == nil then
             router.api_call_cache = router_api_call_unsafe
         end
-        router_cfg_fiber_safe(router, router.current_cfg)
+        router_cfg_fiber_safe(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
     if M.static_router then

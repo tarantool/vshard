@@ -81,16 +81,16 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rebalancer_util = require('rebalancer_utils')
+util = require('rebalancer_utils')
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 vshard.router.discovery_wakeup()
 ---
 ...
-rebalancer_util.start_loading()
+util.start_loading()
 ---
 ...
 test_run:switch('default')
@@ -165,7 +165,7 @@ test_run:switch('router_1')
 add_replicaset()
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 fiber.sleep(0.5)
@@ -186,10 +186,10 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rebalancer_util.stop_loading()
+util.stop_loading()
 ---
 ...
-rebalancer_util.check_loading_result()
+util.check_loading_result()
 ---
 - true
 ...
@@ -240,7 +240,7 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rebalancer_util.start_loading()
+util.start_loading()
 ---
 ...
 test_run:switch('box_3_a')
@@ -328,7 +328,7 @@ test_run:switch('router_1')
 remove_replicaset_first_stage()
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 fiber.sleep(0.5)
@@ -345,10 +345,10 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rebalancer_util.stop_loading()
+util.stop_loading()
 ---
 ...
-rebalancer_util.check_loading_result()
+util.check_loading_result()
 ---
 - true
 ...
@@ -394,7 +394,7 @@ test_run:switch('router_1')
 ---
 - true
 ...
-rebalancer_util.start_loading()
+util.start_loading()
 ---
 ...
 test_run:switch('box_2_a')
@@ -463,13 +463,13 @@ test_run:switch('router_1')
 remove_replicaset_second_stage()
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
-rebalancer_util.stop_loading()
+util.stop_loading()
 ---
 ...
-rebalancer_util.check_loading_result()
+util.check_loading_result()
 ---
 - true
 ...

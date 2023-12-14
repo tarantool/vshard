@@ -21,7 +21,7 @@ test_run:cmd("start server router_1")
 
 -- Configure default (static) router.
 _ = test_run:cmd("switch router_1")
-util.box_router_cfg(configs.cfg_1)
+vshard.router.cfg(configs.cfg_1)
 vshard.router.bootstrap()
 _ = test_run:cmd("switch storage_1_2_a")
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -34,7 +34,7 @@ vshard.router.call(1, 'read', 'do_select', {1})
 vshard.router.static:route(1) == vshard.router.route(1)
 
 -- Configure extra router.
-router_2 = util.box_router_cfg(configs.cfg_2, 'router_2')
+router_2 = vshard.router.new('router_2', configs.cfg_2)
 router_2:bootstrap()
 _ = test_run:cmd("switch storage_2_2_a")
 wait_rebalancer_state('The cluster is balanced ok', test_run)
@@ -47,7 +47,7 @@ router_2:call(1, 'read', 'do_select', {2})
 
 -- Create several routers to the same cluster.
 routers = {}
-for i = 3, 10 do routers[i] = util.box_router_cfg(configs.cfg_2, 'router_' .. i) end
+for i = 3, 10 do routers[i] = vshard.router.new('router_' .. i, configs.cfg_2) end
 routers[3]:call(1, 'read', 'do_select', {2})
 -- Check that they have their own background fibers.
 fiber_names = {}
@@ -58,15 +58,16 @@ for _, xfiber in pairs(fiber.info()) do fiber_names[xfiber.name] = nil end
 next(fiber_names) == nil
 
 -- Reconfigure one of routers do not affect the others.
-util.box_router_cfg(configs.cfg_1, routers[3])
+routers[3]:cfg(configs.cfg_1)
 routers[3]:call(1, 'read', 'do_select', {1})
 #routers[3]:call(1, 'read', 'do_select', {2}) == 0
 #routers[4]:call(1, 'read', 'do_select', {1}) == 0
 routers[4]:call(1, 'read', 'do_select', {2})
-util.box_router_cfg(configs.cfg_2, routers[3])
+routers[3]:cfg(configs.cfg_2)
 
 -- Try to create router with the same name.
-util.box_router_cfg(configs.cfg_2, 'router_2')
+util = require('util')
+util.check_error(vshard.router.new, 'router_2', configs.cfg_2)
 
 -- Reload router module.
 _, old_rs_1 = next(vshard.router.static.replicasets)

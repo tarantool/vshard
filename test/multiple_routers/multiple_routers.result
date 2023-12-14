@@ -55,7 +55,7 @@ test_run:cmd("start server router_1")
 _ = test_run:cmd("switch router_1")
 ---
 ...
-util.box_router_cfg(configs.cfg_1)
+vshard.router.cfg(configs.cfg_1)
 ---
 ...
 vshard.router.bootstrap()
@@ -85,7 +85,7 @@ vshard.router.static:route(1) == vshard.router.route(1)
 - true
 ...
 -- Configure extra router.
-router_2 = util.box_router_cfg(configs.cfg_2, 'router_2')
+router_2 = vshard.router.new('router_2', configs.cfg_2)
 ---
 ...
 router_2:bootstrap()
@@ -118,7 +118,7 @@ router_2:call(1, 'read', 'do_select', {2})
 routers = {}
 ---
 ...
-for i = 3, 10 do routers[i] = util.box_router_cfg(configs.cfg_2, 'router_' .. i) end
+for i = 3, 10 do routers[i] = vshard.router.new('router_' .. i, configs.cfg_2) end
 ---
 ...
 routers[3]:call(1, 'read', 'do_select', {2})
@@ -147,7 +147,7 @@ next(fiber_names) == nil
 - true
 ...
 -- Reconfigure one of routers do not affect the others.
-util.box_router_cfg(configs.cfg_1, routers[3])
+routers[3]:cfg(configs.cfg_1)
 ---
 ...
 routers[3]:call(1, 'read', 'do_select', {1})
@@ -166,11 +166,14 @@ routers[4]:call(1, 'read', 'do_select', {2})
 ---
 - [[2, 2]]
 ...
-util.box_router_cfg(configs.cfg_2, routers[3])
+routers[3]:cfg(configs.cfg_2)
 ---
 ...
 -- Try to create router with the same name.
-util.box_router_cfg(configs.cfg_2, 'router_2')
+util = require('util')
+---
+...
+util.check_error(vshard.router.new, 'router_2', configs.cfg_2)
 ---
 - null
 - code: 21

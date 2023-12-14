@@ -28,7 +28,7 @@ _ = test_run:switch("router_3")
 cfg.bucket_count = 3000
 ---
 ...
-util.box_router_cfg(cfg)
+vshard.router.cfg(cfg)
 ---
 ...
 vshard.router.bootstrap()
@@ -42,7 +42,7 @@ vshard.router.bootstrap()
 cfg.bucket_count = 1000
 ---
 ...
-r = util.box_router_cfg(cfg, 'gh-179')
+r = vshard.router.new('gh-179', cfg)
 ---
 ...
 while r:info().bucket.available_rw ~= 3000 do                                   \
