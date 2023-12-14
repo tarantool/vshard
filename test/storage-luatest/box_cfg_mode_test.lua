@@ -32,7 +32,7 @@ test_group.before_all(function(g)
 end)
 
 test_group.after_all(function(g)
-    g.cluster:stop()
+    g.cluster:drop()
 end)
 
 test_group.test_storage_disabled_error = function(g)
@@ -52,7 +52,9 @@ end
 -- to executing vshard.storage.cfg. So, just some basic test.
 --
 test_group.test_storage_basic = function(g)
-    t.assert(g.replica_1_a:grep_log('Box configuration was skipped'))
+    -- noreset in order to not depend on reconfiguration in previous tests.
+    t.assert(g.replica_1_a:grep_log('Box configuration was skipped',
+                                    65536, {noreset = true}))
     local bid = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(bid, uuid)
