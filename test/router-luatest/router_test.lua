@@ -650,3 +650,26 @@ g.test_router_service_info = function(g)
     -- Restore everything back.
     vtest.router_cfg(g.router, global_cfg)
 end
+
+g.test_router_box_cfg_mode = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.box_cfg_mode = 'manual'
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+
+    -- Basic test.
+    g.router:exec(function(cfg)
+        -- Unconfigured box doesn't affect router.
+        local box_cfg = box.cfg
+        box.cfg = function() end
+        ivshard.router.cfg(cfg)
+        local opts = {timeout = iwait_timeout}
+        local res, err = ivshard.router.callrw(1, 'echo', {1}, opts)
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, 1)
+        box.cfg = box_cfg
+    end, {new_cluster_cfg})
+    t.assert(g.router:grep_log('Box configuration was skipped'))
+
+    vtest.router_cfg(g.router, global_cfg)
+    t.assert(g.router:grep_log('Calling box.cfg()'))
+end
