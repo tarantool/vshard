@@ -122,8 +122,8 @@ local ROUTER_TEMPLATE = {
 local STATIC_ROUTER_NAME = '_static_router'
 
 -- Set a bucket to a replicaset.
-local function bucket_set(router, bucket_id, rs_uuid)
-    local replicaset = router.replicasets[rs_uuid]
+local function bucket_set(router, bucket_id, rs_id)
+    local replicaset = router.replicasets[rs_id]
     -- It is technically possible to delete a replicaset at the
     -- same time when route to the bucket is discovered.
     if not replicaset then
@@ -173,8 +173,8 @@ local function bucket_discovery(router, bucket_id)
 
     log.verbose("Discovering bucket %d", bucket_id)
     local last_err = nil
-    local unreachable_uuid = nil
-    for uuid, replicaset in pairs(router.replicasets) do
+    local unreachable_id = nil
+    for id, replicaset in pairs(router.replicasets) do
         local _, err =
             replicaset:callrw('vshard.storage.bucket_stat', {bucket_id})
         if err == nil then
@@ -182,7 +182,7 @@ local function bucket_discovery(router, bucket_id)
         elseif err.code ~= lerror.code.WRONG_BUCKET and
                err.code ~= lerror.code.REPLICASET_IN_BACKOFF then
             last_err = err
-            unreachable_uuid = uuid
+            unreachable_id = id
         end
     end
     local err
@@ -190,7 +190,7 @@ local function bucket_discovery(router, bucket_id)
         if last_err.type == 'ClientError' and
            last_err.code == box.error.NO_CONNECTION then
             err = lerror.vshard(lerror.code.UNREACHABLE_REPLICASET,
-                                unreachable_uuid, bucket_id)
+                                unreachable_id, bucket_id)
         else
             err = lerror.make(last_err)
         end
@@ -207,7 +207,7 @@ local function bucket_discovery(router, bucket_id)
     return nil, err
 end
 
--- Resolve bucket id to replicaset uuid
+-- Resolve bucket id to replicaset
 local function bucket_resolve(router, bucket_id)
     local replicaset, err
     replicaset = router.route_map[bucket_id]
@@ -274,10 +274,10 @@ local function discovery_service_f(router, service)
         -- Step 1: create missing iterators, in case this is a
         -- first discovery iteration, or some replicasets were
         -- added after the router is started.
-        for rs_uuid in pairs(router.replicasets) do
-            local iter = iterators[rs_uuid]
+        for rs_id in pairs(router.replicasets) do
+            local iter = iterators[rs_id]
             if not iter then
-                iterators[rs_uuid] = {
+                iterators[rs_id] = {
                     args = {{from = 1}},
                     future = nil,
                 }
@@ -287,11 +287,11 @@ local function discovery_service_f(router, service)
         -- iterator, prune orphan iterators whose replicasets were
         -- removed.
         service:set_activity('sending requests')
-        for rs_uuid, iter in pairs(iterators) do
-            local replicaset = router.replicasets[rs_uuid]
+        for rs_id, iter in pairs(iterators) do
+            local replicaset = router.replicasets[rs_id]
             if not replicaset then
-                log.warn('Replicaset %s was removed during discovery', rs_uuid)
-                iterators[rs_uuid] = nil
+                log.warn('Replicaset %s was removed during discovery', rs_id)
+                iterators[rs_id] = nil
                 goto continue
             end
             local future, err =
@@ -300,7 +300,7 @@ local function discovery_service_f(router, service)
             if not future then
                 log.warn(service:set_status_error(
                         'Error during discovery %s, retry will be done '..
-                        'later: %s', rs_uuid, err))
+                        'later: %s', rs_id, err))
                 goto continue
             end
             iter.future = future
@@ -316,7 +316,7 @@ local function discovery_service_f(router, service)
         -- Step 3: reduce stage - collect responses, restart
         -- iterators which reached the end.
         service:set_activity('collecting responses and updating route map')
-        for rs_uuid, iter in pairs(iterators) do
+        for rs_id, iter in pairs(iterators) do
             lfiber.yield()
             local future = iter.future
             if not future then
@@ -330,13 +330,13 @@ local function discovery_service_f(router, service)
                 future:discard()
                 log.warn(service:set_status_error(
                         'Error during discovery %s, retry will be done '..
-                        'later: %s', rs_uuid, err))
+                        'later: %s', rs_id, err))
                 goto continue
             end
-            local replicaset = router.replicasets[rs_uuid]
+            local replicaset = router.replicasets[rs_id]
             if not replicaset then
-                iterators[rs_uuid] = nil
-                log.warn('Replicaset %s was removed during discovery', rs_uuid)
+                iterators[rs_id] = nil
+                log.warn('Replicaset %s was removed during discovery', rs_id)
                 goto continue
             end
             result = result[1]
@@ -350,7 +350,7 @@ local function discovery_service_f(router, service)
             if not result.next_from then
                 -- Nil next_from means no more buckets to get.
                 -- Restart the iterator.
-                iterators[rs_uuid] = nil
+                iterators[rs_id] = nil
             end
             ::continue::
         end
@@ -787,13 +787,13 @@ end
 --     better not use a value bigger than necessary. A stuck infinite ref can
 --     only be dropped by this router restart/reconnect or the storage restart.
 --
--- @return In case of success - a map with replicaset UUID keys and values being
---     what the function returned from the replicaset.
+-- @return In case of success - a map with replicaset ID (UUID or name) keys and
+--     values being what the function returned from the replicaset.
 --
--- @return In case of an error - nil, error object, optional UUID of the
---     replicaset where the error happened. UUID may be not present if it wasn't
---     about concrete replicaset. For example, not all buckets were found even
---     though all replicasets were scanned.
+-- @return In case of an error - nil, error object, optional UUID or name of the
+--     replicaset where the error happened. UUID or name may be not present if
+--     it wasn't about concrete replicaset. For example, not all buckets were
+--     found even though all replicasets were scanned.
 --
 local function router_map_callrw(router, func, args, opts)
     local replicasets = router.replicasets
@@ -806,7 +806,7 @@ local function router_map_callrw(router, func, args, opts)
         timeout = consts.CALL_TIMEOUT_MIN
     end
     local deadline = fiber_clock() + timeout
-    local err, err_uuid, res, ok, map
+    local err, err_id, res, ok, map
     local futures = {}
     local bucket_count = 0
     local opts_ref = {is_async = true}
@@ -820,38 +820,38 @@ local function router_map_callrw(router, func, args, opts)
     --
     -- Ref stage: send.
     --
-    for uuid, rs in pairs(replicasets) do
+    for id, rs in pairs(replicasets) do
         -- Netbox async requests work only with active connections. Need to wait
         -- for the connection explicitly.
         timeout, err = rs:wait_connected(timeout)
         if timeout == nil then
-            err_uuid = uuid
+            err_id = id
             goto fail
         end
         res, err = rs:callrw('vshard.storage._call',
                               {'storage_ref', rid, timeout}, opts_ref)
         if res == nil then
-            err_uuid = uuid
+            err_id = id
             goto fail
         end
-        futures[uuid] = res
+        futures[id] = res
         rs_count = rs_count + 1
     end
     map = table_new(0, rs_count)
     --
     -- Ref stage: collect.
     --
-    for uuid, future in pairs(futures) do
+    for id, future in pairs(futures) do
         res, err = future_wait(future, timeout)
         -- Handle netbox error first.
         if res == nil then
-            err_uuid = uuid
+            err_id = id
             goto fail
         end
         -- Ref returns nil,err or bucket count.
         res, err = res[1], res[2]
         if res == nil then
-            err_uuid = uuid
+            err_id = id
             goto fail
         end
         bucket_count = bucket_count + res
@@ -872,22 +872,22 @@ local function router_map_callrw(router, func, args, opts)
     -- Map stage: send.
     --
     args = {'storage_map', rid, func, args}
-    for uuid, rs in pairs(replicasets) do
+    for id, rs in pairs(replicasets) do
         res, err = rs:callrw('vshard.storage._call', args, opts_map)
         if res == nil then
-            err_uuid = uuid
+            err_id = id
             goto fail
         end
-        futures[uuid] = res
+        futures[id] = res
     end
     --
     -- Ref stage: collect.
     --
     if do_return_raw then
-        for uuid, f in pairs(futures) do
+        for id, f in pairs(futures) do
             res, err = future_wait(f, timeout)
             if res == nil then
-                err_uuid = uuid
+                err_id = id
                 goto fail
             end
             -- Map returns true,res or nil,err.
@@ -896,32 +896,32 @@ local function router_map_callrw(router, func, args, opts)
             ok = res:decode()
             if ok == nil then
                 err = res:decode()
-                err_uuid = uuid
+                err_id = id
                 goto fail
             end
             if count > 1 then
-                map[uuid] = res:take_array(count - 1)
+                map[id] = res:take_array(count - 1)
             end
             timeout = deadline - fiber_clock()
         end
     else
-        for uuid, f in pairs(futures) do
+        for id, f in pairs(futures) do
             res, err = future_wait(f, timeout)
             if res == nil then
-                err_uuid = uuid
+                err_id = id
                 goto fail
             end
             -- Map returns true,res or nil,err.
             ok, res = res[1], res[2]
             if ok == nil then
                 err = res
-                err_uuid = uuid
+                err_id = id
                 goto fail
             end
             if res ~= nil then
                 -- Store as a table so in future it could be extended for
                 -- multireturn.
-                map[uuid] = {res}
+                map[id] = {res}
             end
             timeout = deadline - fiber_clock()
         end
@@ -929,11 +929,11 @@ local function router_map_callrw(router, func, args, opts)
     do return map end
 
 ::fail::
-    for uuid, f in pairs(futures) do
+    for id, f in pairs(futures) do
         f:discard()
         -- Best effort to remove the created refs before exiting. Can help if
         -- the timeout was big and the error happened early.
-        f = replicasets[uuid]:callrw('vshard.storage._call',
+        f = replicasets[id]:callrw('vshard.storage._call',
                                      {'storage_unref', rid}, opts_ref)
         if f ~= nil then
             -- Don't care waiting for a result - no time for this. But it won't
@@ -942,7 +942,7 @@ local function router_map_callrw(router, func, args, opts)
         end
     end
     err = lerror.make(err)
-    return nil, err, err_uuid
+    return nil, err, err_id
 end
 
 --
@@ -1016,19 +1016,19 @@ local function failover_need_up_priority(replicaset, curr_ts)
 end
 
 --
--- Collect UUIDs of replicasets, priority of whose replica
+-- Collect UUIDs (or names) of replicasets, priority of whose replica
 -- connections must be updated.
 --
 local function failover_collect_to_update(router)
     local ts = fiber_clock()
-    local uuid_to_update = {}
-    for uuid, rs in pairs(router.replicasets) do
+    local id_to_update = {}
+    for id, rs in pairs(router.replicasets) do
         if failover_need_down_priority(rs, ts) or
            failover_need_up_priority(rs, ts) then
-            table.insert(uuid_to_update, uuid)
+            table.insert(id_to_update, id)
         end
     end
-    return uuid_to_update
+    return id_to_update
 end
 
 --
@@ -1039,14 +1039,14 @@ end
 --
 local function failover_step(router)
     failover_ping_round(router)
-    local uuid_to_update = failover_collect_to_update(router)
-    if #uuid_to_update == 0 then
+    local id_to_update = failover_collect_to_update(router)
+    if #id_to_update == 0 then
         return false
     end
     local curr_ts = fiber_clock()
     local replica_is_changed = false
-    for _, uuid in pairs(uuid_to_update) do
-        local rs = router.replicasets[uuid]
+    for _, id in pairs(id_to_update) do
+        local rs = router.replicasets[id]
         if M.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
             rs = nil
             M.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
@@ -1395,7 +1395,7 @@ local function cluster_bootstrap(router, opts)
     lreplicaset.calculate_etalon_balance(router.replicasets,
                                          router.total_bucket_count)
     local bucket_id = 1
-    for uuid, replicaset in pairs(router.replicasets) do
+    for id, replicaset in pairs(router.replicasets) do
         if replicaset.etalon_bucket_count > 0 then
             ok, err =
                 replicaset:callrw('vshard.storage.bucket_force_create',
@@ -1406,7 +1406,7 @@ local function cluster_bootstrap(router, opts)
             end
             local next_bucket_id = bucket_id + replicaset.etalon_bucket_count
             log.info('Buckets from %d to %d are bootstrapped on "%s"',
-                     bucket_id, next_bucket_id - 1, uuid)
+                     bucket_id, next_bucket_id - 1, id)
             bucket_id = next_bucket_id
         end
     end
@@ -1583,7 +1583,7 @@ end
 -- part.
 -- @param offset Offset in a bucket map to select from.
 -- @param limit Maximal bucket count in output.
--- @retval Map of type {bucket_id = 'unknown'/replicaset_uuid}.
+-- @retval Map of type {bucket_id = 'unknown'/replicaset_id}.
 --
 local function router_buckets_info(router, offset, limit)
     if offset ~= nil and type(offset) ~= 'number' or
@@ -1665,14 +1665,14 @@ local function router_sync(router, timeout)
     local arg = {timeout}
     local deadline = timeout and (fiber_clock() + timeout)
     local opts = {timeout = timeout}
-    for rs_uuid, replicaset in pairs(router.replicasets) do
+    for rs_id, replicaset in pairs(router.replicasets) do
         if timeout < 0 then
             return nil, lerror.timeout()
         end
         local status, err = replicaset:callrw('vshard.storage.sync', arg, opts)
         if not status then
             -- Add information about replicaset
-            err.replicaset = rs_uuid
+            err.replicaset = rs_id
             return nil, err
         end
         timeout = deadline - fiber_clock()
