@@ -377,6 +377,7 @@ local feature = {
         local ok, res = pcall(function() return box.info end)
         return ok and res.replicaset ~= nil
     end)(),
+    persistent_names = version_is_at_least(3, 0, 0, 'entrypoint', 0, 0),
 }
 
 local schema_version = function()

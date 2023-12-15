@@ -119,7 +119,7 @@ cfg.sharding['rsid3'] = replicaset3
 ...
 check(cfg)
 ---
-- Duplicate uuid id3
+- Duplicate id id3
 ...
 cfg.sharding['rsid3'] = nil
 ---
@@ -463,9 +463,9 @@ lcfg.check(cfg)['sharding']
     weight: 100000
     replicas:
       replica_uuid:
+        master: true
         uri: 127.0.0.1
         name: storage
-        master: true
 ...
 replica.uri = 'user:password@localhost'
 ---
@@ -476,9 +476,9 @@ lcfg.check(cfg)['sharding']
     weight: 100000
     replicas:
       replica_uuid:
+        master: true
         uri: user:password@localhost
         name: storage
-        master: true
 ...
 replica.url = old_uri
 ---
@@ -660,7 +660,7 @@ replicaset.master = 'auto'
 util.check_error(lcfg.check, cfg)
 ---
 - Can not specify master nodes when master search is enabled, but found master flag
-  in replica uuid uuid
+  in replica id uuid
 ...
 replica.master = false
 ---
@@ -668,5 +668,5 @@ replica.master = false
 util.check_error(lcfg.check, cfg)
 ---
 - Can not specify master nodes when master search is enabled, but found master flag
-  in replica uuid uuid
+  in replica id uuid
 ...
