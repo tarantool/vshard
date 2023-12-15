@@ -310,3 +310,85 @@ g.test_enum = function()
         vcfg.check, config)
     config.schema_management_mode = nil
 end
+
+g.test_enum_identification_mode = function()
+    t.run_only_if(vutil.feature.persistent_names)
+    local config = {
+        sharding = {
+            storage_1_uuid = {
+                replicas = {}
+            },
+        },
+    }
+    -- Test enum identification_mode.
+    for _, v in pairs({'uuid_as_key', 'name_as_key'}) do
+        config.identification_mode = v
+        t.assert(vcfg.check(config))
+    end
+    config.identification_mode = 'bad'
+    t.assert_error_msg_content_equals(
+        "Config identification mode must be enum " ..
+        "{'uuid_as_key', 'name_as_key', nil}",
+        vcfg.check, config)
+    config.identification_mode = nil
+end
+
+g.test_identification_mode_name_as_key = function()
+    t.run_only_if(vutil.feature.persistent_names)
+    local storage_1_a = {
+        uuid = 'storage_1_a_uuid',
+        uri = 'storage:storage@127.0.0.1:3301',
+    }
+    local replicaset_1 = {
+        uuid = 'replicaset_1_uuid',
+        replicas = {
+            storage_1_a = storage_1_a,
+        },
+    }
+    local config = {
+        identification_mode = 'name_as_key',
+        sharding = {
+            replicaset_1 = replicaset_1,
+        },
+    }
+
+    -- UUID is optional.
+    storage_1_a.uuid = nil
+    replicaset_1.uuid = nil
+    t.assert(vcfg.check(config))
+
+    -- replica.name is forbidden.
+    storage_1_a.name = 'name'
+    t.assert_error_msg_content_equals(
+        'replica.name can be specified only when ' ..
+        'identification_mode = "uuid_as_key"', vcfg.check, config)
+end
+
+g.test_identification_mode_uuid_as_key = function()
+    local storage_1_a = {
+        name = 'storage_1_a',
+        uri = 'storage:storage@127.0.0.1:3301',
+    }
+    local replicaset_1 = {
+        replicas = {
+            storage_1_a_uuid = storage_1_a,
+        },
+    }
+    local config = {
+        identification_mode = 'uuid_as_key',
+        sharding = {
+            replicaset_1_uuid = replicaset_1,
+        },
+    }
+    t.assert(vcfg.check(config))
+
+    -- replica.name is optional.
+    storage_1_a.name = nil
+    t.assert(vcfg.check(config))
+
+    -- replicaset/replica.uuid is forbidden.
+    storage_1_a.uuid = 'uuid'
+    t.assert_error_msg_content_equals(
+        'uuid option can be specified only when ' ..
+        'identification_mode = "name_as_key"', vcfg.check, config)
+end

@@ -38,6 +38,20 @@ local function check_replica_master(master, ctx)
     end
 end
 
+local function check_uuid(uuid, ctx)
+    if uuid and not ctx.is_named then
+        error('uuid option can be specified only when ' ..
+              'identification_mode = "name_as_key"')
+    end
+end
+
+local function check_replica_name(name, ctx)
+    if name and ctx.is_named then
+        error('replica.name can be specified only when ' ..
+              'identification_mode = "uuid_as_key"')
+    end
+end
+
 local function is_number(v)
     return type(v) == 'number' and v == v
 end
@@ -198,17 +212,28 @@ local replica_template = {
         is_optional = true,
         is_overriding_box = true,
     },
-    name = {type = 'string', name = "Name", is_optional = true},
+    name = {
+        type = 'string',
+        name = "Name",
+        check = check_replica_name,
+        is_optional = true,
+    },
     zone = {type = {'string', 'number'}, name = "Zone", is_optional = true},
     master = {
         type = 'boolean', name = "Master", is_optional = true,
         check = check_replica_master
     },
     rebalancer = {type = 'boolean', name = 'Rebalancer flag', is_optional = true},
+    uuid = {
+        type = {'non-empty string'},
+        check = check_uuid,
+        name = 'UUID',
+        is_optional = true,
+    },
 }
 
-local function check_replicas(replicas)
-    local ctx = {master = false}
+local function check_replicas(replicas, ctx)
+    ctx.master = false
     for _, replica in pairs(replicas) do
         validate_config(replica, replica_template, ctx)
     end
@@ -226,6 +251,12 @@ local replicaset_template = {
         enum = {'auto'},
     },
     rebalancer = {type = 'boolean', name = 'Rebalancer flag', is_optional = true},
+    uuid = {
+        type = {'non-empty string'},
+        check = check_uuid,
+        name = 'UUID',
+        is_optional = true,
+    },
 }
 
 --
@@ -257,17 +288,28 @@ local function cfg_check_weights(weights)
     end
 end
 
-local function check_sharding(sharding)
-    local uuids = {}
+local function check_sharding(sharding, ctx)
+    local ids = {}
     local uris = {}
     local names = {}
     local is_all_weights_zero = true
-    local rebalancer_uuid
-    for replicaset_uuid, replicaset in pairs(sharding) do
-        if uuids[replicaset_uuid] then
-            error(string.format('Duplicate uuid %s', replicaset_uuid))
+    local rebalancer_id
+    local rs_ids, replica_ids
+    if ctx.is_named then
+        -- It's allowed to have the same names for replicaset and replica.
+        ids.replicasets = {}
+        ids.replicas = {}
+        rs_ids = ids.replicasets
+        replica_ids = ids.replicas
+    else
+        rs_ids = ids
+        replica_ids = ids
+    end
+    for replicaset_id, replicaset in pairs(sharding) do
+        if rs_ids[replicaset_id] then
+            error(string.format('Duplicate id %s', replicaset_id))
         end
-        uuids[replicaset_uuid] = true
+        rs_ids[replicaset_id] = true
         if type(replicaset) ~= 'table' then
             error('Replicaset must be a table')
         end
@@ -276,41 +318,41 @@ local function check_sharding(sharding)
             error('Replicaset weight can not be Inf')
         end
         if replicaset.rebalancer then
-            if rebalancer_uuid then
+            if rebalancer_id then
                 error(('Found 2 rebalancer flags at %s and %s'):format(
-                      rebalancer_uuid, replicaset_uuid))
+                      rebalancer_id, replicaset_id))
             end
-            rebalancer_uuid = replicaset_uuid
+            rebalancer_id = replicaset_id
         end
-        validate_config(replicaset, replicaset_template)
+        validate_config(replicaset, replicaset_template, ctx)
         local no_rebalancer = replicaset.rebalancer == false
         local is_master_auto = replicaset.master == 'auto'
-        for replica_uuid, replica in pairs(replicaset.replicas) do
+        for replica_id, replica in pairs(replicaset.replicas) do
             if uris[replica.uri] then
                 error(string.format('Duplicate uri %s', replica.uri))
             end
             uris[replica.uri] = true
-            if uuids[replica_uuid] then
-                error(string.format('Duplicate uuid %s', replica_uuid))
+            if replica_ids[replica_id] then
+                error(string.format('Duplicate id %s', replica_id))
             end
-            uuids[replica_uuid] = true
+            replica_ids[replica_id] = true
             if is_master_auto and replica.master ~= nil then
                 error(string.format('Can not specify master nodes when '..
                                     'master search is enabled, but found '..
-                                    'master flag in replica uuid %s',
-                                    replica_uuid))
+                                    'master flag in replica id %s',
+                                    replica_id))
             end
             if replica.rebalancer then
-                if rebalancer_uuid then
+                if rebalancer_id then
                     error(('Found 2 rebalancer flags at %s and %s'):format(
-                          rebalancer_uuid, replica_uuid))
+                          rebalancer_id, replica_id))
                 end
                 if no_rebalancer then
                     error(('Replicaset %s can\'t run the rebalancer, and yet '..
                            'it was explicitly assigned to its instance '..
-                           '%s'):format(replicaset_uuid, replica_uuid))
+                           '%s'):format(replicaset_id, replica_id))
                 end
-                rebalancer_uuid = replica_uuid
+                rebalancer_id = replica_id
             end
             -- Log warning in case replica.name duplicate is
             -- found. Message appears once for each unique
@@ -330,6 +372,12 @@ local function check_sharding(sharding)
     end
     if next(sharding) and is_all_weights_zero then
         error('At least one replicaset weight should be > 0')
+    end
+end
+
+local function check_identification_mode(mode)
+    if mode == 'name_as_key' and not lutil.feature.persistent_names then
+        error('Name identification is supported only for Tarantool >= 3.0.0')
     end
 end
 
@@ -415,6 +463,12 @@ local cfg_template = {
         name = 'Schema management mode', type = 'enum',
         is_optional = true, default = 'auto', enum = {'auto', 'manual_access'},
     },
+    identification_mode = {
+        name = 'Config identification mode', type = 'enum',
+        is_optional = true, default = 'uuid_as_key',
+        enum = {'uuid_as_key', 'name_as_key'},
+        check = check_identification_mode,
+    },
 }
 
 --
@@ -466,7 +520,8 @@ local function cfg_check(shard_cfg, old_cfg)
         error('Сonfig must be map of options')
     end
     shard_cfg = table.deepcopy(shard_cfg)
-    validate_config(shard_cfg, cfg_template)
+    local ctx = {is_named = shard_cfg.identification_mode == 'name_as_key'}
+    validate_config(shard_cfg, cfg_template, ctx)
     if not old_cfg then
         return shard_cfg
     end
