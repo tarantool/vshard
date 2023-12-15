@@ -244,3 +244,40 @@ test_group.test_locate_master_when_no_conn_object = function(g)
     t.assert(not is_all_nop)
     t.assert_equals(rs.master, rs.replicas[g.replica_1_a:instance_uuid()])
 end
+
+test_group.test_named_replicaset = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.identification_mode = 'name_as_key'
+    new_cfg_template.sharding['replicaset'] = new_cfg_template.sharding[1]
+    new_cfg_template.sharding[1] = nil
+
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    local replicasets = vreplicaset.buildall(new_global_cfg)
+
+    -- Assert, that no UUID identification in replicaset is used.
+    local rs = replicasets.replicaset
+    local replica_1_a = rs.replicas.replica_1_a
+    t.assert_not_equals(rs, nil)
+    t.assert_not_equals(replica_1_a, nil)
+    t.assert_equals(rs.uuid, nil)
+    t.assert_equals(replica_1_a.uuid, nil)
+    t.assert_equals(rs.name, 'replicaset')
+    t.assert_equals(replica_1_a.name, 'replica_1_a')
+    t.assert_equals(rs.id, rs.name)
+    t.assert_equals(replica_1_a.id, replica_1_a.name)
+
+    -- Just to be sure, that it works.
+    local uuid_a = g.replica_1_a:instance_uuid()
+    local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
+    t.assert_equals(err, nil)
+    t.assert_equals(ret, uuid_a)
+
+    -- Test, that name identification works.
+    vtest.storage_stop(g.replica_1_b)
+    local err_id
+    ret, err, err_id = rs:map_call('get_uuid', {}, small_timeout_opts)
+    t.assert_not_equals(err, nil)
+    t.assert_equals(err_id, g.replica_1_b.alias)
+    t.assert_equals(ret, nil)
+    vtest.storage_start(g.replica_1_b, global_cfg)
+end
