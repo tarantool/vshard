@@ -291,15 +291,15 @@ local function replicaset_wait_connected_all(replicaset, opts)
     local are_all_connected, err
     repeat
         are_all_connected = true
-        for uuid, replica in pairs(replicaset.replicas) do
-            if uuid == except then
+        for replica_id, replica in pairs(replicaset.replicas) do
+            if replica_id == except then
                 goto next_check
             end
             local conn = replicaset_connect_to_replica(replicaset, replica)
             if not conn:is_connected() then
                 timeout, err = netbox_wait_connected(conn, timeout)
                 if not timeout then
-                    return nil, err, uuid
+                    return nil, err, replica_id
                 end
                 -- While was waiting for this connection, another could break.
                 -- Need to re-check all of them.
@@ -689,17 +689,17 @@ end
 -- Parallel call on all instances in the replicaset. Fails if couldn't be done
 -- on at least one instance.
 --
--- @return In case of success - a map with replica UUID keys and values being
---     what the function returned from each replica.
+-- @return In case of success - a map with replica IDs (UUID or name) keys and
+--     values being what the function returned from each replica.
 --
--- @return In case of an error - nil, error object, UUID of the replica where
---     the error happened.
+-- @return In case of an error - nil, error object, UUID or name of the replica
+--     where the error happened.
 --
 local function replicaset_map_call(replicaset, func, args, opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local except = opts.except
     local deadline = fiber_clock() + timeout
-    local _, res, err, err_uuid, map
+    local _, res, err, err_id, map
     local replica_count = 0
     local futures = {}
     local opts_call = {is_async = true, timeout = 0}
@@ -707,7 +707,7 @@ local function replicaset_map_call(replicaset, func, args, opts)
     -- Wait all connections. Sending any request if at least one connection is
     -- completely dead would only produce unnecessary workload.
     --
-    timeout, err, err_uuid = replicaset_wait_connected_all(replicaset, {
+    timeout, err, err_id = replicaset_wait_connected_all(replicaset, {
         timeout = timeout,
         except = except,
     })
@@ -717,16 +717,16 @@ local function replicaset_map_call(replicaset, func, args, opts)
     --
     -- Send requests.
     --
-    for uuid, replica in pairs(replicaset.replicas) do
-        if uuid == except then
+    for replica_id, replica in pairs(replicaset.replicas) do
+        if replica_id == except then
             goto next_call
         end
         _, res, err = replica_call(replica, func, args, opts_call)
         if res == nil then
-            err_uuid = uuid
+            err_id = replica_id
             goto fail
         end
-        futures[uuid] = res
+        futures[replica_id] = res
         replica_count = replica_count + 1
     ::next_call::
     end
@@ -734,13 +734,13 @@ local function replicaset_map_call(replicaset, func, args, opts)
     -- Collect results
     --
     map = table.new(0, replica_count)
-    for uuid, future in pairs(futures) do
+    for replica_id, future in pairs(futures) do
         res, err = future_wait(future, timeout)
         if res == nil then
-            err_uuid = uuid
+            err_id = replica_id
             goto fail
         end
-        map[uuid] = res
+        map[replica_id] = res
         timeout = deadline - fiber_clock()
     end
     do return map end
@@ -749,7 +749,7 @@ local function replicaset_map_call(replicaset, func, args, opts)
     for _, f in pairs(futures) do
         f:discard()
     end
-    return nil, lerror.make(err), err_uuid
+    return nil, lerror.make(err), err_id
 end
 
 --
@@ -773,12 +773,12 @@ end
 -- @param old_replicasets Replicasets and replicas to be outdated.
 --
 local function rebind_replicasets(replicasets, old_replicasets)
-    for replicaset_uuid, replicaset in pairs(replicasets) do
+    for replicaset_id, replicaset in pairs(replicasets) do
         local old_replicaset = old_replicasets and
-                               old_replicasets[replicaset_uuid]
-        for replica_uuid, replica in pairs(replicaset.replicas) do
+                               old_replicasets[replicaset_id]
+        for replica_id, replica in pairs(replicaset.replicas) do
             local old_replica = old_replicaset and
-                                old_replicaset.replicas[replica_uuid]
+                                old_replicaset.replicas[replica_id]
             if old_replica and util.uri_eq(old_replica.uri, replica.uri) then
                 local conn = old_replica.conn
                 replica.conn = conn
@@ -814,37 +814,36 @@ local function rebind_replicasets(replicasets, old_replicasets)
 end
 
 --
--- Let the replicaset know @a old_master_uuid is not a master anymore, should
--- use @a candidate_uuid instead.
+-- Let the replicaset know @a old_master_id is not a master anymore, should
+-- use @a candidate_id instead.
 -- Returns whether the request, which brought this information, can be retried.
 --
-local function replicaset_update_master(replicaset, old_master_uuid,
-                                        candidate_uuid)
+local function replicaset_update_master(replicaset, old_master_id, candidate_id)
     local is_auto = replicaset.is_master_auto
-    local replicaset_uuid = replicaset.uuid
-    if old_master_uuid == candidate_uuid then
+    local replicaset_id = replicaset.uuid
+    if old_master_id == candidate_id then
         -- It should not happen ever, but be ready to everything.
         log.warn('Replica %s in replicaset %s reports self as both master '..
-                 'and not master', old_master_uuid, replicaset_uuid)
+                 'and not master', old_master_id, replicaset_id)
         return is_auto
     end
     local master = replicaset.master
     if not master then
-        if not is_auto or not candidate_uuid then
+        if not is_auto or not candidate_id then
             return is_auto
         end
-        local candidate = replicaset.replicas[candidate_uuid]
+        local candidate = replicaset.replicas[candidate_id]
         if not candidate then
             return true
         end
         replicaset.master = candidate
         log.info('Replica %s becomes a master as reported by %s for '..
-                 'replicaset %s', candidate_uuid, old_master_uuid,
-                 replicaset_uuid)
+                 'replicaset %s', candidate_id, old_master_id,
+                 replicaset_id)
         return true
     end
-    local master_uuid = master.uuid
-    if master_uuid ~= old_master_uuid then
+    local master_id = master.uuid
+    if master_id ~= old_master_id then
         -- Master was changed while the master update information was coming.
         -- It means it is outdated and should be ignored.
         -- Return true regardless of the auto-master config. Because the master
@@ -854,25 +853,25 @@ local function replicaset_update_master(replicaset, old_master_uuid,
     end
     if not is_auto then
         log.warn('Replica %s is not master for replicaset %s anymore, please '..
-                 'update configuration', master_uuid, replicaset_uuid)
+                 'update configuration', master_id, replicaset_id)
         return false
     end
-    if not candidate_uuid then
+    if not candidate_id then
         replicaset.master = nil
         log.warn('Replica %s is not a master anymore for replicaset %s, no '..
-                 'candidate was reported', master_uuid, replicaset_uuid)
+                 'candidate was reported', master_id, replicaset_id)
         return true
     end
-    local candidate = replicaset.replicas[candidate_uuid]
+    local candidate = replicaset.replicas[candidate_id]
     if candidate then
         replicaset.master = candidate
         log.info('Replica %s becomes master instead of %s for replicaset %s',
-                 candidate_uuid, master_uuid, replicaset_uuid)
+                 candidate_id, master_id, replicaset_id)
     else
         replicaset.master = nil
         log.warn('Replica %s is not a master anymore for replicaset %s, new '..
                  'master %s could not be found in the config',
-                 master_uuid, replicaset_uuid, candidate_uuid)
+                 master_id, replicaset_id, candidate_id)
     end
     return true
 end
@@ -922,20 +921,20 @@ local function replicaset_locate_master(replicaset)
     local timeout = const_timeout
     local deadline = fiber_clock() + timeout
     local async_opts = {is_async = true}
-    local replicaset_uuid = replicaset.uuid
-    for replica_uuid, replica in pairs(replicaset.replicas) do
+    local replicaset_id = replicaset.uuid
+    for replica_id, replica in pairs(replicaset.replicas) do
         local conn = replicaset_connect_to_replica(replicaset, replica)
         if conn:is_connected() then
             ok, f = pcall(conn.call, conn, func, args, async_opts)
             if not ok then
                 last_err = lerror.make(f)
             else
-                futures[replica_uuid] = f
+                futures[replica_id] = f
             end
         end
     end
-    local master_uuid
-    for replica_uuid, f in pairs(futures) do
+    local master_id
+    for replica_id, f in pairs(futures) do
         if timeout < 0 then
             -- Netbox uses cond var inside, whose wait throws an error when gets
             -- a negative timeout. Avoid that.
@@ -955,20 +954,20 @@ local function replicaset_locate_master(replicaset)
         if not res.is_master then
             goto next_wait
         end
-        if not master_uuid then
-            master_uuid = replica_uuid
+        if not master_id then
+            master_id = replica_id
             goto next_wait
         end
         is_done = false
         last_err = lerror.vshard(lerror.code.MULTIPLE_MASTERS_FOUND,
-                                 replicaset_uuid, master_uuid, replica_uuid)
+                                 replicaset_id, master_id, replica_id)
         do return is_done, is_nop, last_err end
         ::next_wait::
     end
-    master = replicaset.replicas[master_uuid]
+    master = replicaset.replicas[master_id]
     if master then
-        log.info('Found master for replicaset %s: %s', replicaset_uuid,
-                 master_uuid)
+        log.info('Found master for replicaset %s: %s', replicaset_id,
+                 master_id)
         replicaset.master = master
         replicaset.master_cond:broadcast()
     else
@@ -1205,10 +1204,10 @@ local function buildall(sharding_cfg)
         zone_weights = {}
     end
     local curr_ts = fiber_clock()
-    for replicaset_uuid, replicaset in pairs(sharding_cfg.sharding) do
+    for replicaset_id, replicaset in pairs(sharding_cfg.sharding) do
         local new_replicaset = setmetatable({
             replicas = {},
-            uuid = replicaset_uuid,
+            uuid = replicaset_id,
             weight = replicaset.weight,
             bucket_count = 0,
             lock = replicaset.lock,
@@ -1218,17 +1217,17 @@ local function buildall(sharding_cfg)
             master_wait_count = 0,
         }, replicaset_mt)
         local priority_list = {}
-        for replica_uuid, replica in pairs(replicaset.replicas) do
+        for replica_id, replica in pairs(replicaset.replicas) do
             -- The old replica is saved in the new object to
             -- rebind its connection at the end of a
             -- router/storage reconfiguration.
             local new_replica = setmetatable({
-                uri = replica.uri, name = replica.name, uuid = replica_uuid,
+                uri = replica.uri, name = replica.name, uuid = replica_id,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
             }, replica_mt)
-            new_replicaset.replicas[replica_uuid] = new_replica
+            new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
                 new_replicaset.master = new_replica
             end
@@ -1267,7 +1266,7 @@ local function buildall(sharding_cfg)
             priority_list[i].next_by_priority = priority_list[i + 1]
         end
         new_replicaset.priority_list = priority_list
-        new_replicasets[replicaset_uuid] = new_replicaset
+        new_replicasets[replicaset_id] = new_replicaset
     end
     return new_replicasets
 end
