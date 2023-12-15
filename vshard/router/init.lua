@@ -1605,11 +1605,14 @@ local function router_buckets_info(router, offset, limit)
         local rs = router.route_map[bucket_id]
         if rs then
             if rs.master and rs.master:is_connected() then
-                ret[bucket_id] = {uuid = rs.uuid, status = available_rw}
+                ret[bucket_id] = {uuid = rs.uuid, name = rs.name,
+                                  status = available_rw}
             elseif rs.replica and rs.replica:is_connected() then
-                ret[bucket_id] = {uuid = rs.uuid, status = available_ro}
+                ret[bucket_id] = {uuid = rs.uuid, name = rs.name,
+                                  status = available_ro}
             else
-                ret[bucket_id] = {uuid = rs.uuid, status = unreachable}
+                ret[bucket_id] = {uuid = rs.uuid, name = rs.name,
+                                  status = unreachable}
             end
         else
             ret[bucket_id] = {status = unknown}

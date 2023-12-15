@@ -393,10 +393,10 @@ _ = vshard.router.bucket_discovery(3)
 vshard.router.buckets_info(0, 3)
 ---
 - - status: unknown
-  - uuid: <replicaset_2>
-    status: available_rw
-  - uuid: <replicaset_2>
-    status: available_rw
+  - status: available_rw
+    uuid: <replicaset_2>
+  - status: available_rw
+    uuid: <replicaset_2>
 ...
 _ = test_run:cmd('stop server storage_2_a')
 ---
@@ -422,10 +422,10 @@ util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 vshard.router.buckets_info(0, 3)
 ---
 - - status: unknown
-  - uuid: <replicaset_2>
-    status: available_ro
-  - uuid: <replicaset_2>
-    status: available_ro
+  - status: available_ro
+    uuid: <replicaset_2>
+  - status: available_ro
+    uuid: <replicaset_2>
 ...
 _ = test_run:cmd('start server storage_2_a')
 ---
@@ -1164,46 +1164,46 @@ buckets_info = vshard.router.buckets_info()
 ...
 buckets_info[1]
 ---
-- uuid: <replicaset_2>
-  status: available_rw
+- status: available_rw
+  uuid: <replicaset_2>
 ...
 buckets_info[1501]
 ---
-- uuid: <replicaset_1>
-  status: available_rw
+- status: available_rw
+  uuid: <replicaset_1>
 ...
 vshard.router.buckets_info(0, 3)
 ---
-- - uuid: <replicaset_2>
-    status: available_rw
-  - uuid: <replicaset_2>
-    status: available_rw
-  - uuid: <replicaset_2>
-    status: available_rw
+- - status: available_rw
+    uuid: <replicaset_2>
+  - status: available_rw
+    uuid: <replicaset_2>
+  - status: available_rw
+    uuid: <replicaset_2>
 ...
 vshard.router.buckets_info(1500, 3)
 ---
 - 1502:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
   1503:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
   1501:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
 ...
 vshard.router.buckets_info(vshard.consts.DEFAULT_BUCKET_COUNT - 3)
 ---
 - 3000:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
   2998:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
   2999:
-    uuid: <replicaset_1>
     status: available_rw
+    uuid: <replicaset_1>
 ...
 util.check_error(vshard.router.buckets_info, '123')
 ---
