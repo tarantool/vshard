@@ -156,6 +156,13 @@ local function wal_sync()
     local_meta:replace{'wal_sync'}
 end
 
+local function box_vstorage_id(cfg)
+    if cfg.identification_mode == 'name_as_key' then
+        return box.info.name
+    end
+    return box.info.uuid
+end
+
 _G.box_error = box_error
 _G.echo = echo
 _G.get_uuid = get_uuid
@@ -170,5 +177,6 @@ _G.bucket_recovery_wait = bucket_recovery_wait
 _G.bucket_recovery_pause = bucket_recovery_pause
 _G.bucket_recovery_continue = bucket_recovery_continue
 _G.wal_sync = wal_sync
+_G.box_vstorage_id = box_vstorage_id
 
 _G.ready = true
