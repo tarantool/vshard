@@ -1,8 +1,8 @@
 local t = require('luatest')
 local luuid = require('uuid')
 local server = require('test.luatest_helpers.server')
-local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local verror = require('vshard.error')
 local net = require('net.box')
 
 local test_group = t.group('util')
@@ -252,11 +252,11 @@ test_group.test_future_wait_timeout = function(g)
 
     -- Default timeout error
     local _, err = vutil.future_wait(f, 1e-6)
-    t.assert_equals(vtest.error_is_timeout(err), true)
+    t.assert_equals(verror.is_timeout(err), true)
 
     -- Negative timeout should return timeout error too
     _, err = vutil.future_wait(f, -1)
-    t.assert_equals(vtest.error_is_timeout(err), true)
+    t.assert_equals(verror.is_timeout(err), true)
 
     stop_sleep()
     -- Everything is all right, wait for result

@@ -317,6 +317,17 @@ local function make_timeout()
     return make_error(box.error.new(box.error.TIMEOUT))
 end
 
+--
+-- Timeout error can be a ClientError with ER_TIMEOUT code or a TimedOut error
+-- which is ER_SYSTEM. They also have different messages. Same public APIs can
+-- return both errors depending on core version and/or error cause. This func
+-- helps not to care.
+--
+local function error_is_timeout(err)
+    return err.code == box.error.TIMEOUT or (err.code == box.error.PROC_LUA and
+           err.message == 'Timeout exceeded') or err.type == 'TimedOut'
+end
+
 return {
     code = error_code,
     box = box_error,
@@ -325,4 +336,5 @@ return {
     from_string = from_string,
     alert = make_alert,
     timeout = make_timeout,
+    is_timeout = error_is_timeout,
 }

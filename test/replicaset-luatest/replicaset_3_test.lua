@@ -2,6 +2,7 @@ local fiber = require('fiber')
 local t = require('luatest')
 local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
+local verror = require('vshard.error')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -176,7 +177,7 @@ test_group.test_map_call = function(g)
     end, {uuid_c})
     res, err = rs:map_call('test_sleep_c', {}, small_timeout_opts)
     t.assert_not_equals(err, nil)
-    t.assert(vtest.error_is_timeout(err))
+    t.assert(verror.is_timeout(err))
     t.assert_equals(res, nil)
     res = vtest.cluster_exec_each(g, function()
         _G.test_sleep_do = false
