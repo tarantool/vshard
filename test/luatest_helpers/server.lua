@@ -206,6 +206,26 @@ function Server:replicaset_uuid()
     return uuid
 end
 
+-- Return instance name. Only for Tarantool >= 3.0.0.
+function Server:instance_name()
+    if self.instance_name_value then
+        return self.instance_name_value
+    end
+    local instance_name = self:exec(function() return box.info.name end)
+    self.instance_name_value = instance_name
+    return instance_name
+end
+
+-- Return replicaset name. Only for Tarantool >= 3.0.0.
+function Server:replicaset_name()
+    if self.replicaset_name_value then
+        return self.replicaset_name_value
+    end
+    local rs_name = self:exec(function() return box.info.replicaset.name end)
+    self.replicaset_name_value = rs_name
+    return rs_name
+end
+
 function Server:election_term()
     return self:exec(function() return box.info.election.term end)
 end
@@ -245,6 +265,8 @@ function Server:cleanup()
     self.instance_id_value = nil
     self.instance_uuid_value = nil
     self.replicaset_uuid_value = nil
+    self.instance_name_value = nil
+    self.replicaset_name_value = nil
 end
 
 function Server:drop()

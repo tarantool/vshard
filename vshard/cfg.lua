@@ -481,8 +481,29 @@ local function cfg_check(shard_cfg, old_cfg)
     return shard_cfg
 end
 
+--
+-- Extract uuid and name from the replicaset/replica config. If is_named = true,
+-- then identification_mode is 'name_as_key', new type of config is used:
+-- names becomes identifiers instead of UUIDs, replica/replicaset.name
+-- is not specified, UUIDs are specified as replica/replicaset.uuid.
+--
+local function cfg_extract_identifiers(cfg_key, cfg_value, is_named)
+    local uuid, name
+    if is_named then
+        uuid = cfg_value.uuid
+        name = cfg_key
+        assert(cfg_value.name == nil)
+    else
+        uuid = cfg_key
+        name = cfg_value.name
+        assert(cfg_value.uuid == nil)
+    end
+    return uuid, name
+end
+
 return {
     check = cfg_check,
     extract_vshard = cfg_extract_vshard,
     extract_box = cfg_extract_box,
+    extract_identifiers = cfg_extract_identifiers,
 }
