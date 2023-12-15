@@ -814,12 +814,12 @@ local function check_is_master()
     if this_is_master() then
         return true, nil
     end
-    local master_uuid = M.this_replicaset.master
-    if master_uuid then
-        master_uuid = master_uuid.uuid
+    local master_id = M.this_replicaset.master
+    if master_id then
+        master_id = master_id.uuid
     end
     return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.uuid,
-                              M.this_replicaset.uuid, master_uuid)
+                              M.this_replicaset.uuid, master_id)
 end
 
 local function on_master_disable(new_func, old_func)
@@ -944,15 +944,15 @@ local function recovery_step_by_type(type)
             goto continue
         end
         assert(bucket_is_transfer_in_progress(bucket))
-        local peer_uuid = bucket.destination
-        local destination = M.replicasets[peer_uuid]
+        local peer_id = bucket.destination
+        local destination = M.replicasets[peer_id]
         if not destination then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
             if is_step_empty then
                 log.info(start_format, type)
                 log.warn('Can not find for bucket %s its peer %s', bucket_id,
-                         peer_uuid)
+                         peer_id)
                 is_step_empty = false
             end
             goto continue
@@ -971,7 +971,7 @@ local function recovery_step_by_type(type)
                 end
                 log.info(start_format, type)
                 log.error('Error during recovery of bucket %s on replicaset '..
-                          '%s: %s', bucket_id, peer_uuid, err)
+                          '%s: %s', bucket_id, peer_id, err)
                 is_step_empty = false
             end
             goto continue
@@ -1002,7 +1002,7 @@ local function recovery_step_by_type(type)
             recovered = recovered + 1
         elseif is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
-                     bucket_id, bucket.status, remote_bucket.status, peer_uuid)
+                     bucket_id, bucket.status, remote_bucket.status, peer_id)
         end
         is_step_empty = false
 ::continue::
@@ -1448,7 +1448,7 @@ end
 -- Receive bucket data. If the bucket is not presented here, it is
 -- created as RECEIVING.
 -- @param bucket_id Bucket to receive.
--- @param from Source UUID.
+-- @param from Source ID (UUID or name).
 -- @param data Bucket data in the format:
 --        [{space_name, [space_tuples]}, ...].
 -- @param opts Options. Now the only possible option is 'is_last'.
@@ -1761,7 +1761,7 @@ end
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
-    local uuid = util.replicaset_uuid()
+    local id = util.replicaset_uuid()
     local status, ok
     local ref, err = bucket_refrw_touch(bucket_id)
     if not ref then
@@ -1797,8 +1797,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     if replicaset == nil then
         return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
     end
-    if destination == uuid then
-        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, uuid)
+    if destination == id then
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, id)
     end
     local data = {}
     local spaces = lschema.find_sharded_spaces()
@@ -1839,7 +1839,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
                 table.insert(data, {space.name, space_data})
                 status, err = master_call(
                     replicaset, 'vshard.storage.bucket_recv',
-                    {bucket_id, uuid, data}, opts)
+                    {bucket_id, id, data}, opts)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
@@ -1853,7 +1853,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         table.insert(data, {space.name, space_data})
     end
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, uuid, data}, opts)
+                              {bucket_id, id, data}, opts)
     if not status then
         return status, lerror.make(err)
     end
@@ -1883,7 +1883,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     -- to active on the source, and then the message arrives and
     -- the same bucket is activated on the destination.
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, uuid, {}, {is_last = true}}, opts)
+                              {bucket_id, id, {}, {is_last = true}}, opts)
     if not status then
         return status, lerror.make(err)
     end
@@ -2363,67 +2363,67 @@ end
 -- * maximal disbalance over all replicasets;
 -- * needed buckets for each replicaset.
 -- @param replicasets Map of type: {
---     uuid = {bucket_count = number, weight = number},
+--     <uuid or name> = {bucket_count = number, weight = number},
 --     ...
 -- }
 --
--- @retval Maximal disbalance over all replicasets, and UUID of
+-- @retval Maximal disbalance over all replicasets, and UUID or name of
 --        a replicaset having it.
 --
 local function rebalancer_calculate_metrics(replicasets)
     local max_disbalance = 0
-    local max_disbalance_uuid
-    for uuid, replicaset in pairs(replicasets) do
+    local max_disbalance_id
+    for replicaset_id, replicaset in pairs(replicasets) do
         local needed = replicaset.etalon_bucket_count - replicaset.bucket_count
         if replicaset.etalon_bucket_count ~= 0 then
             local disbalance =
                 math.abs(needed) / replicaset.etalon_bucket_count * 100
             if disbalance > max_disbalance then
                 max_disbalance = disbalance
-                max_disbalance_uuid = uuid
+                max_disbalance_id = replicaset_id
             end
         elseif replicaset.bucket_count ~= 0 then
             max_disbalance = math.huge
-            max_disbalance_uuid = uuid
+            max_disbalance_id = replicaset_id
         end
         assert(needed >= 0 or -needed <= replicaset.bucket_count)
         replicaset.needed = needed
     end
-    return max_disbalance, max_disbalance_uuid
+    return max_disbalance, max_disbalance_id
 end
 
 --
--- Move @a needed bucket count from a pool to @a dst_uuid and
+-- Move @a needed bucket count from a pool to @a dst_id and
 -- remember the route in @a bucket_routes table.
 --
 local function rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
-                                                 dst_uuid, needed)
+                                                 dst_id, needed)
     local to_remove_from_pool = {}
-    for src_uuid, bucket_count in pairs(bucket_pool) do
+    for src_id, bucket_count in pairs(bucket_pool) do
         local count = math.min(bucket_count, needed)
-        local src = bucket_routes[src_uuid]
+        local src = bucket_routes[src_id]
         if src == nil then
-            bucket_routes[src_uuid] = {[dst_uuid] = count}
+            bucket_routes[src_id] = {[dst_id] = count}
         else
-            local dst = src[dst_uuid]
+            local dst = src[dst_id]
             if dst == nil then
-                src[dst_uuid] = count
+                src[dst_id] = count
             else
-                src[dst_uuid] = dst + count
+                src[dst_id] = dst + count
             end
         end
-        local new_count = bucket_pool[src_uuid] - count
+        local new_count = bucket_pool[src_id] - count
         needed = needed - count
-        bucket_pool[src_uuid] = new_count
+        bucket_pool[src_id] = new_count
         if new_count == 0 then
-            table.insert(to_remove_from_pool, src_uuid)
+            table.insert(to_remove_from_pool, src_id)
         end
         if needed == 0 then
             break
         end
     end
-    for _, src_uuid in pairs(to_remove_from_pool) do
-        bucket_pool[src_uuid] = nil
+    for _, src_id in pairs(to_remove_from_pool) do
+        bucket_pool[src_id] = nil
     end
 end
 
@@ -2432,16 +2432,16 @@ end
 -- how many buckets should be moved to reach the best balance in
 -- a cluster.
 -- @param replicasets Map of type: {
---     uuid = {bucket_count = number, weight = number,
---             needed = number},
+--     id = {bucket_count = number, weight = number,
+--           needed = number},
 --     ...
 -- }      This parameter is a result of
 --        rebalancer_calculate_metrics().
 --
 -- @retval Bucket routes. It is a map of type: {
---     src_uuid = {
---         dst_uuid = number, -- Bucket count to move from
---                               src to dst.
+--     src_id = {
+--         dst_id = number, -- Bucket count to move from
+--                             src to dst.
 --         ...
 --     },
 --     ...
@@ -2449,20 +2449,20 @@ end
 --
 local function rebalancer_build_routes(replicasets)
     -- Map of type: {
-    --     uuid = number, -- free buckets of uuid.
+    --     id = number, -- free buckets of id.
     -- }
     local bucket_pool = {}
-    for uuid, replicaset in pairs(replicasets) do
+    for replicaset_id, replicaset in pairs(replicasets) do
         if replicaset.needed < 0 then
-            bucket_pool[uuid] = -replicaset.needed
+            bucket_pool[replicaset_id] = -replicaset.needed
             replicaset.needed = 0
         end
     end
     local bucket_routes = {}
-    for uuid, replicaset in pairs(replicasets) do
+    for replicaset_id, replicaset in pairs(replicasets) do
         if replicaset.needed > 0 then
-            rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes, uuid,
-                                              replicaset.needed)
+            rebalancer_take_buckets_from_pool(bucket_pool, bucket_routes,
+                                              replicaset_id, replicaset.needed)
         end
     end
     return bucket_routes
@@ -2478,10 +2478,10 @@ end
 local function route_dispenser_create(routes)
     local rlist = rlist.new()
     local map = {}
-    for uuid, bucket_count in pairs(routes) do
+    for id, bucket_count in pairs(routes) do
         local new = {
             -- Receiver's UUID.
-            uuid = uuid,
+            uuid = id,
             -- Rest of buckets to send. The receiver will be
             -- dispensed this number of times.
             bucket_count = bucket_count,
@@ -2506,14 +2506,14 @@ local function route_dispenser_create(routes)
         -- 2) After all buckets are sent, and the queue is empty,
         --    the main applier fiber does some analysis on the
         --    destinations.
-        map[uuid] = new
+        map[id] = new
         rlist:add_tail(new)
     end
     return {
         rlist = rlist,
         map = map,
         -- Error, which occurred in `bucket_send` and led to
-        -- skipping of the above-mentioned uuid from dispenser.
+        -- skipping of the above-mentioned id from dispenser.
         error = nil,
     }
 end
@@ -2523,8 +2523,8 @@ end
 -- receives a throttle error. This is the only error that can be
 -- tolerated.
 --
-local function route_dispenser_put(dispenser, uuid)
-    local dst = dispenser.map[uuid]
+local function route_dispenser_put(dispenser, id)
+    local dst = dispenser.map[id]
     if dst then
         local bucket_count = dst.bucket_count + 1
         dst.bucket_count = bucket_count
@@ -2541,21 +2541,21 @@ end
 -- If it was a box error like index key conflict, then it is even
 -- worse and the cluster is broken.
 --
-local function route_dispenser_skip(dispenser, uuid)
+local function route_dispenser_skip(dispenser, id)
     local map = dispenser.map
-    local dst = map[uuid]
+    local dst = map[id]
     if dst then
-        map[uuid] = nil
+        map[id] = nil
         dispenser.rlist:remove(dst)
     end
 end
 
 --
--- Set that the receiver @a uuid was throttled. When it happens
+-- Set that the receiver @a id was throttled. When it happens
 -- first time it is logged.
 --
-local function route_dispenser_throttle(dispenser, uuid)
-    local dst = dispenser.map[uuid]
+local function route_dispenser_throttle(dispenser, id)
+    local dst = dispenser.map[id]
     if dst then
         local old_value = dst.is_throttle_warned
         dst.is_throttle_warned = true
@@ -2566,11 +2566,11 @@ end
 
 --
 -- Notify the dispenser that a bucket was successfully sent to
--- @a uuid. It has no any functional purpose except tracking
+-- @a id. It has no any functional purpose except tracking
 -- progress.
 --
-local function route_dispenser_sent(dispenser, uuid)
-    local dst = dispenser.map[uuid]
+local function route_dispenser_sent(dispenser, id)
+    local dst = dispenser.map[id]
     if dst then
         local new_progress = dst.progress + 1
         dst.progress = new_progress
@@ -2610,10 +2610,10 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     local active_key = {consts.BUCKET.ACTIVE}
-    local uuid = route_dispenser_pop(dispenser)
+    local id = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
     local bucket_id, is_found
-    while uuid do
+    while id do
         is_found = false
         -- Can't just take a first active bucket. It may be
         -- already locked by a manual bucket_send in another
@@ -2629,29 +2629,29 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.error('Can not find active buckets')
             break
         end
-        local ret, err = bucket_send(bucket_id, uuid, opts)
+        local ret, err = bucket_send(bucket_id, id, opts)
         if ret then
             worker_throttle_count = 0
-            local finished, total = route_dispenser_sent(dispenser, uuid)
+            local finished, total = route_dispenser_sent(dispenser, id)
             if finished then
-                log.info('%d buckets were successfully sent to %s', total, uuid)
+                log.info('%d buckets were successfully sent to %s', total, id)
             end
             goto continue
         end
-        route_dispenser_put(dispenser, uuid)
+        route_dispenser_put(dispenser, id)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
-                      'error %s', uuid, err)
-            log.info('Can not finish transfers to %s, skip to next round', uuid)
+                      'error %s', id, err)
+            log.info('Can not finish transfers to %s, skip to next round', id)
             worker_throttle_count = 0
             dispenser.error = dispenser.error or err
-            route_dispenser_skip(dispenser, uuid)
+            route_dispenser_skip(dispenser, id)
             goto continue
         end
         worker_throttle_count = worker_throttle_count + 1
-        if route_dispenser_throttle(dispenser, uuid) then
-            log.error('Too many buckets is being sent to %s', uuid)
+        if route_dispenser_throttle(dispenser, id) then
+            log.error('Too many buckets is being sent to %s', id)
         end
         if worker_throttle_count < dispenser.rlist.count then
             goto continue
@@ -2664,7 +2664,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        uuid = route_dispenser_pop(dispenser)
+        id = route_dispenser_pop(dispenser)
     end
     quit_cond:broadcast()
 end
@@ -2713,9 +2713,9 @@ local function rebalancer_service_apply_routes_f(service, routes)
             "Couldn't apply some rebalancer routes: %s", dispenser.error))
     end
     local throttled = {}
-    for uuid, dst in pairs(dispenser.map) do
+    for id, dst in pairs(dispenser.map) do
         if dst.is_throttle_warned then
-            table.insert(throttled, uuid)
+            table.insert(throttled, id)
         end
     end
     if next(throttled) then
@@ -2745,7 +2745,7 @@ end
 
 --
 -- Apply routes table of type: {
---     dst_uuid = number, -- Bucket count to send.
+--     dst_id = number, -- Bucket count to send.
 --     ...
 -- }. Is used by a rebalancer.
 --
@@ -2775,7 +2775,7 @@ local function rebalancer_download_states()
     local replicasets = {}
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
-    for uuid, replicaset in pairs(M.replicasets) do
+    for id, replicaset in pairs(M.replicasets) do
         local state = master_call(
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
@@ -2788,9 +2788,9 @@ local function rebalancer_download_states()
             total_bucket_locked_count = total_bucket_locked_count + bucket_count
         else
             total_bucket_active_count = total_bucket_active_count + bucket_count
-            replicasets[uuid] = {bucket_count = bucket_count,
-                                 weight = replicaset.weight,
-                                 pinned_count = state.bucket_pinned_count}
+            replicasets[id] = {bucket_count = bucket_count,
+                               weight = replicaset.weight,
+                               pinned_count = state.bucket_pinned_count}
         end
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
@@ -2805,7 +2805,7 @@ end
 
 --
 -- Background rebalancer. Works on a storage which has the
--- smallest replicaset uuid and which is master.
+-- smallest replicaset id and which is master.
 --
 local function rebalancer_service_f(service)
     local module_version = M.module_version
@@ -2838,18 +2838,18 @@ local function rebalancer_service_f(service)
         end
         lreplicaset.calculate_etalon_balance(replicasets,
                                              total_bucket_active_count)
-        local max_disbalance, max_disbalance_uuid =
+        local max_disbalance, max_disbalance_id =
             rebalancer_calculate_metrics(replicasets)
         local threshold = M.rebalancer_disbalance_threshold
         if max_disbalance <= threshold then
             local balance_msg
             if max_disbalance > 0 then
-                local rep = replicasets[max_disbalance_uuid]
+                local rep = replicasets[max_disbalance_id]
                 balance_msg = string.format(
                     'The cluster is balanced ok with max disbalance %f%% at '..
                     '"%s": etalon bucket count is %d, stored count is %d. '..
                     'The disbalance is smaller than your threshold %f%%, '..
-                    'nothing to do.', max_disbalance, max_disbalance_uuid,
+                    'nothing to do.', max_disbalance, max_disbalance_id,
                     rep.etalon_bucket_count, rep.bucket_count, threshold)
             else
                 balance_msg = 'The cluster is balanced ok.'
@@ -2867,9 +2867,9 @@ local function rebalancer_service_f(service)
         -- then max_disbalance would have been calculated
         -- incorrectly.
         assert(next(routes) ~= nil)
-        for src_uuid, src_routes in pairs(routes) do
+        for src_id, src_routes in pairs(routes) do
             service:set_activity('applying routes')
-            local rs = M.replicasets[src_uuid]
+            local rs = M.replicasets[src_id]
             lfiber.testcancel()
             local status, err = master_call(
                 rs, 'vshard.storage.rebalancer_apply_routes', {src_routes},
@@ -2958,62 +2958,63 @@ local function rebalancer_enable()
 end
 
 --
--- Find UUID of the instance which should run the rebalancer service.
+-- Find ID (UUID or name) of the instance which should run the
+-- rebalancer service.
 --
 local function rebalancer_cfg_find_instance(cfg)
     assert(cfg.rebalancer_mode ~= 'off')
-    local target_uuid
+    local target_id
     local is_assigned
     local is_auto = cfg.rebalancer_mode == 'auto'
     for _, rs in pairs(cfg.sharding) do
         if rs.rebalancer == false then
             goto next_rs
         end
-        for replica_uuid, replica in pairs(rs.replicas) do
+        for replica_id, replica in pairs(rs.replicas) do
             local is_rebalancer = rs.rebalancer or replica.rebalancer
             local no_rebalancer = replica.rebalancer == false
             if is_rebalancer and not is_assigned then
                 is_assigned = true
-                target_uuid = nil
+                target_id = nil
             end
             local ok = true
             ok = ok and not no_rebalancer
             ok = ok and ((is_auto and replica.master) or replica.rebalancer)
-            ok = ok and (not target_uuid or replica_uuid < target_uuid)
+            ok = ok and (not target_id or replica_id < target_id)
             ok = ok and (not is_assigned or is_rebalancer)
             if ok then
-                target_uuid = replica_uuid
+                target_id = replica_id
             end
         end
     ::next_rs::
     end
-    return target_uuid
+    return target_id
 end
 
 local function rebalancer_cfg_find_replicaset(cfg)
     assert(cfg.rebalancer_mode ~= 'off')
-    local target_uuid
+    local target_id
     local is_assigned
     local is_auto = cfg.rebalancer_mode == 'auto'
-    for rs_uuid, rs in pairs(cfg.sharding) do
+    for rs_id, rs in pairs(cfg.sharding) do
         local is_rebalancer = rs.rebalancer
         local no_rebalancer = rs.rebalancer == false
         if is_rebalancer and not is_assigned then
             is_assigned = true
-            target_uuid = nil
+            target_id = nil
         end
         local ok = true
         ok = ok and not no_rebalancer
         ok = ok and (rs.master == 'auto')
         ok = ok and (is_auto or is_rebalancer)
-        ok = ok and (not target_uuid or rs_uuid < target_uuid)
+        ok = ok and (not target_id or rs_id < target_id)
         ok = ok and (not is_assigned or is_rebalancer)
         if ok then
-            target_uuid = rs_uuid
+            target_id = rs_id
             is_assigned = is_rebalancer
         end
     end
-    return target_uuid
+    return target_id
 end
 
 local function rebalancer_is_needed()
@@ -3024,25 +3025,25 @@ local function rebalancer_is_needed()
     if cfg.rebalancer_mode == 'off' then
         return false
     end
-    local this_replica_uuid = M.this_replica.uuid
-    local this_replicaset_uuid = M.this_replicaset.uuid
+    local this_replica_id = M.this_replica.uuid
+    local this_replicaset_id = M.this_replicaset.uuid
 
-    local this_replicaset_cfg = cfg.sharding[this_replicaset_uuid]
+    local this_replicaset_cfg = cfg.sharding[this_replicaset_id]
     if this_replicaset_cfg.rebalancer == false then
         return false
     end
-    local this_replica_cfg = this_replicaset_cfg.replicas[this_replica_uuid]
+    local this_replica_cfg = this_replicaset_cfg.replicas[this_replica_id]
     if this_replica_cfg.rebalancer == false then
         return false
     end
 
-    local uuid = rebalancer_cfg_find_instance(cfg)
-    if uuid then
-        return this_replica_uuid == uuid
+    local id = rebalancer_cfg_find_instance(cfg)
+    if id then
+        return this_replica_id == id
     end
-    uuid = rebalancer_cfg_find_replicaset(cfg)
-    if uuid then
-        return this_replicaset_uuid == uuid and this_is_master()
+    id = rebalancer_cfg_find_replicaset(cfg)
+    if id then
+        return this_replicaset_id == id and this_is_master()
     end
     return false
 end
@@ -3348,12 +3349,12 @@ end
 local function conn_manager_locate_masters(service)
     local is_all_done = true
     local is_done, _, err
-    for rs_uuid, rs in pairs(M.replicasets) do
+    for rs_id, rs in pairs(M.replicasets) do
         if rs.is_master_auto and not rs.master and rs.master_wait_count > 0 then
             is_done, _, err = rs:locate_master()
             if err then
                 log.error(service:set_status_error(
-                    'Error during master discovery for %s: %s', rs_uuid, err))
+                    'Error during master discovery for %s: %s', rs_id, err))
             end
             is_all_done = is_all_done and is_done
         end
@@ -3427,11 +3428,11 @@ end
 -- Configuration
 --------------------------------------------------------------------------------
 
-local function storage_cfg_find_replicaset_uuid_for_instance(cfg, instance_uuid)
-    for rs_uuid, rs in pairs(cfg.sharding) do
-        for replica_uuid, _ in pairs(rs.replicas) do
-            if replica_uuid == instance_uuid then
-                return rs_uuid
+local function storage_cfg_find_replicaset_id_for_instance(cfg, instance_id)
+    for rs_id, rs in pairs(cfg.sharding) do
+        for replica_id, _ in pairs(rs.replicas) do
+            if replica_id == instance_id then
+                return rs_id
             end
         end
     end
@@ -3558,22 +3559,22 @@ local function storage_cfg_context_extend(cfgctx)
     cfgctx.new_cfg = new_cfg
     cfgctx.old_cfg = M.current_cfg
 
-    local replicaset_uuid = storage_cfg_find_replicaset_uuid_for_instance(
+    local replicaset_id = storage_cfg_find_replicaset_id_for_instance(
         new_cfg, instance_uuid)
-    if not replicaset_uuid then
+    if not replicaset_id then
         error(string.format("Local replica %s wasn't found in config",
                             instance_uuid))
     end
-    cfgctx.replicaset_uuid = replicaset_uuid
+    cfgctx.replicaset_uuid = replicaset_id
 
     if cfgctx.old_cfg then
-        local old_rs_cfg = cfgctx.old_cfg.sharding[replicaset_uuid]
+        local old_rs_cfg = cfgctx.old_cfg.sharding[replicaset_id]
         cfgctx.old_replicaset_cfg = old_rs_cfg
         cfgctx.old_instance_cfg = old_rs_cfg.replicas[instance_uuid]
         cfgctx.was_master_in_cfg = cfgctx.old_instance_cfg.master
         cfgctx.was_master_auto = old_rs_cfg.master == 'auto'
     end
-    local new_rs_cfg = new_cfg.sharding[replicaset_uuid]
+    local new_rs_cfg = new_cfg.sharding[replicaset_id]
     cfgctx.new_replicaset_cfg = new_rs_cfg
     cfgctx.new_instance_cfg = new_rs_cfg.replicas[instance_uuid]
     cfgctx.new_box_cfg = lcfg.extract_box(full_cfg, cfgctx.new_instance_cfg)
@@ -3590,13 +3591,13 @@ end
 
 local function storage_cfg_xc(cfgctx)
     storage_cfg_context_extend(cfgctx)
-    local instance_uuid = cfgctx.instance_uuid
-    local replicaset_uuid = cfgctx.replicaset_uuid
+    local instance_id = cfgctx.instance_uuid
+    local replicaset_id = cfgctx.replicaset_uuid
     local new_cfg = cfgctx.new_cfg
     if M.replicasets then
-        log.info("Starting reconfiguration of replica %s", instance_uuid)
+        log.info("Starting reconfiguration of replica %s", instance_id)
     else
-        log.info("Starting configuration of replica %s", instance_uuid)
+        log.info("Starting configuration of replica %s", instance_id)
     end
     if cfgctx.new_cfg.box_cfg_mode == 'manual' then
         if type(box.cfg) == 'function' then
@@ -3635,8 +3636,8 @@ local function storage_cfg_xc(cfgctx)
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
     M.replicasets = new_replicasets
-    M.this_replicaset = new_replicasets[replicaset_uuid]
-    M.this_replica = M.this_replicaset.replicas[instance_uuid]
+    M.this_replicaset = new_replicasets[replicaset_id]
+    M.this_replica = M.this_replicaset.replicas[instance_id]
     M.total_bucket_count = new_cfg.bucket_count
     M.rebalancer_disbalance_threshold = new_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
@@ -3735,10 +3736,10 @@ local function storage_info(opts)
     }
     local code = lerror.code
     local alert = lerror.alert
-    local this_uuid = M.this_replicaset.uuid
+    local this_id = M.this_replicaset.uuid
     local this_master = M.this_replicaset.master
     if this_master == nil and not M.this_replicaset.is_master_auto then
-        table.insert(state.alerts, alert(code.MISSING_MASTER, this_uuid))
+        table.insert(state.alerts, alert(code.MISSING_MASTER, this_id))
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
     if this_master and this_master ~= M.this_replica then
@@ -3750,7 +3751,7 @@ local function storage_info(opts)
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
                 table.insert(state.alerts, alert(code.UNREACHABLE_MASTER,
-                                                 this_uuid,
+                                                 this_id,
                                                  replica.upstream.status))
                 if replica.upstream.idle > consts.REPLICATION_THRESHOLD_FAIL then
                     state.status = math.max(state.status, consts.STATUS.RED)
@@ -3796,7 +3797,7 @@ local function storage_info(opts)
         local available_replicas = replica_count - not_available_replicas
         if replica_count > 0 and available_replicas == 0 then
             table.insert(state.alerts, alert(code.UNREACHABLE_REPLICASET,
-                                             this_uuid))
+                                             this_id))
             state.status = math.max(state.status, consts.STATUS.RED)
         elseif replica_count > 1 and available_replicas == 1 then
             table.insert(state.alerts, alert(code.LOW_REDUNDANCY))
@@ -3827,7 +3828,7 @@ local function storage_info(opts)
     end
 
     local ireplicasets = {}
-    for uuid, replicaset in pairs(M.replicasets) do
+    for id, replicaset in pairs(M.replicasets) do
         local master = replicaset.master
         local master_info
         if replicaset.is_master_auto then
@@ -3842,8 +3843,8 @@ local function storage_info(opts)
                 state = conn and conn.state, error = conn and conn.error,
             }
         end
-        ireplicasets[uuid] = {
-            uuid = uuid,
+        ireplicasets[id] = {
+            uuid = replicaset.uuid,
             master = master_info,
         }
     end
