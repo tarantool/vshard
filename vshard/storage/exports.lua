@@ -151,9 +151,15 @@ local function exports_deploy_funcs(exports)
 end
 
 local function exports_deploy_privs(exports, username)
+    local user = box.space._user.index.name:get(username)
+    if user == nil then
+        llog.error("User or role with name %q does not exists", username)
+        return
+    end
+    assert(user.type == 'role' or user.type == 'user')
+    local grant = box.schema[user.type].grant
     for name, _ in pairs(exports.funcs) do
-        box.schema.user.grant(username, 'execute', 'function', name,
-                              {if_not_exists = true})
+        grant(username, 'execute', 'function', name, {if_not_exists = true})
     end
 end
 
