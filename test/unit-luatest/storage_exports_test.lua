@@ -96,3 +96,42 @@ test_group.test_core_upgrade = function(g)
         ilt.assert(func_tuple.opts.takes_raw_args)
     end)
 end
+
+-- Make sure that privileges can be granted to both the user and the role.
+test_group.test_deploy_privs = function(g)
+    g.server:exec(function()
+        local vexports = require('vshard.storage.exports')
+        local exports = vexports.log[#vexports.log]
+        exports = vexports.compile(exports)
+        vexports.deploy_funcs(exports)
+
+        -- Deploy the privileges for a user.
+        box.schema.user.create('one')
+        local user = box.space._user.index.name:get('one')
+        ilt.assert(user ~= nil)
+        ilt.assert_equals(user.type, 'user')
+        vexports.deploy_privs(exports, 'one')
+        for func_name in pairs(exports.funcs) do
+            local func = box.space._func.index.name:get(func_name)
+            ilt.assert(func ~= nil)
+            local priv = box.space._priv:get({user.id, 'function', func.id})
+            ilt.assert_equals(priv.privilege, box.priv.X)
+        end
+
+        -- Deploy the privileges for a role.
+        box.schema.role.create('two')
+        user = box.space._user.index.name:get('two')
+        ilt.assert(user ~= nil)
+        ilt.assert_equals(user.type, 'role')
+        vexports.deploy_privs(exports, 'two')
+        for func_name in pairs(exports.funcs) do
+            local func = box.space._func.index.name:get(func_name)
+            ilt.assert(func ~= nil)
+            local priv = box.space._priv:get({user.id, 'function', func.id})
+            ilt.assert_equals(priv.privilege, box.priv.X)
+        end
+
+        box.schema.user.drop('one')
+        box.schema.role.drop('two')
+    end)
+end
