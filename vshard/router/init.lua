@@ -1431,6 +1431,7 @@ local function replicaset_instance_info(replicaset, name, alerts, errcolor,
     if replica then
         info.uri = replica:safe_uri()
         info.uuid = replica.uuid
+        info.name = replica.id == replica.name and replica.name or nil
         info.network_timeout = replica.net_timeout
         if replica:is_connected() then
             info.status = 'available'
@@ -1469,17 +1470,20 @@ local function router_info(router, opts)
         -- Replicaset info parameters:
         -- * master instance info;
         -- * replica instance info;
-        -- * replicaset uuid.
+        -- * replicaset uuid;
+        -- * replicaset name (only for named identification).
         --
         -- Instance info parameters:
         -- * uri;
         -- * uuid;
+        -- * name (only for named identification);
         -- * status - available, unreachable, missing;
         -- * network_timeout - timeout for requests, updated on
         --   each 10 success and 2 failed requests. The greater
         --   timeout, the worse network feels itself.
         local rs_info = {
             uuid = replicaset.uuid,
+            name = replicaset.name,
             bucket = {}
         }
         state.replicasets[replicaset.id] = rs_info

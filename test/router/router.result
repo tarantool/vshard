@@ -201,8 +201,8 @@ vshard.router.info()
         uuid: <storage_2_a>
       bucket:
         available_rw: 1
-      uuid: <replicaset_2>
       master: *0
+      uuid: <replicaset_2>
     <replicaset_1>:
       replica: &1
         network_timeout: 0.5
@@ -211,8 +211,8 @@ vshard.router.info()
         uuid: <storage_1_a>
       bucket:
         available_rw: 0
-      uuid: <replicaset_1>
       master: *1
+      uuid: <replicaset_1>
   bucket:
     unreachable: 0
     available_ro: 0
@@ -1053,8 +1053,8 @@ info
         uuid: <storage_2_a>
       bucket:
         available_rw: 1500
-      uuid: <replicaset_2>
       master: *0
+      uuid: <replicaset_2>
     <replicaset_1>:
       replica: &1
         network_timeout: 0.5
@@ -1063,8 +1063,8 @@ info
         uuid: <storage_1_a>
       bucket:
         available_rw: 1500
-      uuid: <replicaset_1>
       master: *1
+      uuid: <replicaset_1>
   bucket:
     unreachable: 0
     available_ro: 0
@@ -1102,8 +1102,8 @@ info.replicasets[rs.uuid]
     uuid: <storage_1_a>
   bucket:
     unreachable: 1500
-  uuid: <replicaset_1>
   master: *0
+  uuid: <replicaset_1>
 ...
 info.status
 ---
@@ -1140,9 +1140,9 @@ info.replicasets[rs.uuid]
     uuid: <storage_1_a>
   bucket:
     available_ro: 1500
-  uuid: <replicaset_1>
   master:
     status: missing
+  uuid: <replicaset_1>
 ...
 info.status
 ---
