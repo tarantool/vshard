@@ -3,10 +3,11 @@
 --
 -- <replicaset> = {
 --     replicas = {
---         [replica_uuid] = {
+--         [replica_id] = {
 --             uri = URI,
 --             name = string,
 --             uuid = string,
+--             id = <name or uuid>,
 --             conn = <netbox> + .replica + .replicaset,
 --             zone = number,
 --             next_by_priority = <replica object of the same type>,
@@ -42,7 +43,9 @@
 --      replica_up_ts = <timestamp updated on each attempt to
 --                       connect to the nearest replica, and on
 --                       each connect event>,
+--      name = <replicaset_name>,
 --      uuid = <replicaset_uuid>,
+--      id = <replicaset_name or replicaset_uuid>,
 --      weight = number,
 --      priority_list = <list of replicas, sorted by weight asc>,
 --      etalon_bucket_count = <bucket count, that must be stored
@@ -52,7 +55,7 @@
 --  }
 --
 -- replicasets = {
---    [replicaset_uuid] = <replicaset>
+--    [replicaset_id] = <replicaset>
 -- }
 --
 
@@ -64,6 +67,7 @@ local fiber = require('fiber')
 local luri = require('uri')
 local luuid = require('uuid')
 local ffi = require('ffi')
+local lcfg = require('vshard.cfg')
 local util = require('vshard.util')
 local fiber_clock = fiber.clock
 local fiber_yield = fiber.yield
@@ -82,7 +86,7 @@ local function netbox_on_connect(conn)
     -- If a replica's connection has revived, then unset
     -- replica.down_ts - it is not down anymore.
     replica.down_ts = nil
-    if conn.peer_uuid ~= replica.uuid and
+    if replica.uuid and conn.peer_uuid ~= replica.uuid and
         -- XXX: Zero UUID means not a real Tarantool instance. It
         -- is likely to be a cartridge.remote-control server,
         -- which is started before the actual storage. Let it
@@ -197,7 +201,7 @@ local function replica_check_backoff(replica, now)
     if replica.backoff_ts + consts.REPLICA_BACKOFF_INTERVAL > now then
         return false
     end
-    log.warn('Replica %s returns from backoff', replica.uuid)
+    log.warn('Replica %s returns from backoff', replica.id)
     replica.backoff_ts = nil
     replica.backoff_err = nil
     return true
@@ -247,7 +251,7 @@ local function replicaset_wait_master(replicaset, timeout)
         if not replicaset.is_master_auto or
            not fiber_cond_wait(replicaset.master_cond, timeout) then
             timeout = lerror.vshard(lerror.code.MISSING_MASTER,
-                                    replicaset.uuid)
+                                    replicaset.id)
             break
         end
         timeout = deadline - fiber_clock()
@@ -264,7 +268,7 @@ local function replicaset_connect_master(replicaset)
     local master = replicaset.master
     if master == nil then
         return nil, lerror.vshard(lerror.code.MISSING_MASTER,
-                                  replicaset.uuid)
+                                  replicaset.id)
     end
     return replicaset_connect_to_replica(replicaset, master)
 end
@@ -494,7 +498,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
         opts = opts and table.copy(opts) or {}
         if opts.is_async then
             return nil, lerror.vshard(lerror.code.MISSING_MASTER,
-                                      replicaset.uuid)
+                                      replicaset.id)
         end
         local timeout = opts.timeout or consts.MASTER_SEARCH_TIMEOUT
         master, timeout = replicaset_wait_master(replicaset, timeout)
@@ -650,7 +654,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 replicaset_connect_to_replica(replicaset, replica)
                 if replica.backoff_ts then
                     return nil, lerror.vshard(
-                        lerror.code.REPLICASET_IN_BACKOFF, replicaset.uuid,
+                        lerror.code.REPLICASET_IN_BACKOFF, replicaset.id,
                         replica.backoff_err)
                 end
             end
@@ -664,7 +668,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 if can_backoff_after_error(retval, func) then
                     if not replica.backoff_ts then
                         log.warn('Replica %s goes into backoff for %s sec '..
-                                 'after error %s', replica.uuid,
+                                 'after error %s', replica.id,
                                  consts.REPLICA_BACKOFF_INTERVAL, retval)
                         replica.backoff_ts = now
                         replica.backoff_err = retval
@@ -762,7 +766,7 @@ local function replicaset_tostring(replicaset)
     else
         master = 'missing'
     end
-    return string.format('replicaset(uuid="%s", master=%s)', replicaset.uuid,
+    return string.format('replicaset(id="%s", master=%s)', replicaset.id,
                          master)
 end
 
@@ -799,7 +803,7 @@ local function rebind_replicasets(replicasets, old_replicasets)
             if replicaset.is_master_auto then
                 local master = old_replicaset.master
                 if master then
-                    replicaset.master = replicaset.replicas[master.uuid]
+                    replicaset.master = replicaset.replicas[master.id]
                 end
             end
             -- Stop waiting for master in the old replicaset. Its running
@@ -820,7 +824,7 @@ end
 --
 local function replicaset_update_master(replicaset, old_master_id, candidate_id)
     local is_auto = replicaset.is_master_auto
-    local replicaset_id = replicaset.uuid
+    local replicaset_id = replicaset.id
     if old_master_id == candidate_id then
         -- It should not happen ever, but be ready to everything.
         log.warn('Replica %s in replicaset %s reports self as both master '..
@@ -842,7 +846,7 @@ local function replicaset_update_master(replicaset, old_master_id, candidate_id)
                  replicaset_id)
         return true
     end
-    local master_id = master.uuid
+    local master_id = master.id
     if master_id ~= old_master_id then
         -- Master was changed while the master update information was coming.
         -- It means it is outdated and should be ignored.
@@ -906,7 +910,7 @@ local function replicaset_locate_master(replicaset)
         local cur_master = replicaset.master
         if cur_master == master then
             log.info('Master of replicaset %s, node %s, has resigned. Trying '..
-                     'to find a new one', replicaset.uuid, master.uuid)
+                     'to find a new one', replicaset.id, master.id)
             replicaset.master = nil
         elseif cur_master then
             -- Another master was already found. But check it via another call
@@ -921,7 +925,7 @@ local function replicaset_locate_master(replicaset)
     local timeout = const_timeout
     local deadline = fiber_clock() + timeout
     local async_opts = {is_async = true}
-    local replicaset_id = replicaset.uuid
+    local replicaset_id = replicaset.id
     for replica_id, replica in pairs(replicaset.replicas) do
         local conn = replicaset_connect_to_replica(replicaset, replica)
         if conn:is_connected() then
@@ -1204,10 +1208,15 @@ local function buildall(sharding_cfg)
         zone_weights = {}
     end
     local curr_ts = fiber_clock()
+    local is_named = sharding_cfg.identification_mode == 'name_as_key'
     for replicaset_id, replicaset in pairs(sharding_cfg.sharding) do
+        local replicaset_uuid, replicaset_name = lcfg.extract_identifiers(
+            replicaset_id, replicaset, is_named)
         local new_replicaset = setmetatable({
             replicas = {},
-            uuid = replicaset_id,
+            uuid = replicaset_uuid,
+            name = replicaset_name,
+            id = replicaset_id,
             weight = replicaset.weight,
             bucket_count = 0,
             lock = replicaset.lock,
@@ -1218,14 +1227,17 @@ local function buildall(sharding_cfg)
         }, replicaset_mt)
         local priority_list = {}
         for replica_id, replica in pairs(replicaset.replicas) do
+            local replica_uuid, replica_name = lcfg.extract_identifiers(
+                replica_id, replica, is_named)
             -- The old replica is saved in the new object to
             -- rebind its connection at the end of a
             -- router/storage reconfiguration.
             local new_replica = setmetatable({
-                uri = replica.uri, name = replica.name, uuid = replica_id,
+                uri = replica.uri, name = replica_name, uuid = replica_uuid,
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
+                id = replica_id,
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
