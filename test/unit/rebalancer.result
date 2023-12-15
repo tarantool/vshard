@@ -1078,9 +1078,9 @@ d
   map:
     uuid:
       bucket_count: 0
+      id: uuid
       progress: 0
       is_throttle_warned: false
-      uuid: uuid
       need_to_send: 15
 ...
 d = dispenser.create({uuid1 = 5, uuid2 = 5})
@@ -1099,13 +1099,13 @@ u, d
       prev: &1
         bucket_count: 5
         next: *0
+        id: uuid1
         progress: 0
         is_throttle_warned: false
-        uuid: uuid1
         need_to_send: 5
+      id: uuid2
       progress: 0
       is_throttle_warned: false
-      uuid: uuid2
       need_to_send: 5
     first: *1
   map:
@@ -1124,13 +1124,13 @@ d
       prev: &1
         bucket_count: 5
         next: *0
+        id: uuid1
         progress: 0
         is_throttle_warned: false
-        uuid: uuid1
         need_to_send: 5
+      id: uuid2
       progress: 0
       is_throttle_warned: false
-      uuid: uuid2
       need_to_send: 5
     first: *1
   map:
@@ -1150,13 +1150,13 @@ d
       prev: &1
         bucket_count: 5
         next: *0
+        id: uuid1
         progress: 0
         is_throttle_warned: false
-        uuid: uuid1
         need_to_send: 5
+      id: uuid2
       progress: 0
       is_throttle_warned: true
-      uuid: uuid2
       need_to_send: 5
     first: *1
   map:

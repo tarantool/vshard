@@ -816,10 +816,10 @@ local function check_is_master()
     end
     local master_id = M.this_replicaset.master
     if master_id then
-        master_id = master_id.uuid
+        master_id = master_id.id
     end
-    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.uuid,
-                              M.this_replicaset.uuid, master_id)
+    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
+                              M.this_replicaset.id, master_id)
 end
 
 local function on_master_disable(new_func, old_func)
@@ -1761,7 +1761,7 @@ end
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
-    local id = util.replicaset_uuid()
+    local id = M.this_replicaset.id
     local status, ok
     local ref, err = bucket_refrw_touch(bucket_id)
     if not ref then
@@ -2081,7 +2081,7 @@ local function gc_bucket_process_sent_one_batch_xc(batch)
     local opts = {
         timeout = consts.GC_MAP_CALL_TIMEOUT,
         -- Skip self - local buckets are already validated.
-        except = M.this_replica.uuid,
+        except = M.this_replica.id,
     }
     local map_res
     map_res, err = rs:map_call('vshard.storage._call',
@@ -2480,8 +2480,8 @@ local function route_dispenser_create(routes)
     local map = {}
     for id, bucket_count in pairs(routes) do
         local new = {
-            -- Receiver's UUID.
-            uuid = id,
+            -- Receiver's ID.
+            id = id,
             -- Rest of buckets to send. The receiver will be
             -- dispensed this number of times.
             bucket_count = bucket_count,
@@ -2593,7 +2593,7 @@ local function route_dispenser_pop(dispenser)
         if bucket_count > 0 then
             rlist:add_tail(dst)
         end
-        return dst.uuid
+        return dst.id
     end
     return nil
 end
@@ -3025,8 +3025,8 @@ local function rebalancer_is_needed()
     if cfg.rebalancer_mode == 'off' then
         return false
     end
-    local this_replica_id = M.this_replica.uuid
-    local this_replicaset_id = M.this_replicaset.uuid
+    local this_replica_id = M.this_replica.id
+    local this_replicaset_id = M.this_replicaset.id
 
     local this_replicaset_cfg = cfg.sharding[this_replicaset_id]
     if this_replicaset_cfg.rebalancer == false then
@@ -3455,21 +3455,50 @@ local function storage_cfg_build_local_box_cfg(cfgctx)
     if box_cfg.read_only == nil and not cfgctx.is_master_auto then
         box_cfg.read_only = not cfgctx.is_master_in_cfg
     end
+    local cfg_rs_uuid, cfg_replica_uuid
+    if cfgctx.new_cfg.identification_mode == 'name_as_key' then
+        cfg_rs_uuid = box_cfg.replicaset_uuid or cfgctx.new_replicaset_cfg.uuid
+        cfg_replica_uuid = box_cfg.instance_uuid or cfgctx.new_instance_cfg.uuid
+    else
+        cfg_rs_uuid = box_cfg.replicaset_uuid or cfgctx.replicaset_id
+        cfg_replica_uuid = box_cfg.instance_uuid or cfgctx.instance_id
+    end
     if type(box.cfg) == 'function' then
-        box_cfg.instance_uuid = box_cfg.instance_uuid or cfgctx.instance_uuid
-        box_cfg.replicaset_uuid = box_cfg.replicaset_uuid or cfgctx.replicaset_uuid
+        if cfgctx.new_cfg.identification_mode == 'name_as_key' then
+            box_cfg.instance_name = cfgctx.instance_id
+            box_cfg.replicaset_name = cfgctx.replicaset_id
+        end
+        box_cfg.instance_uuid = cfg_replica_uuid
+        box_cfg.replicaset_uuid = cfg_rs_uuid
     else
         local info = box.info
-        if cfgctx.instance_uuid ~= info.uuid then
+        if cfgctx.new_cfg.identification_mode == 'name_as_key' then
+            -- Strictly verify names in case of reconfiguration. There's no
+            -- other way to check, that config is applied to the correct
+            -- instance. Changing names (even from nil) must be done externally.
+            -- During bootstrap names will be set by vshard.
+            if cfgctx.instance_id ~= info.name then
+                error(string.format('Instance name mismatch: already set ' ..
+                                    '"%s" but "%s" in arguments', info.name,
+                                    cfgctx.instance_id))
+            end
+            local rs_name = info.replicaset and info.replicaset.name
+            if cfgctx.replicaset_id ~= rs_name then
+                error(string.format('Replicaset name mismatch: already set ' ..
+                                    '"%s" but "%s" in vshard config',
+                                    rs_name, cfgctx.replicaset_id))
+            end
+        end
+        if cfg_replica_uuid and cfg_replica_uuid ~= info.uuid then
             error(string.format('Instance UUID mismatch: already set ' ..
                                 '"%s" but "%s" in arguments', info.uuid,
-                                cfgctx.instance_uuid))
+                                cfg_replica_uuid))
         end
         local real_rs_uuid = util.replicaset_uuid(info)
-        if cfgctx.replicaset_uuid ~= real_rs_uuid then
+        if cfg_rs_uuid and cfg_rs_uuid ~= real_rs_uuid then
             error(string.format('Replicaset UUID mismatch: already set ' ..
                                 '"%s" but "%s" in vshard config',
-                                real_rs_uuid, cfgctx.replicaset_uuid))
+                                real_rs_uuid, cfg_rs_uuid))
         end
     end
 end
@@ -3547,9 +3576,9 @@ local function storage_cfg_master_commit(cfgctx)
 end
 
 local function storage_cfg_context_extend(cfgctx)
-    local instance_uuid = cfgctx.instance_uuid
-    if instance_uuid == nil then
-        error('Usage: cfg(configuration, this_replica_uuid)')
+    local instance_id = cfgctx.instance_id
+    if instance_id == nil then
+        error('Usage: cfg(configuration, this_replica_id)')
     end
     local full_cfg = lcfg.check(cfgctx.full_cfg, M.current_cfg)
     local new_cfg = lcfg.extract_vshard(full_cfg)
@@ -3560,23 +3589,26 @@ local function storage_cfg_context_extend(cfgctx)
     cfgctx.old_cfg = M.current_cfg
 
     local replicaset_id = storage_cfg_find_replicaset_id_for_instance(
-        new_cfg, instance_uuid)
+        new_cfg, instance_id)
     if not replicaset_id then
         error(string.format("Local replica %s wasn't found in config",
-                            instance_uuid))
+                            instance_id))
     end
-    cfgctx.replicaset_uuid = replicaset_id
+    cfgctx.replicaset_id = replicaset_id
 
     if cfgctx.old_cfg then
-        local old_rs_cfg = cfgctx.old_cfg.sharding[replicaset_id]
+        -- Fallback to uuid for reload from the old version.
+        local old_instance_id = M.this_replica.id or M.this_replica.uuid
+        local old_replicaset_id = M.this_replicaset.id or M.this_replicaset.uuid
+        local old_rs_cfg = cfgctx.old_cfg.sharding[old_replicaset_id]
         cfgctx.old_replicaset_cfg = old_rs_cfg
-        cfgctx.old_instance_cfg = old_rs_cfg.replicas[instance_uuid]
+        cfgctx.old_instance_cfg = old_rs_cfg.replicas[old_instance_id]
         cfgctx.was_master_in_cfg = cfgctx.old_instance_cfg.master
         cfgctx.was_master_auto = old_rs_cfg.master == 'auto'
     end
     local new_rs_cfg = new_cfg.sharding[replicaset_id]
     cfgctx.new_replicaset_cfg = new_rs_cfg
-    cfgctx.new_instance_cfg = new_rs_cfg.replicas[instance_uuid]
+    cfgctx.new_instance_cfg = new_rs_cfg.replicas[instance_id]
     cfgctx.new_box_cfg = lcfg.extract_box(full_cfg, cfgctx.new_instance_cfg)
     cfgctx.is_master_in_cfg = cfgctx.new_instance_cfg.master
     cfgctx.is_master_auto = new_rs_cfg.master == 'auto'
@@ -3591,8 +3623,8 @@ end
 
 local function storage_cfg_xc(cfgctx)
     storage_cfg_context_extend(cfgctx)
-    local instance_id = cfgctx.instance_uuid
-    local replicaset_id = cfgctx.replicaset_uuid
+    local instance_id = cfgctx.instance_id
+    local replicaset_id = cfgctx.replicaset_id
     local new_cfg = cfgctx.new_cfg
     if M.replicasets then
         log.info("Starting reconfiguration of replica %s", instance_id)
@@ -3672,12 +3704,12 @@ local function storage_cfg_xc(cfgctx)
     collectgarbage()
 end
 
-local function storage_cfg(cfg, this_replica_uuid, is_reload)
+local function storage_cfg(cfg, this_replica_id, is_reload)
     if M.is_cfg_in_progress then
         return error(lerror.vshard(lerror.code.STORAGE_CFG_IS_IN_PROGRESS))
     end
     local cfgctx = {
-        instance_uuid = this_replica_uuid,
+        instance_id = this_replica_id,
         full_cfg = cfg,
         is_reload = is_reload,
         rollback_guards = {},
@@ -3736,15 +3768,17 @@ local function storage_info(opts)
     }
     local code = lerror.code
     local alert = lerror.alert
-    local this_id = M.this_replicaset.uuid
+    local this_id = M.this_replicaset.id
     local this_master = M.this_replicaset.master
     if this_master == nil and not M.this_replicaset.is_master_auto then
         table.insert(state.alerts, alert(code.MISSING_MASTER, this_id))
         state.status = math.max(state.status, consts.STATUS.ORANGE)
     end
+    local is_named = M.this_replica.id == M.this_replica.name
     if this_master and this_master ~= M.this_replica then
         for _, replica in pairs(box.info.replication) do
-            if replica.uuid ~= this_master.uuid then
+            if (not is_named and replica.uuid ~= this_master.uuid)
+                or (is_named and replica.name ~= this_master.name) then
                 goto cont
             end
             state.replication.status = replica.upstream.status
@@ -3783,12 +3817,14 @@ local function storage_info(opts)
         local replica_count = 0
         local not_available_replicas = 0
         for _, replica in pairs(box.info.replication) do
-            if replica.uuid ~= M.this_replica.uuid then
+            if (not is_named and replica.uuid ~= M.this_replica.uuid)
+                or (is_named and replica.name ~= M.this_replica.name) then
                 replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
                     table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
-                                                     replica.uuid))
+                                                     is_named and replica.name
+                                                     or replica.uuid))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
                     not_available_replicas = not_available_replicas + 1
                 end
@@ -4091,7 +4127,7 @@ return {
     call = storage_make_api(storage_call),
     _call = storage_make_api(service_call),
     sync = storage_make_api(sync),
-    cfg = function(cfg, uuid) return storage_cfg(cfg, uuid, false) end,
+    cfg = function(cfg, id) return storage_cfg(cfg, id, false) end,
     on_master_enable = on_master_enable,
     on_master_disable = on_master_disable,
     on_bucket_event = on_bucket_event,
