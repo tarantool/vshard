@@ -65,17 +65,6 @@ local function replicaset_name_to_uuid(name)
     return name_to_uuid(replicaset_name_to_uuid_map, name)
 end
 
---
--- Timeout error can be a ClientError with ER_TIMEOUT code or a TimedOut error
--- which is ER_SYSTEM. They also have different messages. Same public APIs can
--- return both errors depending on core version and/or error cause. This func
--- helps not to care.
---
-local function error_is_timeout(err)
-    return err.code == box.error.TIMEOUT or (err.code == box.error.PROC_LUA and
-           err.message == 'Timeout exceeded') or err.type == 'TimedOut'
-end
-
 local function clear_test_cfg_options(cfg)
     cfg.test_user_grant_range = nil
 end
@@ -848,7 +837,6 @@ end
 local vardir = fio.abspath(os.getenv('VARDIR'))
 
 return {
-    error_is_timeout = error_is_timeout,
     config_new = config_new,
     cluster_new = cluster_new,
     cluster_cfg = cluster_cfg,

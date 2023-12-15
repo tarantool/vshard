@@ -74,7 +74,7 @@ test_group.test_manual_bucket_send_doubled_buckets = function(g)
     local bid = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(bid, uuid)
-        ilt.assert(ivtest.error_is_timeout(err))
+        ilt.assert(iverror.is_timeout(err))
         ilt.assert_not(ok, 'bucket_send not ok')
         return bid
     end, {uuid_2})
