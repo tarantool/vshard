@@ -412,12 +412,12 @@ end)
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 ---
 - null
-- bucket_id: 1
+- replicaset: <replicaset_2>
   code: 8
-  unreachable_uuid: <replicaset_2>
+  type: ShardingError
   name: UNREACHABLE_REPLICASET
   message: There is no active replicas in replicaset <replicaset_2>
-  type: ShardingError
+  bucket_id: 1
 ...
 vshard.router.buckets_info(0, 3)
 ---
@@ -1022,8 +1022,8 @@ space_data = {{1000, {{1}, {2}}}}
 vshard.router.call(bucket_id, 'write', 'vshard.storage.bucket_recv', {new_bid, 'from_uuid', space_data})
 ---
 - null
-- {'code': 4, 'type': 'ShardingError', 'message': 'Replicaset from_uuid not found',
-  'name': 'NO_SUCH_REPLICASET', 'replicaset_uuid': 'from_uuid'}
+- {'replicaset': 'from_uuid', 'code': 4, 'type': 'ShardingError', 'message': 'Replicaset
+    from_uuid not found', 'name': 'NO_SUCH_REPLICASET'}
 ...
 --
 -- Monitoring
@@ -1425,14 +1425,14 @@ _ = test_run:switch("router_1")
 util.check_error(vshard.router.call, 1, 'write', 'echo', { 'hello world' })
 ---
 - null
-- master_uuid: <storage_2_b>
-  replica_uuid: <storage_2_a>
+- replicaset: <replicaset_2>
+  master: <storage_2_b>
+  code: 2
+  type: ShardingError
+  replica: <storage_2_a>
+  name: NON_MASTER
   message: Replica <storage_2_a> is not a master for replicaset
     <replicaset_2> anymore
-  type: ShardingError
-  replicaset_uuid: <replicaset_2>
-  name: NON_MASTER
-  code: 2
 ...
 -- Reconfigure router and test that the WRITE request does work
 vshard.router.cfg(cfg)

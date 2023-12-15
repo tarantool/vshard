@@ -191,12 +191,12 @@ vshard.router.static.route_map[1] = nil
 vshard.router.bucket_discovery(1)
 ---
 - null
-- bucket_id: 1
+- replicaset: ac522f65-aa94-4134-9f64-51ee384f1a54
   code: 8
-  unreachable_uuid: ac522f65-aa94-4134-9f64-51ee384f1a54
+  type: ShardingError
   name: UNREACHABLE_REPLICASET
   message: There is no active replicas in replicaset ac522f65-aa94-4134-9f64-51ee384f1a54
-  type: ShardingError
+  bucket_id: 1
 ...
 -- Ok to work with correct replicasets.
 vshard.router.bucket_discovery(2).uuid

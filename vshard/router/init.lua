@@ -698,8 +698,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 return nil, err
             elseif err.code == lerror.code.NON_MASTER then
                 assert(mode == 'write')
-                if not replicaset:update_master(err.replica_uuid,
-                                                err.master_uuid) then
+                if not replicaset:update_master(err.replica, err.master) then
                     return nil, err
                 end
             else

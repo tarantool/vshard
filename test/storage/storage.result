@@ -531,11 +531,11 @@ vshard.storage.call(100500, 'read', 'space_get', {'test', {1}})
 vshard.storage.bucket_recv(100, 'from_uuid', {{1000, {{1}}}})
 ---
 - null
-- code: 4
+- replicaset: from_uuid
+  code: 4
   type: ShardingError
-  name: NO_SUCH_REPLICASET
-  replicaset_uuid: from_uuid
   message: Replicaset from_uuid not found
+  name: NO_SUCH_REPLICASET
 ...
 --
 -- Test not existing space in bucket data.
@@ -605,11 +605,11 @@ assert(box.space.test:get{9} == nil and box.space.test:get{10} == nil)
 vshard.storage.bucket_send(1, 'unknown uuid')
 ---
 - null
-- code: 4
+- replicaset: unknown uuid
+  code: 4
   type: ShardingError
-  name: NO_SUCH_REPLICASET
-  replicaset_uuid: unknown uuid
   message: Replicaset unknown uuid not found
+  name: NO_SUCH_REPLICASET
 ...
 -- gh-217: transfer to self.
 vshard.storage.bucket_send(1, util.replicasets[1])
@@ -619,8 +619,8 @@ vshard.storage.bucket_send(1, util.replicasets[1])
   code: 5
   type: ShardingError
   name: MOVE_TO_SELF
-  replicaset_uuid: <replicaset_1>
   message: 'Cannot move: bucket 1 is already on replicaset <replicaset_1>'
+  replicaset: <replicaset_1>
 ...
 -- Successful transfer.
 vshard.storage.bucket_send(1, util.replicasets[2])
