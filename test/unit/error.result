@@ -35,8 +35,8 @@ vshard_error = lerror.vshard(lerror.code.UNREACHABLE_MASTER, 'uuid', 'reason')
 ...
 tostring(vshard_error)
 ---
-- '{"reason":"reason","code":11,"type":"ShardingError","name":"UNREACHABLE_MASTER","uuid":"uuid","message":"Master
-  of replicaset uuid is unreachable: reason"}'
+- '{"replicaset":"uuid","reason":"reason","code":11,"type":"ShardingError","message":"Master
+  of replicaset uuid is unreachable: reason","name":"UNREACHABLE_MASTER"}'
 ...
 log = require('log')
 ---

@@ -20,7 +20,7 @@ local error_message_template = {
     [2] = {
         name = 'NON_MASTER',
         msg = 'Replica %s is not a master for replicaset %s anymore',
-        args = {'replica_uuid', 'replicaset_uuid', 'master_uuid'}
+        args = {'replica', 'replicaset', 'master'}
     },
     [3] = {
         name = 'BUCKET_ALREADY_EXISTS',
@@ -30,17 +30,17 @@ local error_message_template = {
     [4] = {
         name = 'NO_SUCH_REPLICASET',
         msg = 'Replicaset %s not found',
-        args = {'replicaset_uuid'}
+        args = {'replicaset'}
     },
     [5] = {
         name = 'MOVE_TO_SELF',
         msg = 'Cannot move: bucket %d is already on replicaset %s',
-        args = {'bucket_id', 'replicaset_uuid'}
+        args = {'bucket_id', 'replicaset'}
     },
     [6] = {
          name = 'MISSING_MASTER',
          msg = 'Master is not configured for replicaset %s',
-         args = {'replicaset_uuid'}
+         args = {'replicaset'}
     },
     [7] = {
         name = 'TRANSFER_IS_IN_PROGRESS',
@@ -50,7 +50,7 @@ local error_message_template = {
     [8] = {
         name = 'UNREACHABLE_REPLICASET',
         msg = 'There is no active replicas in replicaset %s',
-        args = {'unreachable_uuid', 'bucket_id'}
+        args = {'replicaset', 'bucket_id'}
     },
     [9] = {
         name = 'NO_ROUTE_TO_BUCKET',
@@ -64,7 +64,7 @@ local error_message_template = {
     [11] = {
         name = 'UNREACHABLE_MASTER',
         msg = 'Master of replicaset %s is unreachable: %s',
-        args = {'uuid', 'reason'}
+        args = {'replicaset', 'reason'}
     },
     [12] = {
         name = 'OUT_OF_SYNC',
@@ -78,7 +78,7 @@ local error_message_template = {
     [14] = {
         name = 'UNREACHABLE_REPLICA',
         msg = "Replica %s isn't active",
-        args = {'unreachable_uuid'}
+        args = {'replica'}
     },
     [15] = {
         name = 'LOW_REDUNDANCY',
@@ -157,13 +157,13 @@ local error_message_template = {
     [31] = {
         name = 'MULTIPLE_MASTERS_FOUND',
         msg = 'Found more than one master in replicaset %s on nodes %s and %s',
-        args = {'replicaset_uuid', 'master1', 'master2'},
+        args = {'replicaset', 'master1', 'master2'},
     },
     [32] = {
         name = 'REPLICASET_IN_BACKOFF',
         msg = 'Replicaset %s is in backoff, can\'t take requests right now. '..
               'Last error was %s',
-        args = {'replicaset_uuid', 'error'}
+        args = {'replicaset', 'error'}
     },
     [33] = {
         name = 'STORAGE_IS_DISABLED',

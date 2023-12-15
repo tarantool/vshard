@@ -300,8 +300,7 @@ local function master_call(replicaset, func, args, opts)
         if err.code ~= lerror.code.NON_MASTER then
             return nil, err
         end
-        if not replicaset:update_master(err.replica_uuid,
-                                        err.master_uuid) then
+        if not replicaset:update_master(err.replica, err.master) then
             return nil, err
         end
         local timeout = deadline - fiber_clock()

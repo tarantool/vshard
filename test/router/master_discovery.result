@@ -451,11 +451,11 @@ f1:join()
  | ---
  | - true
  | - null
- | - code: 6
+ | - replicaset: <replicaset_1>
+ |   code: 6
  |   type: ShardingError
- |   name: MISSING_MASTER
- |   replicaset_uuid: <replicaset_1>
  |   message: Master is not configured for replicaset <replicaset_1>
+ |   name: MISSING_MASTER
  | ...
 
 -- Try to make an RO request but then turn of the auto search.
@@ -486,11 +486,11 @@ f2:join()
  | ---
  | - true
  | - null
- | - code: 6
+ | - replicaset: <replicaset_1>
+ |   code: 6
  |   type: ShardingError
- |   name: MISSING_MASTER
- |   replicaset_uuid: <replicaset_1>
  |   message: Master is not configured for replicaset <replicaset_1>
+ |   name: MISSING_MASTER
  | ...
 test_run:cmd('start server storage_1_a')
  | ---
@@ -587,11 +587,11 @@ do                                                                              
 end
  | ---
  | - null
- | - code: 6
+ | - replicaset: <replicaset_1>
+ |   code: 6
  |   type: ShardingError
- |   name: MISSING_MASTER
- |   replicaset_uuid: <replicaset_1>
  |   message: Master is not configured for replicaset <replicaset_1>
+ |   name: MISSING_MASTER
  | ...
 
 --
