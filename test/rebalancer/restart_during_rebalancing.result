@@ -246,8 +246,8 @@ info
         uuid: <fullbox_1_a>
       bucket:
         available_rw: number
-      uuid: <replicaset_1>
       master: *0
+      uuid: <replicaset_1>
     <replicaset_4>:
       replica: &1
         network_timeout: number
@@ -256,8 +256,8 @@ info
         uuid: <box_4_a>
       bucket:
         available_rw: number
-      uuid: <replicaset_4>
       master: *1
+      uuid: <replicaset_4>
     <replicaset_2>:
       replica: &2
         network_timeout: number
@@ -266,8 +266,8 @@ info
         uuid: <box_2_a>
       bucket:
         available_rw: number
-      uuid: <replicaset_2>
       master: *2
+      uuid: <replicaset_2>
     <replicaset_3>:
       replica: &3
         network_timeout: number
@@ -276,8 +276,8 @@ info
         uuid: <box_3_a>
       bucket:
         available_rw: number
-      uuid: <replicaset_3>
       master: *3
+      uuid: <replicaset_3>
   bucket:
     unreachable: 0
     available_ro: 0
