@@ -3876,11 +3876,13 @@ local function storage_info(opts)
             local conn = master.conn
             master_info = {
                 uri = uri, uuid = conn and conn.peer_uuid,
+                name = is_named and master.name or nil,
                 state = conn and conn.state, error = conn and conn.error,
             }
         end
         ireplicasets[id] = {
             uuid = replicaset.uuid,
+            name = is_named and replicaset.name or nil,
             master = master_info,
         }
     end
