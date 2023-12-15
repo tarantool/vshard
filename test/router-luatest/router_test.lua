@@ -677,6 +677,10 @@ g.test_named_config_identification = function(g)
 
     local router = g.router
     local res, err = router:exec(function()
+        -- buckets_info shows name, when name identification is used.
+        local _, err = ivshard.router.bucket_discovery(1)
+        ilt.assert_equals(err, nil)
+        ilt.assert_not_equals(ivshard.router.buckets_info()[1].name, nil)
         -- Just a basic test.
         return ivshard.router.callrw(1, 'echo', {1}, {timeout = iwait_timeout})
     end)
