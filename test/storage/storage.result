@@ -106,15 +106,15 @@ _ = test_run:switch('storage_1_a')
 ...
 vshard.storage.info().replicasets[util.replicasets[1]] or vshard.storage.info()
 ---
-- uuid: <replicaset_1>
-  master:
+- master:
     uri: storage@127.0.0.1:3301
+  uuid: <replicaset_1>
 ...
 vshard.storage.info().replicasets[util.replicasets[2]] or vshard.storage.info()
 ---
-- uuid: <replicaset_2>
-  master:
+- master:
     uri: storage@127.0.0.1:3303
+  uuid: <replicaset_2>
 ...
 -- Try to call info on a replicaset with no master.
 rs1 = vshard.storage.internal.replicasets[util.replicasets[1]]
@@ -137,12 +137,12 @@ vshard.storage.info()
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
         uri: storage@127.0.0.1:3303
+      uuid: <replicaset_2>
     <replicaset_1>:
-      uuid: <replicaset_1>
       master: missing
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 0
@@ -257,13 +257,13 @@ vshard.storage.info()
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
         uri: storage@127.0.0.1:3303
+      uuid: <replicaset_2>
     <replicaset_1>:
-      uuid: <replicaset_1>
       master:
         uri: storage@127.0.0.1:3301
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 2
@@ -313,17 +313,17 @@ info
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
-        state: active
         uri: storage@127.0.0.1:3303
-        uuid: <storage_2_a>
-    <replicaset_1>:
-      uuid: <replicaset_1>
-      master:
         state: active
+        uuid: <storage_2_a>
+      uuid: <replicaset_2>
+    <replicaset_1>:
+      master:
         uri: storage@127.0.0.1:3301
+        state: active
         uuid: <storage_1_a>
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 2
@@ -343,17 +343,17 @@ vshard.storage.info()
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
-        state: active
         uri: storage@127.0.0.1:3303
-        uuid: <storage_2_a>
-    <replicaset_1>:
-      uuid: <replicaset_1>
-      master:
         state: active
+        uuid: <storage_2_a>
+      uuid: <replicaset_2>
+    <replicaset_1>:
+      master:
         uri: storage@127.0.0.1:3301
+        state: active
         uuid: <storage_1_a>
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 2
@@ -378,13 +378,13 @@ vshard.storage.info()
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
         uri: storage@127.0.0.1:3303
+      uuid: <replicaset_2>
     <replicaset_1>:
-      uuid: <replicaset_1>
       master:
         uri: storage@127.0.0.1:3301
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 2
@@ -405,17 +405,17 @@ vshard.storage.info()
 ---
 - replicasets:
     <replicaset_2>:
-      uuid: <replicaset_2>
       master:
-        state: active
         uri: storage@127.0.0.1:3303
-        uuid: <storage_2_a>
-    <replicaset_1>:
-      uuid: <replicaset_1>
-      master:
         state: active
+        uuid: <storage_2_a>
+      uuid: <replicaset_2>
+    <replicaset_1>:
+      master:
         uri: storage@127.0.0.1:3301
+        state: active
         uuid: <storage_1_a>
+      uuid: <replicaset_1>
   bucket:
     receiving: 0
     active: 2
