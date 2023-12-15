@@ -644,3 +644,46 @@ g.test_router_box_cfg_mode = function(g)
     vtest.router_cfg(g.router, global_cfg)
     t.assert(g.router:grep_log('Calling box.cfg()'))
 end
+
+g.test_named_config_identification = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.identification_mode = 'name_as_key'
+    new_cfg_template.sharding['replicaset_1'] = new_cfg_template.sharding[1]
+    new_cfg_template.sharding['replicaset_2'] = new_cfg_template.sharding[2]
+    new_cfg_template.sharding[1] = nil
+    new_cfg_template.sharding[2] = nil
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+
+    -- Set names, as they should be verified on connection.
+    g.replica_1_a:exec(function()
+        box.ctl.wait_rw()
+        box.cfg{instance_name = 'replica_1_a', replicaset_name = 'replicaset_1'}
+    end)
+    g.replica_1_b:exec(function()
+        box.cfg{instance_name = 'replica_1_b'}
+    end)
+    g.replica_2_a:exec(function()
+        box.ctl.wait_rw()
+        box.cfg{instance_name = 'replica_2_a', replicaset_name = 'replicaset_2'}
+    end)
+    g.replica_2_b:exec(function()
+        box.cfg{instance_name = 'replica_2_b'}
+    end)
+    g.replica_2_a:wait_vclock_of(g.replica_1_a)
+    g.replica_2_b:wait_vclock_of(g.replica_2_a)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.router_cfg(g.router, new_global_cfg)
+
+    local router = g.router
+    local res, err = router:exec(function()
+        -- Just a basic test.
+        return ivshard.router.callrw(1, 'echo', {1}, {timeout = iwait_timeout})
+    end)
+    t.assert(not err, 'no error')
+    t.assert_equals(res, 1, 'good result')
+
+    -- Restore everything back.
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.router_cfg(g.router, global_cfg)
+end

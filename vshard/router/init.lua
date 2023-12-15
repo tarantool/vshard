@@ -178,7 +178,7 @@ local function bucket_discovery(router, bucket_id)
         local _, err =
             replicaset:callrw('vshard.storage.bucket_stat', {bucket_id})
         if err == nil then
-            return bucket_set(router, bucket_id, replicaset.uuid)
+            return bucket_set(router, bucket_id, replicaset.id)
         elseif err.code ~= lerror.code.WRONG_BUCKET and
                err.code ~= lerror.code.REPLICASET_IN_BACKOFF then
             last_err = err
@@ -677,7 +677,7 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                         end
                     else
                         replicaset = bucket_set(router, bucket_id,
-                                                replicaset.uuid)
+                                                replicaset.id)
                         lfiber.yield()
                         -- Protect against infinite cycle in a
                         -- case of broken cluster, when a bucket
@@ -1318,7 +1318,7 @@ local function router_cfg(router, cfg, is_reload)
     local known_bucket_count = 0
     router.route_map = table_new(router.total_bucket_count, 0)
     for bucket, rs in pairs(old_route_map) do
-        local new_rs = router.replicasets[rs.uuid]
+        local new_rs = router.replicasets[rs.id]
         if new_rs then
             router.route_map[bucket] = new_rs
             new_rs.bucket_count = new_rs.bucket_count + 1
@@ -1482,7 +1482,7 @@ local function router_info(router, opts)
             uuid = replicaset.uuid,
             bucket = {}
         }
-        state.replicasets[replicaset.uuid] = rs_info
+        state.replicasets[replicaset.id] = rs_info
 
         -- Build master info.
         local info, color =
@@ -1509,7 +1509,7 @@ local function router_info(router, opts)
             -- If the replica is not optimal, then some replicas
             -- possibly are down.
             local a = lerror.alert(lerror.code.SUBOPTIMAL_REPLICA,
-                                   replicaset.uuid)
+                                   replicaset.id)
             table.insert(state.alerts, a)
             state.status = math.max(state.status, consts.STATUS.YELLOW)
         end
@@ -1517,7 +1517,7 @@ local function router_info(router, opts)
         if rs_info.replica.status ~= 'available' and
            rs_info.master.status ~= 'available' then
             local a = lerror.alert(lerror.code.UNREACHABLE_REPLICASET,
-                                   replicaset.uuid)
+                                   replicaset.id)
             table.insert(state.alerts, a)
             state.status = consts.STATUS.RED
         end
