@@ -3,6 +3,7 @@ local t = require('luatest')
 local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
 local verror = require('vshard.error')
+local vutil = require('vshard.util')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -247,6 +248,7 @@ test_group.test_locate_master_when_no_conn_object = function(g)
 end
 
 test_group.test_named_replicaset = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
     local new_cfg_template = table.deepcopy(cfg_template)
     new_cfg_template.identification_mode = 'name_as_key'
     new_cfg_template.sharding['replicaset'] = new_cfg_template.sharding[1]
@@ -267,9 +269,15 @@ test_group.test_named_replicaset = function(g)
     t.assert_equals(rs.id, rs.name)
     t.assert_equals(replica_1_a.id, replica_1_a.name)
 
-    -- Just to be sure, that it works.
+    -- Name is not set, name mismatch error.
+    local ret, err = rs:callrw('get_uuid', {}, {timeout = 5})
+    t.assert_equals(err.name, 'INSTANCE_NAME_MISMATCH')
+    t.assert_equals(ret, nil)
+
+    -- Set name, everything works from now on.
+    g.replica_1_a:exec(function() box.cfg{instance_name = 'replica_1_a'} end)
     local uuid_a = g.replica_1_a:instance_uuid()
-    local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
+    ret, err = rs:callrw('get_uuid', {}, timeout_opts)
     t.assert_equals(err, nil)
     t.assert_equals(ret, uuid_a)
 

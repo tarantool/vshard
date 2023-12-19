@@ -76,6 +76,144 @@ local future_wait = util.future_wait
 local gsc = util.generate_self_checker
 
 --
+-- vconnect is asynchronous vshard greeting, saved inside netbox connection.
+-- It stores future object and additional info, needed for its work.
+-- Future is initialized, when the connection is established (inside
+-- netbox_on_connect). The connection cannot be considered "connected"
+-- until vconnect is properly validated.
+--
+local function conn_vconnect_set(conn)
+    assert(conn.replica ~= nil)
+    local is_named = conn.replica.id == conn.replica.name
+    if not is_named then
+        -- Nothing to do. Check is not needed.
+        return
+    end
+    -- Update existing vconnect. Fiber condition cannot be dropped,
+    -- somebody may already waiting on it.
+    if conn.vconnect then
+        -- Connections are preserved during reconfiguration,
+        -- identification may be changed.
+        conn.vconnect.is_named = is_named
+        if not conn.vconnect.future then
+            return
+        end
+        -- Future object must be updated. Old result is irrelevant.
+        conn.vconnect.future:discard()
+        conn.vconnect.future = nil
+        return
+    end
+    -- Create new vconnect.
+    conn.vconnect = {
+        -- Whether the connection is done to the named replica.
+        is_named = is_named,
+        -- Used to wait for the appearance of vconnect.future object,
+        -- if call is done before the connection is established.
+        future_cond = fiber.cond(),
+    }
+end
+
+--
+-- Initialize future object. Should be done, when connection is established
+-- (inside netbox_on_connect).
+--
+local function conn_vconnect_start(conn)
+    local vconn = conn.vconnect
+    if not vconn then
+        -- Nothing to do. Check is not needed.
+        return
+    end
+
+    local opts = {is_async = true}
+    vconn.future = conn:call('vshard.storage._call', {'info'}, opts)
+    vconn.future_cond:broadcast()
+end
+
+--
+-- Check, that future is ready, and its result is expected.
+-- The function doesn't yield.
+-- @retval true; The correct response is received.
+-- @retval nil, ...; Response is not received or validation error happened.
+--
+local function conn_vconnect_check(conn)
+    local vconn = conn.vconnect
+    -- conn.vconnect may be nil, if connection was created on old version
+    -- and the storage was reloaded to a new one. It's also nil, when
+    -- all checks were already done.
+    if not vconn then
+        return true
+    end
+    -- Nothing to do, but wait in such case.
+    if not vconn.future or not vconn.future:is_ready() then
+        return nil, lerror.vshard(lerror.code.VHANDSHAKE_NOT_COMPLETE,
+                                  conn.replica.id)
+    end
+    -- Critical errors. Connection should be closed after these ones.
+    local result, err = vconn.future:result()
+    if not result then
+        -- Failed to get response. E.g. access error.
+        return nil, lerror.make(err)
+    end
+    if vconn.is_named and result[1].name ~= conn.replica.name then
+        return nil, lerror.vshard(lerror.code.INSTANCE_NAME_MISMATCH,
+                                  conn.replica.name, result[1].name)
+    end
+    -- Don't validate until reconnect happens.
+    conn.vconnect = nil
+    return true
+end
+
+local function conn_vconnect_check_or_close(conn)
+    local ok, err = conn_vconnect_check(conn)
+    -- Close the connection, if error happened, but it is not
+    -- VSHANDSHAKE_NOT_COMPLETE.
+    if not ok and err and not (err.type == 'ShardingError' and
+       err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+        conn:close()
+    end
+    return ok, err
+end
+
+--
+-- Wait until the future object is ready. Returns remaining timeout.
+-- @retval timeout; Future boject is ready.
+-- @retval nil, err; Timeout passed.
+--
+local function conn_vconnect_wait(conn, timeout)
+    local vconn = conn.vconnect
+    -- Fast path. In most cases no validation should be done at all.
+    -- conn.vconnect may be nil, if connection was created on old version
+    -- and the storage was reloaded to a new one. It's also nil, when
+    -- all checks were already done.
+    if not vconn or (vconn.future and vconn.future:is_ready()) then
+        return timeout
+    end
+    local deadline = fiber_clock() + timeout
+    -- Wait for connection to be established.
+    if not vconn.future and
+       not fiber_cond_wait(vconn.future_cond, timeout) then
+        return nil, lerror.timeout()
+    end
+    timeout = deadline - fiber_clock()
+    -- Wait for async call to return.
+    local res, err = future_wait(vconn.future, timeout)
+    if res == nil then
+        -- Either timeout error or any other. If it's not a timeout error,
+        -- then conn must be recteated, handshake must be retried.
+        return nil, lerror.make(err)
+    end
+    return deadline - fiber_clock()
+end
+
+local function conn_vconnect_wait_or_close(conn, timeout)
+    local ok, err = conn_vconnect_wait(conn, timeout)
+    if not ok and not lerror.is_timeout(err) then
+        conn:close()
+    end
+    return ok, err
+end
+
+--
 -- on_connect() trigger for net.box
 --
 local function netbox_on_connect(conn)
@@ -86,6 +224,11 @@ local function netbox_on_connect(conn)
     -- If a replica's connection has revived, then unset
     -- replica.down_ts - it is not down anymore.
     replica.down_ts = nil
+    -- conn.vconnect is set on every connect, as it may be nil,
+    -- if previous check successfully passed. Also, the needed
+    -- checks may change on reconnect.
+    conn_vconnect_set(conn)
+    conn_vconnect_start(conn)
     if replica.uuid and conn.peer_uuid ~= replica.uuid and
         -- XXX: Zero UUID means not a real Tarantool instance. It
         -- is likely to be a cartridge.remote-control server,
@@ -222,6 +365,11 @@ local function replicaset_connect_to_replica(replicaset, replica)
         })
         conn.replica = replica
         conn.replicaset = replicaset
+        -- vconnect must be set before the time, connection is established,
+        -- as we must know, that the connection cannot be used. If vconnect
+        -- is nil, it means all checks passed, so we may make a call and
+        -- only after that 'require' checks.
+        conn_vconnect_set(conn)
         conn.on_connect_ref = netbox_on_connect
         conn:on_connect(netbox_on_connect)
         conn.on_disconnect_ref = netbox_on_disconnect
@@ -421,6 +569,21 @@ local function replica_call(replica, func, args, opts)
     assert(opts and opts.timeout)
     replica.activity_ts = fiber_clock()
     local conn = replica.conn
+    if not opts.is_async then
+        -- Async call cannot yield. So, we cannot wait for the connection
+        -- to be established and validate vconnect. Immediately fail below,
+        -- in conn_vconnect_check_or_close, if something is wrong.
+        local timeout, err = conn_vconnect_wait_or_close(conn, opts.timeout)
+        if not timeout then
+            return false, nil, lerror.make(err)
+        end
+        opts.timeout = timeout
+    end
+    local ok, err = conn_vconnect_check_or_close(conn)
+    if not ok then
+        return false, nil, lerror.make(err)
+    end
+    assert(conn.vconnect == nil)
     local net_status, storage_status, retval, error_object =
         pcall(conn.call, conn, func, args, opts)
     if not net_status then
@@ -1031,7 +1194,8 @@ replicaset_mt.__index = index
 local replica_mt = {
     __index = {
         is_connected = function(replica)
-            return replica.conn and replica.conn:is_connected()
+            return replica.conn and replica.conn:is_connected() and
+                conn_vconnect_check_or_close(replica.conn)
         end,
         safe_uri = function(replica)
             local uri = luri.parse(replica.uri)
