@@ -3180,6 +3180,7 @@ end
 local function storage_service_info()
     return {
         is_master = this_is_master(),
+        name = box.info.name,
     }
 end
 

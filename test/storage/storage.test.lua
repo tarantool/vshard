@@ -327,9 +327,9 @@ vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 --
 -- Internal info function.
 --
-vshard.storage._call('info')
+vshard.storage._call('info').is_master
 _ = test_run:switch('storage_1_b')
-vshard.storage._call('info')
+vshard.storage._call('info').is_master
 
 --
 -- gh-123, gh-298: storage auto-enable/disable depending on instance state.

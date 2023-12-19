@@ -202,6 +202,16 @@ local error_message_template = {
         msg = 'Bucket %s update is invalid: %s',
         args = {'bucket_id', 'reason'},
     },
+    [40] = {
+        name = 'VHANDSHAKE_NOT_COMPLETE',
+        msg = 'Handshake with %s have not been completed yet',
+        args = {'replica'},
+    },
+    [41] = {
+        name = 'INSTANCE_NAME_MISMATCH',
+        msg = 'Mismatch server name: expected "%s", but got "%s"',
+        args = {'expected_name', 'actual_name'},
+    },
 }
 
 --
