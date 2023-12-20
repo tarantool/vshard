@@ -269,14 +269,24 @@ test_group.test_named_replicaset = function(g)
     t.assert_equals(rs.id, rs.name)
     t.assert_equals(replica_1_a.id, replica_1_a.name)
 
-    -- Name is not set, name mismatch error.
+    -- Name is not set, uuid is not set, name mismatch error.
     local ret, err = rs:callrw('get_uuid', {}, {timeout = 5})
     t.assert_equals(err.name, 'INSTANCE_NAME_MISMATCH')
     t.assert_equals(ret, nil)
 
+    local uuid_a = g.replica_1_a:instance_uuid()
+    -- Test, that NAME_MISMATCH error is skipped, when uuid is specified.
+    -- Before the name configuration, as a name cannot be dropped. New
+    -- replicaset in order not to rebuild it for the name configuration.
+    new_global_cfg.sharding['replicaset'].replicas['replica_1_a'].uuid =
+        g.replica_1_a:instance_uuid()
+    local rs_2 = vreplicaset.buildall(new_global_cfg).replicaset
+    ret, err = rs_2:callrw('get_uuid', {}, timeout_opts)
+    t.assert_equals(err, nil)
+    t.assert_equals(ret, uuid_a)
+
     -- Set name, everything works from now on.
     g.replica_1_a:exec(function() box.cfg{instance_name = 'replica_1_a'} end)
-    local uuid_a = g.replica_1_a:instance_uuid()
     ret, err = rs:callrw('get_uuid', {}, timeout_opts)
     t.assert_equals(err, nil)
     t.assert_equals(ret, uuid_a)

@@ -137,6 +137,7 @@ end
 --
 local function conn_vconnect_check(conn)
     local vconn = conn.vconnect
+    local replica = conn.replica
     -- conn.vconnect may be nil, if connection was created on old version
     -- and the storage was reloaded to a new one. It's also nil, when
     -- all checks were already done.
@@ -146,7 +147,7 @@ local function conn_vconnect_check(conn)
     -- Nothing to do, but wait in such case.
     if not vconn.future or not vconn.future:is_ready() then
         return nil, lerror.vshard(lerror.code.VHANDSHAKE_NOT_COMPLETE,
-                                  conn.replica.id)
+                                  replica.id)
     end
     -- Critical errors. Connection should be closed after these ones.
     local result, err = vconn.future:result()
@@ -154,9 +155,12 @@ local function conn_vconnect_check(conn)
         -- Failed to get response. E.g. access error.
         return nil, lerror.make(err)
     end
-    if vconn.is_named and result[1].name ~= conn.replica.name then
+    -- If name is nil, it means, name was not set yet. If uuid is specified,
+    -- then we allow mismatch between config name and nil.
+    local is_name_set = result[1].name ~= nil or replica.uuid == nil
+    if vconn.is_named and is_name_set and result[1].name ~= replica.name then
         return nil, lerror.vshard(lerror.code.INSTANCE_NAME_MISMATCH,
-                                  conn.replica.name, result[1].name)
+                                  replica.name, result[1].name)
     end
     -- Don't validate until reconnect happens.
     conn.vconnect = nil
