@@ -1,0 +1,73 @@
+name: publishing
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+env:
+  ROCK_NAME: vshard
+
+jobs:
+  scm:
+    if: github.ref == 'refs/heads/master'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Push scm rockspec
+        uses: tarantool/rocks.tarantool.org/github-action@master
+        with:
+          auth: ${{ secrets.ROCKS_AUTH }}
+          files: ${{ env.ROCK_NAME }}-scm-1.rockspec
+
+  version-check:
+    # We need to run this job only on tag push.
+    if: startsWith(github.ref, 'refs/tags/')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check module version
+        uses: tarantool/actions/check-module-version@master
+        with:
+          module-name: vshard
+
+  release:
+    if: startsWith(github.ref, 'refs/tags')
+
+    runs-on: ubuntu-latest
+
+    needs: version-check
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: tarantool/setup-tarantool@v2
+        with:
+          tarantool-version: '2.10'
+
+      - name: Create release rockspec
+        run: >
+          sed -e "s/version = '.\+'/version = '${{ github.ref_name }}-1'/g"
+          -e "s/branch = '.\+'/tag = '${{ github.ref_name }}'/g"
+          ${{ env.ROCK_NAME }}-scm-1.rockspec >
+          ${{ env.ROCK_NAME }}-${{ github.ref_name }}-1.rockspec
+
+      - name: Create release rock
+        run: |
+          tarantoolctl rocks install ${{ env.ROCK_NAME }}-${{ github.ref_name }}-1.rockspec
+          tarantoolctl rocks pack ${{ env.ROCK_NAME }} ${{ github.ref_name }}
+
+      - name: Push release rockspec and rock
+        uses: tarantool/rocks.tarantool.org/github-action@master
+        with:
+          auth: ${{ secrets.ROCKS_AUTH }}
+          files: |
+            ${{ env.ROCK_NAME }}-${{ github.ref_name }}-1.rockspec
+            ${{ env.ROCK_NAME }}-${{ github.ref_name }}-1.all.rock
