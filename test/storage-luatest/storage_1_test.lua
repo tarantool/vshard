@@ -183,3 +183,28 @@ test_group.test_local_call = function(g)
         box.func.sum:drop()
     end)
 end
+
+--
+-- gh-464: hot reload with named identification is broken.
+--
+test_group.test_named_hot_reload = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.identification_mode = 'name_as_key'
+    new_cfg_template.sharding['replicaset'] = new_cfg_template.sharding[1]
+    new_cfg_template.sharding[1] = nil
+
+    g.replica_1_a:exec(function()
+        box.cfg{instance_name = 'replica_1_a', replicaset_name = 'replicaset'}
+    end)
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    -- gh-464: hot reload with named identification is broken.
+    g.replica_1_a:exec(function()
+        package.loaded['vshard.storage'] = nil
+        local ok, storage = pcall(require, 'vshard.storage')
+        ilt.assert_equals(ok, true)
+        _G.vshard.storage = storage
+    end)
+end
