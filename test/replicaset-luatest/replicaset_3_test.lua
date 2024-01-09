@@ -300,3 +300,13 @@ test_group.test_named_replicaset = function(g)
     t.assert_equals(ret, nil)
     vtest.storage_start(g.replica_1_b, global_cfg)
 end
+
+test_group.test_ipv6_uri = function(g)
+    local new_cfg = table.deepcopy(global_cfg)
+    local rs_uuid = g.replica_1_a:replicaset_uuid()
+    local uuid = g.replica_1_a:instance_uuid()
+    new_cfg.sharding[rs_uuid].replicas[uuid].uri = 'storage:storage@[::1]:3301'
+    local _, rs = next(vreplicaset.buildall(new_cfg))
+    local replica_string = 'replica_1_a(storage@[::1]:3301)'
+    t.assert_equals(tostring(rs.master), replica_string)
+end

@@ -418,6 +418,22 @@ else
     end
 end
 
+local uri_v6_str = "[::1]:80"
+local uri_format
+-- URI module format() function doesn't behave correctly for IPv6 addresses on
+-- some Tarantool versions (all <= 3.0). In fact, at the time of writing none of
+-- the versions have this bug fixed.
+if luri.format(luri.parse(uri_v6_str)) ~= uri_v6_str then
+    uri_format = function(u)
+        if u.ipv6 then
+            u.host = '[' .. u.host .. ']'
+        end
+        return luri.format(u)
+    end
+else
+    uri_format = luri.format
+end
+
 return {
     core_version = tnt_version,
     uri_eq = uri_eq,
@@ -439,4 +455,5 @@ return {
     feature = feature,
     schema_version = schema_version,
     replicaset_uuid = replicaset_uuid,
+    uri_format = uri_format,
 }
