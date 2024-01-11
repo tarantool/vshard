@@ -3,6 +3,23 @@ local lversion = require('vshard.version')
 
 local g = t.group('version')
 
+local function assert_version_str_equals(actual, expected)
+    -- Remove commit hash, if it exists. It's not saved in version.
+    local hash_pos = expected:find('-g')
+    if hash_pos then
+        expected = expected:sub(1, hash_pos - 1)
+    end
+    -- Remove trailing dash.
+    if expected:sub(-1) == '-' then
+        expected = expected:sub(1, -2)
+    end
+    -- Add 0 number of commits to expected.
+    if actual:sub(-2) == '-0' and not expected:find('-0') then
+        expected = expected .. '-0'
+    end
+    t.assert_equals(actual, expected)
+end
+
 g.test_order = function()
     -- Example of a full version: 2.10.0-beta2-86-gc9981a567.
     local versions = {
@@ -215,6 +232,7 @@ g.test_order = function()
         t.assert(not (ver > v.ver), ('versions not >, %d'):format(i))
         t.assert(ver <= v.ver, ('versions <=, %d'):format(i))
         t.assert(ver >= v.ver, ('versions <=, %d'):format(i))
+        assert_version_str_equals(tostring(ver), v.str)
         if i > 1 then
             local prev = versions[i - 1].ver
             t.assert(prev < ver, ('versions <, %d'):format(i))

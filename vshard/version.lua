@@ -75,6 +75,17 @@ local version_mt = {
     __le = function(l, r)
         return version_cmp(l, r) <= 0
     end,
+    __tostring = function(v)
+        local str = v.id_major .. '.' .. v.id_middle .. '.' .. v.id_minor
+        if v.rel_type then
+            str = str .. '-' .. v.rel_type
+            if v.rel_num ~= 0 then
+                str = str .. v.rel_num
+            end
+        end
+        str = str .. '-' .. v.id_commit
+        return str
+    end,
 }
 
 local function version_new(id_major, id_middle, id_minor, rel_type, rel_num,
