@@ -135,3 +135,15 @@ test_group.test_deploy_privs = function(g)
         box.schema.role.drop('two')
     end)
 end
+
+test_group.test_core_version = function(g)
+    g.server:exec(function()
+        local exports = _G.ivexports.log[#_G.ivexports.log]
+        exports = _G.ivexports.compile(exports)
+
+        local version = _TARANTOOL
+        local pos = version:find('-g')
+        version = version:sub(1, pos - 1)
+        ilt.assert_equals(exports.core_version, version)
+    end)
+end

@@ -43,7 +43,7 @@ local function exports_compile(exports)
     end
     return {
         vshard_version = exports.version,
-        core_version = table.concat(lvutil.core_version, '.'),
+        core_version = tostring(lvutil.core_version),
         funcs = compiled_funcs,
     }
 end
