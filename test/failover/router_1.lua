@@ -13,24 +13,19 @@ local names = dofile('names.lua')
 log = require('log')
 rs_uuid = names.rs_uuid
 replica_uuid = names.replica_uuid
-local port
 zone = nil
 if name == 'router_1' then
-	port = 3333
 	zone = 1
 elseif name == 'router_2' then
-	port = 3334
 	zone = 2
 elseif name == 'router_3' then
-	port = 3335
 	zone = 3
 else
-	port = 3336
 	zone = 4
 end
 cfg.zone = zone
 
-box.cfg{listen = port}
+box.cfg{}
 
 function wait_state(state)
 	log.info(string.rep('a', 1000))

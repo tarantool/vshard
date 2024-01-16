@@ -4,7 +4,7 @@ vshard = require('vshard')
 os = require('os')
 fiber = require('fiber')
 
-box.cfg{listen = 3333}
+box.cfg{}
 vshard.router.cfg(cfg)
 
 require('console').listen(os.getenv('ADMIN'))
