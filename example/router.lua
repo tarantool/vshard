@@ -17,7 +17,6 @@ cfg = dofile('localcfg.lua')
 if arg[1] == 'discovery_disable' then
     cfg.discovery_mode = 'off'
 end
-cfg.listen = 3300
 
 -- Start the database with sharding
 vshard = require('vshard')
