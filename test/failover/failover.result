@@ -491,6 +491,11 @@ while rs.master ~= rs.replica do fiber.sleep(0.01) end
 future = nil
 ---
 ...
+-- Create strong reference to prevent Lua GC from closing the
+-- connection. Waiting for tarantool/tarantool#9629 to be fixed.
+conn = rs.master.conn
+---
+...
 while not future do fiber.sleep(0.01) future = vshard.router.callrw(31, 'echo', {t}, {is_async = true}) end
 ---
 ...
