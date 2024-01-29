@@ -181,6 +181,9 @@ t = string.rep('a', 1024 * 1024 * 500)
 rs = vshard.router.route(31)
 while rs.master ~= rs.replica do fiber.sleep(0.01) end
 future = nil
+-- Create strong reference to prevent Lua GC from closing the
+-- connection. Waiting for tarantool/tarantool#9629 to be fixed.
+conn = rs.master.conn
 while not future do fiber.sleep(0.01) future = vshard.router.callrw(31, 'echo', {t}, {is_async = true}) end
 vshard.router.static.failover_fiber:wakeup()
 res, err = future:wait_result(5)
