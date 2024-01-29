@@ -187,3 +187,30 @@ test_group.test_async_no_yield = function(g)
         ivshard.storage._call = _G._call
     end)
 end
+
+--
+-- Test, that during master search name is validated.
+--
+test_group.test_locate_master = function()
+    -- Replace name with the bad one.
+    local new_cfg = table.deepcopy(global_cfg)
+    local cfg_rs = new_cfg.sharding.replicaset
+    cfg_rs.replicas.bad = cfg_rs.replicas.replica
+    cfg_rs.replicas.replica = nil
+    local _, rs = next(vreplicaset.buildall(new_cfg))
+
+    -- Avoid noop in locate_master.
+    rs.master = nil
+    rs.is_master_auto = true
+    -- Retry, until the connection is established and
+    -- name mismach error is encountered.
+    local ok, is_nop, last_err
+    t.helpers.retrying(timeout_opts, function()
+        ok, is_nop, last_err = rs:locate_master()
+        t.assert_not_equals(last_err, nil)
+    end)
+
+    t.assert_equals(last_err.name, 'INSTANCE_NAME_MISMATCH')
+    t.assert_equals(is_nop, false)
+    t.assert_equals(ok, false)
+end

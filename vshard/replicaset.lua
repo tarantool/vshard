@@ -1060,7 +1060,7 @@ local function replicaset_locate_master(replicaset)
     local func = 'vshard.storage._call'
     local args = {'info'}
     local const_timeout = consts.MASTER_SEARCH_TIMEOUT
-    local ok, res, err, f
+    local ok, res, err
     local master = replicaset.master
     if master then
         local sync_opts = {timeout = const_timeout}
@@ -1091,17 +1091,20 @@ local function replicaset_locate_master(replicaset)
     local futures = {}
     local timeout = const_timeout
     local deadline = fiber_clock() + timeout
-    local async_opts = {is_async = true}
+    local async_opts = {is_async = true, timeout = timeout}
     local replicaset_id = replicaset.id
     for replica_id, replica in pairs(replicaset.replicas) do
-        local conn = replicaset_connect_to_replica(replicaset, replica)
-        if conn:is_connected() then
-            ok, f = pcall(conn.call, conn, func, args, async_opts)
-            if not ok then
-                last_err = lerror.make(f)
+        replicaset_connect_to_replica(replicaset, replica)
+        ok, err = replica:check_is_connected()
+        if ok then
+            ok, res, err = replica_call(replica, func, args, async_opts)
+            if not ok and err ~= nil then
+                last_err = err
             else
-                futures[replica_id] = f
+                futures[replica_id] = res
             end
+        elseif err ~= nil then
+            last_err = err
         end
     end
     local master_id
@@ -1200,6 +1203,16 @@ local replica_mt = {
         is_connected = function(replica)
             return replica.conn and replica.conn:is_connected() and
                 conn_vconnect_check_or_close(replica.conn)
+        end,
+        -- Does the same thing as is_connected(), but returns true or nil, err.
+        check_is_connected = function(replica)
+            if not replica.conn then
+                return nil, lerror.from_string("%s.conn is nil")
+            end
+            if not replica.conn:is_connected() then
+                return nil, lerror.from_string('%s.conn is not connected')
+            end
+            return conn_vconnect_check_or_close(replica.conn)
         end,
         safe_uri = function(replica)
             local uri = luri.parse(replica.uri)
