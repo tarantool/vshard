@@ -3,6 +3,7 @@ local t = require('luatest')
 local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local lversion = require('vshard.version')
 local verror = require('vshard.error')
 
 local small_timeout_opts = {timeout = 0.01}
@@ -176,10 +177,12 @@ test_group.test_async_no_yield = function(g)
     local csw1 = fiber.self():csw()
     local ret, err = rs:callrw('get_uuid', {}, opts)
     local csw2 = fiber.self():csw()
-    if vutil.version_is_at_least(2, 11, 0, nil, 0, 0) then
-        -- Temporarily disabled until #456 is fixed.
-        -- t.assert_equals(csw2, csw1)
-        t.assert(true)
+    local tarantool211_version = lversion.new(2, 11, 3, 'entrypoint', 0, 71)
+    local tarantool30_version = lversion.new(3, 0, 1, nil, 0, 50)
+    if (vutil.core_version >= tarantool211_version and
+       vutil.core_version < lversion.new(3, 0, 0, nil, 0, 0)) or
+       vutil.core_version >= tarantool30_version then
+        t.assert_equals(csw2, csw1)
     else
         -- Due to tarantool/tarantool#9489 bug.
         t.assert_equals(csw2, csw1 + 1)
