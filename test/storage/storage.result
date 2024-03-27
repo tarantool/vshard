@@ -150,6 +150,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3301
   identification_mode: uuid_as_key
   status: 2
   replication:
@@ -272,6 +273,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3304
   identification_mode: uuid_as_key
   status: 0
   replication:
@@ -333,6 +335,7 @@ info
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 0
   replication:
@@ -364,6 +367,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 3
   replication:
@@ -396,6 +400,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3304
   identification_mode: uuid_as_key
   status: 0
   replication:
@@ -428,6 +433,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 0
   replication:
