@@ -3888,6 +3888,7 @@ local function storage_info(opts)
         }
     end
     state.replicasets = ireplicasets
+    state.identification_mode = M.current_cfg.identification_mode
     if opts and opts.with_services then
         state.services = {
             gc = M.gc_service and M.gc_service:info(),

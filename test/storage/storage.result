@@ -150,6 +150,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 2
   replication:
     status: slave
@@ -271,6 +272,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 0
   replication:
     status: follow
@@ -331,6 +333,7 @@ info
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 0
   replication:
     status: master
@@ -361,6 +364,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 3
   replication:
     status: master
@@ -392,6 +396,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 0
   replication:
     status: follow
@@ -423,6 +428,7 @@ vshard.storage.info()
     garbage: 0
     pinned: 0
     sending: 0
+  identification_mode: uuid_as_key
   status: 0
   replication:
     status: master

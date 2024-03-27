@@ -545,9 +545,11 @@ test_group.test_named_config_identification = function(g)
     -- Attempt to configure with named config without name set causes error.
     g.replica_1_a:exec(function(cfg)
         -- Name is not shown in info, when uuid identification is used.
-        local rs = ivshard.storage.info().replicasets[ivutil.replicaset_uuid()]
+        local info = ivshard.storage.info()
+        local rs = info.replicasets[ivutil.replicaset_uuid()]
         ilt.assert_equals(rs.name, nil)
         ilt.assert_equals(rs.master.name, nil)
+        ilt.assert_equals(info.identification_mode, 'uuid_as_key')
         ilt.assert_error_msg_contains('Instance name mismatch',
                                       ivshard.storage.cfg, cfg, 'replica_1_a')
     end, {new_global_cfg})
@@ -579,10 +581,12 @@ test_group.test_named_config_identification = function(g)
     t.assert_equals(rs_name_2, 'replicaset_2')
     local bid = g.replica_1_a:exec(function(name)
         -- Name is shown, when name identification is used.
-        local rs = ivshard.storage.info().replicasets[box.info.replicaset.name]
+        local info = ivshard.storage.info()
+        local rs = info.replicasets[box.info.replicaset.name]
         ilt.assert_equals(rs.name, box.info.replicaset.name)
         ilt.assert_equals(rs.uuid, nil)
         ilt.assert_equals(rs.master.name, box.info.name)
+        ilt.assert_equals(info.identification_mode, 'name_as_key')
 
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(
