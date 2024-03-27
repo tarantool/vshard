@@ -283,6 +283,7 @@ info
     available_ro: 0
     unknown: 0
     available_rw: 200
+  identification_mode: uuid_as_key
   status: 0
   alerts: []
 ...

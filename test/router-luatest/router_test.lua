@@ -683,9 +683,11 @@ g.test_named_config_identification = function(g)
         ilt.assert_not_equals(ivshard.router.buckets_info()[1].name, nil)
 
         -- vshard.router.info() also shows names.
-        local rs = ivshard.router.info().replicasets['replicaset_1']
+        local info = ivshard.router.info()
+        local rs = info.replicasets['replicaset_1']
         ilt.assert_equals(rs.name, 'replicaset_1')
         ilt.assert_equals(rs.master.name, 'replica_1_a')
+        ilt.assert_equals(info.identification_mode, 'name_as_key')
 
         -- Just a basic test.
         return ivshard.router.callrw(1, 'echo', {1}, {timeout = iwait_timeout})

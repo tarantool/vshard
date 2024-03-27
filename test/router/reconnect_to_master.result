@@ -147,6 +147,7 @@ vshard.router.info()
     available_ro: 10
     unknown: 2990
     available_rw: 0
+  identification_mode: uuid_as_key
   status: 2
   alerts:
   - ['UNREACHABLE_MASTER', 'Master of replicaset cbf06940-0790-498b-948d-042b62cf3d29

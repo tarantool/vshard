@@ -218,6 +218,7 @@ vshard.router.info()
     available_ro: 0
     unknown: 2999
     available_rw: 1
+  identification_mode: uuid_as_key
   status: 1
   alerts:
   - ['UNKNOWN_BUCKETS', '2999 buckets are not discovered']
@@ -1070,6 +1071,7 @@ info
     available_ro: 0
     unknown: 0
     available_rw: 3000
+  identification_mode: uuid_as_key
   status: 0
   alerts: []
 ...

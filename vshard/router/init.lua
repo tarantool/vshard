@@ -1568,6 +1568,7 @@ local function router_info(router, opts)
         bucket_info.unknown = '???'
         table.insert(state.alerts, lerror.alert(lerror.code.INVALID_CFG, msg))
     end
+    state.identification_mode = router.current_cfg.identification_mode
     if opts and opts.with_services then
         state.services = {
             discovery = router.discovery_service and
