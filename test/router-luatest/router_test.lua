@@ -699,3 +699,102 @@ g.test_named_config_identification = function(g)
     vtest.cluster_cfg(g, global_cfg)
     vtest.router_cfg(g.router, global_cfg)
 end
+
+--
+-- gh-ee-4: when a known master is disconnected, the router wouldn't try to find
+-- the new one and would keep trying to hit the old instance. It should instead
+-- try to locate a new master when the old one is disconnected.
+--
+g.test_master_discovery_on_disconnect = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    -- Auto-master simplifies master switch which is very needed in this test.
+    for _, rs in pairs(new_cfg_template.sharding) do
+        rs.master = 'auto'
+        for _, r in pairs(rs.replicas) do
+            r.master = nil
+        end
+    end
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_cluster_cfg)
+    g.replica_1_a:update_box_cfg{read_only = false}
+    g.replica_1_b:update_box_cfg{read_only = true}
+    g.router:exec(function()
+        -- gh-ee-9: old master search service might be still not finished.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            local router = ivshard.router.internal.static_router
+            if router.master_search_service ~= nil then
+                error('Old master search still is not canceled')
+            end
+        end)
+    end)
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    g.router:exec(function()
+        local consts = require('vshard.consts')
+        rawset(_G, 'test_old_idle_interval', consts.MASTER_SEARCH_IDLE_INTERVAL)
+        -- Make sure the router wouldn't accidentally try to re-discover the
+        -- master on its own and would only react to an explicit request.
+        consts.MASTER_SEARCH_IDLE_INTERVAL = iwait_timeout + 10
+
+        -- Ensure the service enters the long sleep.
+        local router = ivshard.router.internal.static_router
+        ivtest.service_wait_for_new_ok(router.master_search_service,
+            {on_yield = ivshard.router.master_search_wakeup})
+    end)
+
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    local function check_master(uuid)
+        local real_uuid = g.router:exec(function(bid)
+            local res, err = ivshard.router.callrw(bid, 'get_uuid', {},
+                                                   {timeout = iwait_timeout})
+            ilt.assert_equals(err, nil)
+            return res
+        end, {bid})
+        t.assert_equals(real_uuid, uuid)
+    end
+    local function actively_try_to_access_master(storage, opts)
+        g.router:exec(function(bid, rs_uuid, instance_uuid, opts)
+            local router = ivshard.router.internal.static_router
+            local rs = router.replicasets[rs_uuid]
+            local new_master = rs.replicas[instance_uuid]
+            ilt.helpers.retrying({timeout = iwait_timeout}, function()
+                if rs.master == new_master then
+                    return
+                end
+                -- RW calls will notice that the old master is disconnected and
+                -- will trigger the router to try and find a new master.
+                ivshard.router.callrw(bid, 'echo', {1}, opts)
+                error('Wait for master')
+            end)
+        end, {bid, storage:replicaset_uuid(), storage:instance_uuid(), opts})
+    end
+    --
+    -- Discover the master first time.
+    --
+    check_master(g.replica_1_a:instance_uuid())
+    --
+    -- Blocking call while the known master is disconnected.
+    --
+    g.replica_1_a:stop()
+    g.replica_1_b:update_box_cfg{read_only = false}
+    actively_try_to_access_master(g.replica_1_b, {timeout = 0.01})
+    check_master(g.replica_1_b:instance_uuid())
+    --
+    -- Async call while the known master is disconnected.
+    --
+    g.replica_1_a:start()
+    vtest.cluster_cfg(g, new_cluster_cfg)
+    g.replica_1_b:stop()
+    actively_try_to_access_master(g.replica_1_a, {is_async = true})
+    check_master(g.replica_1_a:instance_uuid())
+
+    -- Restore everything back.
+    g.router:exec(function()
+        local consts = require('vshard.consts')
+        consts.MASTER_SEARCH_IDLE_INTERVAL = _G.test_old_idle_interval
+        _G.test_old_idle_interval = nil
+    end)
+    g.replica_1_b:start()
+    vtest.router_cfg(g.router, global_cfg)
+    vtest.cluster_cfg(g, global_cfg)
+end

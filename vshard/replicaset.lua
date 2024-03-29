@@ -681,7 +681,15 @@ local function replicaset_master_call(replicaset, func, args, opts)
             opts.timeout = master.net_timeout
         end
     end
-    replicaset_connect_to_replica(replicaset, master)
+    if not master.conn or not master.conn:is_connected() then
+        replicaset_connect_to_replica(replicaset, master)
+        -- It could be that the master was disconnected due to a critical
+        -- failure and now a new master is assigned. The owner of the connector
+        -- must try to find it.
+        if replicaset.on_master_required then
+            pcall(replicaset.on_master_required)
+        end
+    end
     -- luacheck: ignore 211/net_status
     local net_status, storage_status, retval, error_object =
         replica_call(master, func, args, opts)
@@ -1062,7 +1070,11 @@ local function replicaset_locate_master(replicaset)
     local const_timeout = consts.MASTER_SEARCH_TIMEOUT
     local ok, res, err
     local master = replicaset.master
-    if master then
+    -- Only be optimistic about visiting just the current master when it is
+    -- actually alive. Otherwise when it is not connected due to a real failure,
+    -- the request would simply hang for a bit and fail. Try to find a new
+    -- master among all instances when the current one is not connected.
+    if master and master:is_connected() then
         local sync_opts = {timeout = const_timeout}
         ok, res, err = replica_call(master, func, args, sync_opts)
         if not ok then

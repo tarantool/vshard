@@ -1272,7 +1272,6 @@ local function router_cfg(router, cfg, is_reload)
     else
         log.info('Starting router reconfiguration')
     end
-    local new_replicasets = lreplicaset.buildall(vshard_cfg)
     if vshard_cfg.box_cfg_mode ~= 'manual' then
         local box_cfg = lcfg.extract_box(cfg, {})
         log.info("Calling box.cfg()...")
@@ -1295,6 +1294,12 @@ local function router_cfg(router, cfg, is_reload)
     else
         log.info("Box configuration was skipped due to the 'manual' " ..
                  "box_cfg_mode")
+    end
+    local new_replicasets = lreplicaset.buildall(vshard_cfg)
+    for _, rs in pairs(new_replicasets) do
+        rs.on_master_required = function()
+            master_search_wakeup(router)
+        end
     end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not

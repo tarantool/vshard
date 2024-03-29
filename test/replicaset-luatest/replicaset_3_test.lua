@@ -247,6 +247,62 @@ test_group.test_locate_master_when_no_conn_object = function(g)
     t.assert_equals(rs.master, rs.replicas[g.replica_1_a:instance_uuid()])
 end
 
+--
+-- gh-ee-4: when a known master is disconnected, the master locator would keep
+-- trying to hit the old instance. It should instead try to locate a new master
+-- when the old one is disconnected.
+--
+test_group.test_locate_master_after_disconnect = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs_cfg = new_cfg_template.sharding[1]
+    rs_cfg.master = 'auto'
+    rs_cfg.replicas.replica_1_a.master = nil
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    new_global_cfg.read_only = true
+    vtest.cluster_cfg(g, new_global_cfg)
+    g.replica_1_a:update_box_cfg{read_only = false}
+
+    local replicasets = vreplicaset.buildall(new_global_cfg)
+    local _, rs = next(replicasets)
+    local is_all_done = vreplicaset.locate_masters(replicasets)
+    t.assert(not is_all_done)
+    for _, r in pairs(rs.replicas) do
+        r.conn:wait_connected(vtest.wait_timeout)
+    end
+    is_all_done = vreplicaset.locate_masters(replicasets)
+    t.assert(is_all_done)
+    t.assert_equals(rs.master, rs.replicas[g.replica_1_a:instance_uuid()])
+    --
+    -- Master dies and is switched.
+    --
+    g.replica_1_a:stop()
+    g.replica_1_b:update_box_cfg{read_only = false}
+    local ok, err = rs:callrw('get_uuid', {}, {timeout = 0.01})
+    t.assert_not_equals(err, nil)
+    t.assert(not ok)
+    -- Trigger is invoked when specified.
+    local is_master_required = false
+    rs.on_master_required = function()
+        is_master_required = true
+        error('Has to be in pcall')
+    end
+    ok, err = rs:callrw('get_uuid', {}, {timeout = 0.01})
+    t.assert_not_equals(err, nil)
+    t.assert(not ok)
+    t.assert(is_master_required)
+    --
+    -- Discovery won't be stuck on just the broken master.
+    --
+    is_all_done = vreplicaset.locate_masters(replicasets)
+    t.assert(is_all_done)
+    t.assert_equals(rs.master, rs.replicas[g.replica_1_b:instance_uuid()])
+
+    -- Restore.
+    g.replica_1_b:update_box_cfg{read_only = true}
+    g.replica_1_a:start()
+    vtest.cluster_cfg(g, global_cfg)
+end
+
 test_group.test_named_replicaset = function(g)
     t.run_only_if(vutil.feature.persistent_names)
     local new_cfg_template = table.deepcopy(cfg_template)
