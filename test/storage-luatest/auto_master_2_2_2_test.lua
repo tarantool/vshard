@@ -321,3 +321,81 @@ test_group.test_conn_manager_connect_self = function(g)
     -- Cleanup
     vtest.cluster_rebalancer_disable(g)
 end
+
+test_group.test_master_discovery_on_disconnect = function(g)
+    local function bucket_send(bid, uuid)
+        local ok, err = ivshard.storage.bucket_send(
+            bid, uuid, {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+    end
+    local function bucket_gc_wait()
+        _G.bucket_gc_wait()
+    end
+    local function send_bucket_to_new_master(storage_src, storage_dst)
+        -- Make sure the bucket will not be delivered even if somehow the tiny
+        -- send-timeout appeared to be enough to send it. Just for the
+        -- simplicity of the test.
+        storage_dst:exec(function()
+            ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+        end)
+        local bid = storage_src:exec(function(rs_uuid, master_uuid)
+            local bid = _G.get_first_bucket()
+            -- Try to send a bucket. Here the sender notices that the
+            -- destination's master is disconnected. A master search is
+            -- triggered then.
+            local ok, err = ivshard.storage.bucket_send(
+                bid, rs_uuid, {timeout = 0.01})
+            ilt.assert(not ok)
+            ilt.assert_not_equals(err, nil)
+            -- Recovery will re-discover the master.
+            ivtest.service_wait_for_new_ok(
+                ivshard.storage.internal.recovery_service,
+                {on_yield = ivshard.storage.recovery_wakeup,
+                 timeout = iwait_timeout})
+            local rs = ivshard.storage.internal.replicasets[rs_uuid]
+            ilt.assert_not_equals(rs.master, nil)
+            ilt.assert_equals(rs.master.uuid, master_uuid)
+            ilt.assert_equals(box.space._bucket:get{bid}.status,
+                              ivconst.BUCKET.ACTIVE)
+            return bid
+        end, {storage_dst:replicaset_uuid(), storage_dst:instance_uuid()})
+        -- Now the bucket can be sent fine.
+        storage_dst:exec(function()
+            ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+        end)
+        storage_src:exec(bucket_send, {bid, storage_dst:replicaset_uuid()})
+        storage_src:exec(bucket_gc_wait)
+    end
+    vtest.cluster_exec_each(g, function()
+        rawset(_G, 'test_old_idle_interval',
+               ivconst.MASTER_SEARCH_IDLE_INTERVAL)
+        ivconst.MASTER_SEARCH_IDLE_INTERVAL = iwait_timeout + 10
+    end)
+    --
+    -- Discover the master first time.
+    --
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    g.replica_1_a:exec(bucket_send, {bid, g.replica_2_a:replicaset_uuid()})
+    g.replica_1_a:exec(bucket_gc_wait)
+    g.replica_2_a:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
+    g.replica_2_a:exec(bucket_gc_wait)
+    --
+    -- Blocking call while the known master is disconnected.
+    --
+    g.replica_2_a:stop()
+    g.replica_2_b:update_box_cfg{read_only = false}
+    send_bucket_to_new_master(g.replica_1_a, g.replica_2_b)
+    -- Can't GC the bucket until the old master is back. But can send it.
+    g.replica_2_b:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
+
+    -- Restore everything back.
+    g.replica_2_a:start()
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_2_b:exec(bucket_gc_wait)
+    g.replica_2_b:update_box_cfg{read_only = true}
+    vtest.cluster_exec_each(g, function()
+        ivconst.MASTER_SEARCH_IDLE_INTERVAL = _G.test_old_idle_interval
+        _G.test_old_idle_interval = nil
+    end)
+end

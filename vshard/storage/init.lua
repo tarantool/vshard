@@ -3366,8 +3366,14 @@ end
 local function conn_manager_collect_idle_conns()
     local ts = fiber_clock()
     local count = 0
-    for _, rs in pairs(M.replicasets) do
+    for rs_id, rs in pairs(M.replicasets) do
         for _, replica in pairs(rs.replicas) do
+            if replica == rs.master and rs.is_master_auto and
+               not replica:is_connected() then
+                log.warn('Discarded a not connected master %s in rs %s',
+                         rs.master, rs_id)
+                rs.master = nil
+            end
             local c = replica.conn
             if c and replica.activity_ts and
                replica.activity_ts + consts.REPLICA_NOACTIVITY_TIMEOUT < ts then
