@@ -15,8 +15,10 @@ util.push_rs_filters(test_run)
 -- allow bucket transfer or GC during a request execution.
 --
 _ = test_run:switch('box_1_a')
+vshard.storage.rebalancer_disable()
 vshard.storage.bucket_force_create(1, 100)
 _ = test_run:switch('box_2_a')
+vshard.storage.rebalancer_disable()
 vshard.storage.bucket_force_create(101, 100)
 _ = test_run:switch('box_1_a')
 
@@ -95,6 +97,10 @@ vshard.storage.buckets_info(1)
 -- function taking the lock is bucket_send, so to test that a
 -- manual bucket_send is called before rebalancer.
 --
+vshard.storage.rebalancer_enable()
+_ = test_run:switch('box_2_a')
+vshard.storage.rebalancer_enable()
+_ = test_run:switch('box_1_a')
 keep_lock = true
 send_result = nil
 -- To make first bucket_send keeping rw_lock it is necessary to
