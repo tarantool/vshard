@@ -604,11 +604,15 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
     local call
     if mode == 'read' then
         if prefer_replica then
-            if balance then
+            if balance == "prefer_zone" then
+                call = 'callbzre'
+            elseif balance then
                 call = 'callbre'
             else
                 call = 'callre'
             end
+        elseif balance == "prefer_zone" then
+            call = 'callbzro'
         elseif balance then
             call = 'callbro'
         else
@@ -725,6 +729,10 @@ local function router_callbro(router, bucket_id, ...)
     return router_call_impl(router, bucket_id, 'read', false, true, ...)
 end
 
+local function router_callbzro(router, bucket_id, ...)
+    return router_call_impl(router, bucket_id, 'read', false, "prefer_zone", ...)
+end
+
 local function router_callrw(router, bucket_id, ...)
     return router_call_impl(router, bucket_id, 'write', false, false, ...)
 end
@@ -735,6 +743,10 @@ end
 
 local function router_callbre(router, bucket_id, ...)
     return router_call_impl(router, bucket_id, 'read', true, true, ...)
+end
+
+local function router_callbzre(router, bucket_id, ...)
+    return router_call_impl(router, bucket_id, 'read', true, "prefer_zone", ...)
 end
 
 local function router_call(router, bucket_id, opts, ...)
@@ -1752,6 +1764,8 @@ local router_mt = {
         call = router_make_api(router_call),
         callro = router_make_api(router_callro),
         callbro = router_make_api(router_callbro),
+        callbzro = router_make_api(router_callbzro),
+        callbzre = router_make_api(router_callbzre),
         callrw = router_make_api(router_callrw),
         callre = router_make_api(router_callre),
         callbre = router_make_api(router_callbre),

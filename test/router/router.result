@@ -1491,6 +1491,8 @@ error_messages
   - Use replicaset:callbro(...) instead of replicaset.callbro(...)
   - Use replicaset:callre(...) instead of replicaset.callre(...)
   - Use replicaset:callro(...) instead of replicaset.callro(...)
+  - Use replicaset:callbzre(...) instead of replicaset.callbzre(...)
+  - Use replicaset:callbzro(...) instead of replicaset.callbzro(...)
   - Use replicaset:callrw(...) instead of replicaset.callrw(...)
   - Use replicaset:connect(...) instead of replicaset.connect(...)
   - Use replicaset:connect_all(...) instead of replicaset.connect_all(...)
