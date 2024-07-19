@@ -1431,6 +1431,7 @@ local function buildall(sharding_cfg)
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
                 id = replica_id,
+                failover_priority = replica.failover_priority or math.huge
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
@@ -1457,6 +1458,9 @@ local function buildall(sharding_cfg)
 
         -- Return true, if r1 has priority over r2.
         local function replica_cmp_weight(r1, r2)
+            if r1.failover_priority ~= r2.failover_priority then
+                return r1.failover_priority < r2.failover_priority
+            end
             -- Master has priority over replicas with the same
             -- weight.
             if r1.weight == r2.weight then

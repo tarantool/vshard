@@ -230,6 +230,9 @@ local replica_template = {
         name = 'UUID',
         is_optional = true,
     },
+    failover_priority = {
+        type = 'number', name = "Failover priority", is_optional = true,
+    },
 }
 
 local function check_replicas(replicas, ctx)
