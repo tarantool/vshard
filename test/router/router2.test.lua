@@ -157,7 +157,8 @@ assert(echo_count == 1)
 echo_count = 0
 -- Restore the replication so the replica gets the _func change from master.
 box.cfg{replication = old_replication}
-test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+test_run:wait_vclock('storage_2_b',                                             \
+    test_run:get_vclock('storage_1_a', {ignore_zero = true}))
 
 test_run:switch('router_1')
 ok, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
@@ -167,7 +168,8 @@ assert(err.error.code == box.error.ACCESS_DENIED)
 test_run:switch('storage_2_a')
 assert(echo_count == 0)
 box.schema.user.grant('storage', 'execute', 'function', 'vshard.storage.call')
-test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+test_run:wait_vclock('storage_2_b',                                             \
+    test_run:get_vclock('storage_1_a', {ignore_zero = true}))
 
 --
 -- No vshard function = backoff.
