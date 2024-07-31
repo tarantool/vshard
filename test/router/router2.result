@@ -394,7 +394,8 @@ echo_count = 0
 box.cfg{replication = old_replication}
  | ---
  | ...
-test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+test_run:wait_vclock('storage_2_b',                                             \
+    test_run:get_vclock('storage_1_a', {ignore_zero = true}))
  | ---
  | ...
 
@@ -425,7 +426,8 @@ assert(echo_count == 0)
 box.schema.user.grant('storage', 'execute', 'function', 'vshard.storage.call')
  | ---
  | ...
-test_run:wait_vclock('storage_2_b', test_run:get_vclock('storage_1_a'))
+test_run:wait_vclock('storage_2_b',                                             \
+    test_run:get_vclock('storage_1_a', {ignore_zero = true}))
  | ---
  | ...
 
