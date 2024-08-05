@@ -21,3 +21,4 @@ build
 .rocks
 build.luarocks
 .DS_Store
+.idea
