@@ -585,8 +585,9 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                                 balance, func, args, opts)
     local do_return_raw
     if opts then
-        if type(opts) ~= 'table' or
-           (opts.timeout and type(opts.timeout) ~= 'number') then
+        if type(opts) ~= 'table' or (opts.timeout and
+           type(opts.timeout) ~= 'number') or (opts.request_timeout and
+           type(opts.request_timeout) ~= 'number') then
             error('Usage: call(bucket_id, mode, func, args, opts)')
         end
         opts = table.copy(opts)
@@ -596,6 +597,9 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
         do_return_raw = false
     end
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    if opts.request_timeout and opts.request_timeout > timeout then
+        error('request_timeout must be <= timeout')
+    end
     local replicaset, err
     local tend = fiber_clock() + timeout
     if bucket_id > router.total_bucket_count or bucket_id <= 0 then

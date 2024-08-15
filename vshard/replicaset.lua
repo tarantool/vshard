@@ -710,7 +710,7 @@ local function can_retry_after_error(e)
         e.code == lerror.code.TRANSFER_IS_IN_PROGRESS) then
         return true
     end
-    return e.type == 'ClientError' and e.code == box.error.TIMEOUT
+    return lerror.is_timeout(e)
 end
 
 --
@@ -813,8 +813,11 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         assert(opts == nil or type(opts) == 'table')
         opts = opts and table.copy(opts) or {}
         local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
+        local request_timeout = opts.request_timeout or timeout
+        assert(request_timeout <= timeout)
+        opts.request_timeout = nil
         local net_status, storage_status, retval, err, replica
-        if timeout <= 0 then
+        if timeout <= 0 or request_timeout <= 0 then
             return nil, lerror.timeout()
         end
         local now = fiber_clock()
@@ -833,11 +836,25 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                         replica.backoff_err)
                 end
             end
-            opts.timeout = timeout
+            opts.timeout = request_timeout
             net_status, storage_status, retval, err =
                 replica_call(replica, func, args, opts)
             now = fiber_clock()
             timeout = end_time - now
+            if now + request_timeout > end_time then
+                -- The `timeout` option sets a strict limit for the entire
+                -- operation, which must not be exceeded. To ensure this, we
+                -- make as much requests as we can with the speciified
+                -- `request_timeout`. However, the last request will use all
+                -- the remaining time left within the overall `timeout`,
+                -- rather than the `request_timeout` value.
+                --
+                -- For example, if `request_timeout` is 1 second and `timeout`
+                -- is 2.5 seconds, the first two requests to the replicaset
+                -- will use a 1-second timeout,  but the last request will
+                -- have only 0.5 seconds remaining.
+                request_timeout = timeout
+            end
             if not net_status and not storage_status and
                not can_retry_after_error(retval) then
                 if can_backoff_after_error(retval, func) then

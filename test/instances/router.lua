@@ -10,6 +10,7 @@ _G.ifiber = require('fiber')
 _G.ilt = require('luatest')
 _G.imsgpack = require('msgpack')
 _G.ivtest = require('test.luatest_helpers.vtest')
+_G.ivconst = require('vshard.consts')
 _G.iwait_timeout = _G.ivtest.wait_timeout
 
 -- Do not load entire vshard into the global namespace to catch errors when code
