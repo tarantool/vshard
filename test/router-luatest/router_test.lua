@@ -798,3 +798,66 @@ g.test_master_discovery_on_disconnect = function(g)
     vtest.router_cfg(g.router, global_cfg)
     vtest.cluster_cfg(g, global_cfg)
 end
+
+g.test_request_timeout = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    --
+    -- Test request_timeout API.
+    --
+    g.router:exec(function(bid)
+        local opts = {}
+        -- request_timeout must be <= timeout.
+        local err_msg = 'request_timeout must be <= timeout'
+        opts.request_timeout = ivconst.CALL_TIMEOUT_MIN * 2
+        t.assert_error_msg_contains(err_msg, function()
+            ivshard.router.callro(bid, 'echo', {1}, opts)
+        end)
+        -- request_timeout must be a number.
+        err_msg = 'Usage: call'
+        opts.request_timeout = 'string'
+        t.assert_error_msg_contains(err_msg, function()
+            ivshard.router.callro(bid, 'echo', {1}, opts)
+        end)
+        -- request_timeout <= 0 leads to the TimeOut error.
+        err_msg = 'Timeout'
+        for _, timeout in ipairs({-1, 0}) do
+            opts.request_timeout = timeout
+            local ok, err = ivshard.router.callro(bid, 'echo', {1}, opts)
+            t.assert_not(ok)
+            t.assert_str_contains(err.message, err_msg)
+        end
+    end, {bid})
+
+    --
+    -- Test, that router makes the desired number of calls, when
+    -- request_timeout is not a divisor of the timeout.
+    --
+    g.replica_1_a:exec(function()
+        rawset(_G, 'sleep_num', 0)
+        rawset(_G, 'sleep_cond', ifiber.cond())
+        rawset(_G, 'old_get_uuid', _G.get_uuid)
+        _G.get_uuid = function()
+            _G.sleep_num = _G.sleep_num + 1
+            _G.sleep_cond:wait()
+        end
+    end)
+    g.router:exec(function(bid)
+        local ok, err = ivshard.router.callro(bid, 'get_uuid', {}, {
+            request_timeout = 1,
+            timeout = 1.5,
+        })
+        t.assert_not(ok)
+        t.assert_str_contains(err.message, 'timed out')
+    end, {bid})
+
+    -- Timeout errors are retried. Master's priority is higher, when weights
+    -- are equal, currently they're not specified at all.
+    t.assert_equals(g.replica_1_a:eval('return _G.sleep_num'), 2)
+    g.replica_1_a:exec(function()
+        _G.sleep_cond:broadcast()
+        _G.get_uuid = _G.old_get_uuid
+        _G.old_get_uuid = nil
+        _G.sleep_cond = nil
+        _G.sleep_num = nil
+    end)
+end
