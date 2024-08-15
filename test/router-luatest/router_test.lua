@@ -841,18 +841,18 @@ g.test_request_timeout = function(g)
             _G.sleep_cond:wait()
         end
     end)
-    g.router:exec(function(bid)
-        local ok, err = ivshard.router.callro(bid, 'get_uuid', {}, {
+    g.router:exec(function(bid, uuid)
+        local res = ivshard.router.callro(bid, 'get_uuid', {}, {
             request_timeout = 1,
             timeout = 1.5,
         })
-        t.assert_not(ok)
-        t.assert_str_contains(err.message, 'timed out')
-    end, {bid})
+        t.assert_equals(res, uuid)
+    end, {bid, g.replica_1_b:instance_uuid()})
 
     -- Timeout errors are retried. Master's priority is higher, when weights
-    -- are equal, currently they're not specified at all.
-    t.assert_equals(g.replica_1_a:eval('return _G.sleep_num'), 2)
+    -- are equal, currently they're not specified at all. Request to master
+    -- fails and we fallback to the replica.
+    t.assert_equals(g.replica_1_a:eval('return _G.sleep_num'), 1)
     g.replica_1_a:exec(function()
         _G.sleep_cond:broadcast()
         _G.get_uuid = _G.old_get_uuid
