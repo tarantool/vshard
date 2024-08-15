@@ -366,3 +366,138 @@ test_group.test_ipv6_uri = function(g)
     local replica_string = 'replica_1_a(storage@[::1]:3301)'
     t.assert_equals(tostring(rs.master), replica_string)
 end
+
+local function hang_get_uuid(instance)
+    instance:exec(function()
+        rawset(_G, 'sleep_num', 0)
+        rawset(_G, 'sleep_cond', ifiber.cond())
+        rawset(_G, 'old_get_uuid', _G.get_uuid)
+        _G.get_uuid = function()
+            _G.sleep_num = _G.sleep_num + 1
+            _G.sleep_cond:wait()
+        end
+    end)
+end
+
+local function reset_sleep(instance)
+    instance:exec(function()
+        _G.sleep_cond:broadcast()
+        _G.sleep_num = 0
+    end)
+end
+
+local function reset_get_uuid(instance)
+    instance:exec(function()
+        _G.sleep_cond:broadcast()
+        _G.get_uuid = _G.old_get_uuid
+        _G.old_get_uuid = nil
+        _G.sleep_cond = nil
+        _G.sleep_num = nil
+    end)
+end
+
+local function prepare_stateless_balancing_rs()
+    local new_cfg_template = table.deepcopy(cfg_template)
+    -- replica_1_b > replica_1_a (master) > replica_1_c
+    new_cfg_template.sharding[1].replicas.replica_1_b.zone = 2
+    new_cfg_template.sharding[1].replicas.replica_1_a.zone = 3
+    new_cfg_template.sharding[1].replicas.replica_1_c.zone = 4
+    new_cfg_template.zone = 1
+    new_cfg_template.weights = {
+        [1] = {
+            [2] = 1,
+            [3] = 2,
+            [4] = 3,
+        }
+    }
+
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    local _, rs = next(vreplicaset.buildall(new_global_cfg))
+    rs:wait_connected_all(timeout_opts)
+    return rs
+end
+
+test_group.test_stateless_balancing_callro = function(g)
+    local rs = prepare_stateless_balancing_rs()
+    -- replica_1_b is the prioritized one.
+    local uuid = rs:callro('get_uuid', {}, timeout_opts)
+    t.assert_equals(uuid, g.replica_1_b:instance_uuid())
+
+    --
+    -- callro fallback to lowest prioritized replica , if request to other
+    -- instances fail.
+    --
+    hang_get_uuid(g.replica_1_a)
+    hang_get_uuid(g.replica_1_b)
+    local request_timeout_opts = {request_timeout = 1, timeout = 3}
+    uuid = rs:callro('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(uuid, g.replica_1_c:instance_uuid())
+    t.assert_equals(g.replica_1_a:eval('return _G.sleep_num'), 1)
+    t.assert_equals(g.replica_1_b:eval('return _G.sleep_num'), 1)
+    reset_sleep(g.replica_1_a)
+    reset_sleep(g.replica_1_b)
+
+    --
+    -- If all instances are unresponsive, there's nothing we can do.
+    -- Test, that when timeout > request_timeout * #rs, then we make
+    -- several requests to some replicas.
+    --
+    local err
+    hang_get_uuid(g.replica_1_c)
+    request_timeout_opts.timeout = 3.5
+    uuid, err = rs:callro('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(uuid, nil)
+    -- Either 'timed out' or 'Timeout exceeded' message. Depends on version.
+    t.assert(verror.is_timeout(err))
+    t.assert_equals(g.replica_1_b:eval('return _G.sleep_num'), 2)
+    t.assert_equals(g.replica_1_c:eval('return _G.sleep_num'), 1)
+    t.assert_equals(g.replica_1_a:eval('return _G.sleep_num'), 1)
+
+    reset_get_uuid(g.replica_1_a)
+    reset_get_uuid(g.replica_1_b)
+    reset_get_uuid(g.replica_1_c)
+end
+
+test_group.test_stateless_balancing_callre = function(g)
+    local rs = prepare_stateless_balancing_rs()
+    -- replica_1_b is the prioritized one.
+    local uuid = rs:callre('get_uuid', {}, timeout_opts)
+    t.assert_equals(uuid, g.replica_1_b:instance_uuid())
+
+    --
+    -- callre fallback to another replica, if request fail.
+    --
+    hang_get_uuid(g.replica_1_b)
+    local request_timeout_opts = {request_timeout = 1, timeout = 3}
+    uuid = rs:callre('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(uuid, g.replica_1_c:instance_uuid())
+    t.assert_equals(g.replica_1_b:eval('return _G.sleep_num'), 1)
+    reset_sleep(g.replica_1_b)
+
+    --
+    -- If all replicas are unresponsive, fallback to the master.
+    --
+    hang_get_uuid(g.replica_1_c)
+    uuid = rs:callre('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(uuid, g.replica_1_a:instance_uuid())
+    t.assert_equals(g.replica_1_b:eval('return _G.sleep_num'), 1)
+    t.assert_equals(g.replica_1_c:eval('return _G.sleep_num'), 1)
+    reset_sleep(g.replica_1_b)
+    reset_sleep(g.replica_1_c)
+
+    --
+    -- If it's not enough time to make requests to all replicas and then
+    -- to master, we won't fallback to master and will fail earlier.
+    --
+    local err
+    request_timeout_opts.timeout = 1.5
+    uuid, err = rs:callre('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(uuid, nil)
+    -- Either 'timed out' or 'Timeout exceeded' message. Depends on version.
+    t.assert(verror.is_timeout(err))
+    t.assert_equals(g.replica_1_b:eval('return _G.sleep_num'), 1)
+    t.assert_equals(g.replica_1_c:eval('return _G.sleep_num'), 1)
+
+    reset_get_uuid(g.replica_1_b)
+    reset_get_uuid(g.replica_1_c)
+end

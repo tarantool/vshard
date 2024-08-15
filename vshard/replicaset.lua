@@ -750,19 +750,6 @@ local function can_backoff_after_error(e, func)
 end
 
 --
--- Pick a next replica according to round-robin load balancing
--- policy.
---
-local function replicaset_balance_replica(replicaset)
-    local i = replicaset.balance_i
-    local pl = replicaset.priority_list
-    local size = #pl
-    replicaset.balance_i = i % size + 1
-    assert(i <= size)
-    return pl[i]
-end
-
---
 -- Template to implement a function able to visit multiple
 -- replicas with certain details. One of applications - a function
 -- making a call on a nearest available replica. It is possible
@@ -771,42 +758,58 @@ end
 -- until failover fiber will repair the nearest connection.
 --
 local function replicaset_template_multicallro(prefer_replica, balance)
-    local function pick_next_replica(replicaset, now)
+    --
+    -- Stateful balancing (balance = true) changes the current
+    -- replicaset.balance_i, consequently balancing is preserved between
+    -- requests, sequential requests will go to different replicas.
+    --
+    -- Stateless balancing (balance = false) is local to the current call, it
+    -- doesn't change priority list, every new request is firstly made to the
+    -- most preferred replica. If request fails with TimeOut error, it's
+    -- retried with the next replica by priority in scope of the same call.
+    --
+    local function replicaset_balance_replica(replicaset, state)
+        local i
+        local pl = replicaset.priority_list
+        local size = #pl
+        if balance then
+            i = replicaset.balance_i
+            replicaset.balance_i = i % size + 1
+        else
+            i = state.balance_i
+            state.balance_i = state.balance_i % size + 1
+        end
+        assert(i <= size)
+        return pl[i]
+    end
+
+    --
+    -- Pick a next replica according to round-robin load balancing policy.
+    --
+    local function pick_next_replica(replicaset, now, state)
         local r
         local master = replicaset.master
-        if balance then
-            local i = #replicaset.priority_list
-            while i > 0 do
-                r = replicaset_balance_replica(replicaset)
-                i = i - 1
-                if r:is_connected() and (not prefer_replica or r ~= master) and
-                   replica_check_backoff(r, now) then
-                    return r
-                end
-            end
-        else
-            local start_r = replicaset.replica
-            r = start_r
-            while r do
-                if r:is_connected() and (not prefer_replica or r ~= master) and
-                   replica_check_backoff(r, now) then
-                    return r
-                end
-                r = r.next_by_priority
-            end
-            -- Iteration above could start not from the best prio replica.
-            -- Check the beginning of the list too.
-            for _, r in ipairs(replicaset.priority_list) do
-                if r == start_r then
-                    -- Reached already checked part.
-                    break
-                end
-                if r:is_connected() and (not prefer_replica or r ~= master) and
-                   replica_check_backoff(r, now) then
-                    return r
-                end
+        local i = #replicaset.priority_list
+        if prefer_replica and state.balance_checked_num >= i then
+            -- callre should fallback to master if it tried to access all
+            -- replicas and didn't succeed (connections are broken, replicas
+            -- are in backoff (e.g. due to insuficient privileges) or
+            -- requests failed with timed out error (request_timeout).
+            goto fallback_to_master
+        end
+        while i > 0 do
+            i = i - 1
+            state.balance_checked_num = state.balance_checked_num + 1
+            r = replicaset_balance_replica(replicaset, state)
+            if r:is_connected() and (not prefer_replica or r ~= master) and
+               replica_check_backoff(r, now) then
+                return r
             end
         end
+
+::fallback_to_master::
+        state.balance_checked_num = 0
+        return nil
     end
 
     return function(replicaset, func, args, opts)
@@ -820,10 +823,26 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         if timeout <= 0 or request_timeout <= 0 then
             return nil, lerror.timeout()
         end
+        local state = {
+            -- Number of replicas, we tried to access. See pick_next_replica()
+            -- for details. Used only when prefer_replica = true.
+            balance_checked_num = 0,
+            -- Stateless balancer index. See replicaset_balance_replica() for
+            -- details. Used only when balance = true.
+            balance_i = 1,
+        }
+        if not balance and replicaset.replica then
+            -- Initialize stateless balancer with replicaset.replica's index.
+            replica = replicaset.priority_list[state.balance_i]
+            while replica ~= replicaset.replica do
+                state.balance_i = state.balance_i + 1
+                replica = replicaset.priority_list[state.balance_i]
+            end
+        end
         local now = fiber_clock()
         local end_time = now + timeout
         while not net_status and timeout > 0 do
-            replica = pick_next_replica(replicaset, now)
+            replica = pick_next_replica(replicaset, now, state)
             if not replica then
                 replica, timeout = replicaset_wait_master(replicaset, timeout)
                 if not replica then
