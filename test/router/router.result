@@ -1527,7 +1527,8 @@ table.sort(error_messages)
 ...
 error_messages
 ---
-- - Use replica:check_is_connected(...) instead of replica.check_is_connected(...)
+- - Use replica:call(...) instead of replica.call(...)
+  - Use replica:check_is_connected(...) instead of replica.check_is_connected(...)
   - Use replica:detach_conn(...) instead of replica.detach_conn(...)
   - Use replica:is_connected(...) instead of replica.is_connected(...)
   - Use replica:safe_uri(...) instead of replica.safe_uri(...)

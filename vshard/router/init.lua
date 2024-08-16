@@ -44,6 +44,7 @@ if not M then
             ERRINJ_CFG = false,
             ERRINJ_CFG_DELAY = false,
             ERRINJ_FAILOVER_CHANGE_CFG = false,
+            ERRINJ_FAILOVER_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
             ERRINJ_MASTER_SEARCH_DELAY = false,
@@ -973,41 +974,26 @@ end
 -- Failover
 --------------------------------------------------------------------------------
 
-local function failover_ping_round(router)
-    for _, replicaset in pairs(router.replicasets) do
-        local replica = replicaset.replica
-        if replica ~= nil and replica.conn ~= nil and
-           replica.down_ts == nil then
-            if not replica.conn:ping({timeout =
-                                      router.failover_ping_timeout}) then
-                log.info('Ping error from %s: perhaps a connection is down',
-                         replica)
-                -- Connection hangs. Recreate it to be able to
-                -- fail over to a replica next by priority. The
-                -- old connection is not closed in case if it just
-                -- processes too big response at this moment. Any
-                -- way it will be eventually garbage collected
-                -- and closed.
-                replica:detach_conn()
-                replicaset:connect_replica(replica)
-            end
-        end
-    end
-end
-
 --
 -- Replicaset must fall its replica connection to lower priority,
 -- if the current one is down too long.
 --
 local function failover_need_down_priority(replicaset, curr_ts)
     local r = replicaset.replica
+    if not r or not r.next_by_priority then
+        return false
+    end
     -- down_ts not nil does not mean that the replica is not
     -- connected. Probably it is connected and now fetches schema,
     -- or does authorization. Either case, it is healthy, no need
     -- to down the prio.
-    return r and r.down_ts and not r:is_connected() and
-           curr_ts - r.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
-           and r.next_by_priority
+    local is_down_ts = r.down_ts and not r:is_connected() and
+                       curr_ts - r.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
+    -- If we failed several sequential requests to replica, then something
+    -- is wrong with it. Temporary lower its priority.
+    local is_sequential_fails =
+        r.net_sequential_fail >= consts.FAILOVER_DOWN_SEQUENTIAL_FAIL
+    return is_down_ts or is_sequential_fails
 end
 
 --
@@ -1035,6 +1021,49 @@ local function failover_collect_to_update(router)
     return id_to_update
 end
 
+local function failover_ping(replica, opts)
+    return replica:call('vshard.storage._call', {'info'}, opts)
+end
+
+local function failover_ping_round(router, curr_ts)
+    local opts = {timeout = router.failover_ping_timeout}
+    for _, replicaset in pairs(router.replicasets) do
+        local replica = replicaset.replica
+        if failover_need_up_priority(replicaset, curr_ts) then
+            -- When its time to increase priority in replicaset, all instances,
+            -- priority of which are higher than the current one,are pinged so
+            -- that we know, which connections are working properly.
+            for _, r in pairs(replicaset.priority_list) do
+                if r == replica then
+                    break
+                end
+                if r.conn ~= nil and r.down_ts == nil then
+                    -- We don't need return values, r.net_sequential_ok is
+                    -- incremented on succcessful request.
+                    failover_ping(r, opts)
+                end
+            end
+        end
+        if replica ~= nil and replica.conn ~= nil and
+           replica.down_ts == nil then
+            local net_status, _, err = failover_ping(replica, opts)
+            if not net_status then
+                log.info('Ping error from %s: perhaps a connection is down: %s',
+                         replica, err)
+                -- Connection hangs. Recreate it to be able to
+                -- fail over to a replica next by priority. The
+                -- old connection is not closed in case if it just
+                -- processes too big response at this moment. Any
+                -- way it will be eventually garbage collected
+                -- and closed.
+                replica:detach_conn()
+                replicaset:connect_replica(replica)
+            end
+        end
+    end
+end
+
+
 --
 -- Detect not optimal or disconnected replicas. For not optimal
 -- try to update them to optimal, and down priority of
@@ -1042,12 +1071,12 @@ end
 -- @retval true A replica of an replicaset has been changed.
 --
 local function failover_step(router)
-    failover_ping_round(router)
+    local curr_ts = fiber_clock()
+    failover_ping_round(router, curr_ts)
     local id_to_update = failover_collect_to_update(router)
     if #id_to_update == 0 then
         return false
     end
-    local curr_ts = fiber_clock()
     local replica_is_changed = false
     for _, id in pairs(id_to_update) do
         local rs = router.replicasets[id]
@@ -1105,6 +1134,12 @@ local function failover_service_f(router, service)
     -- each min_timeout seconds.
     local prev_was_ok = false
     while module_version == M.module_version do
+        if M.errinj.ERRINJ_FAILOVER_DELAY then
+            M.errinj.ERRINJ_FAILOVER_DELAY = 'in'
+            repeat
+                lfiber.sleep(0.001)
+            until not M.errinj.ERRINJ_FAILOVER_DELAY
+        end
         service:next_iter()
         service:set_activity('updating replicas')
         local ok, replica_is_changed = pcall(failover_step, router)

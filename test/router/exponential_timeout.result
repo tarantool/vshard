@@ -28,9 +28,10 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 _ = test_run:cmd("create server router_1 with script='router/router_1.lua'")
 ---
 ...
--- Discovery algorithm changes sometimes and should not affect the
+-- Discovery algorithm and failover changes sometimes and should not affect the
 -- exponential timeout test.
-_ = test_run:cmd("start server router_1 with args='discovery_disable'")
+_ = test_run:cmd("start server router_1 with " ..                               \
+                 "args='discovery_disable failover_disable'")
 ---
 ...
 _ = test_run:switch('router_1')
@@ -103,7 +104,7 @@ util.collect_timeouts(rs1)
 - - fail: 0
     ok: 0
     timeout: 0.5
-  - fail: 1
+  - fail: 2
     ok: 0
     timeout: 1
 ...

@@ -483,8 +483,10 @@ end
 --
 local function replicaset_down_replica_priority(replicaset)
     local old_replica = replicaset.replica
-    assert(old_replica and old_replica.down_ts and
-           not old_replica:is_connected())
+    assert(old_replica and ((old_replica.down_ts and
+           not old_replica:is_connected()) or
+           old_replica.net_sequential_fail >=
+           consts.FAILOVER_DOWN_SEQUENTIAL_FAIL))
     local new_replica = old_replica.next_by_priority
     if new_replica then
         assert(new_replica ~= old_replica)
@@ -511,7 +513,8 @@ local function replicaset_up_replica_priority(replicaset)
             -- Failed to up priority.
             return
         end
-        if replica:is_connected() then
+        if replica:is_connected() and replica.net_sequential_ok > 0 then
+            assert(replica.net_sequential_fail == 0)
             replicaset.replica = replica
             assert(not old_replica or
                    old_replica.weight >= replicaset.replica.weight)
@@ -527,15 +530,12 @@ end
 --
 local function replica_on_failed_request(replica)
     replica.net_sequential_ok = 0
-    local val = replica.net_sequential_fail + 1
-    if val >= 2 then
+    replica.net_sequential_fail = replica.net_sequential_fail + 1
+    if replica.net_sequential_fail >= 2 then
         local new_timeout = replica.net_timeout * 2
         if new_timeout <= consts.CALL_TIMEOUT_MAX then
             replica.net_timeout = new_timeout
         end
-        replica.net_sequential_fail = 1
-    else
-        replica.net_sequential_fail = val
     end
 end
 
@@ -1268,6 +1268,7 @@ local replica_mt = {
             return util.uri_format(uri)
         end,
         detach_conn = replica_detach_conn,
+        call = replica_call,
     },
     __tostring = function(replica)
         if replica.name then
