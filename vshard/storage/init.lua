@@ -92,6 +92,7 @@ if not M then
             ERRINJ_BUCKET_GC_PAUSE = false,
             ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false,
             ERRINJ_APPLY_ROUTES_STOP_DELAY = false,
+            ERRINJ_SKIP_BUCKET_STATUS_VALIDATE = false,
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -504,6 +505,9 @@ local function bucket_prepare_update(old_bucket, new_bucket)
     if new_status == old_status then
         return
     end
+    if M.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE then
+        return
+    end
     local src = bucket_state_edges[old_status]
     if not src or not bucket_state_edges[new_status] then
         bucket_reject_update(bid, "unknown bucket status '%s'",
@@ -521,6 +525,9 @@ local function bucket_prepare_delete(bucket)
     local ref = M.bucket_refs[bid]
     if ref ~= nil and (ref.ro > 0 or ref.rw > 0) then
         bucket_reject_update(bid, "can't delete a bucket with refs")
+    end
+    if M.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE then
+        return
     end
     local src = bucket_state_edges[status]
     if not src then

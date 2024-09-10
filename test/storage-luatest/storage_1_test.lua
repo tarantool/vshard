@@ -208,3 +208,20 @@ test_group.test_named_hot_reload = function(g)
         _G.vshard.storage = storage
     end)
 end
+
+--
+-- gh-489: allow to turn off checking the bucket status.
+--
+test_group.test_bucket_skip_validate = function(g)
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        internal.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE = true
+
+        local bid = _G.get_first_bucket()
+        box.space._bucket:update(bid, {{'=', 2, 'receiving'}})
+        box.space._bucket:delete(bid)
+        box.space._bucket:insert({bid, 'active'})
+
+        internal.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE = false
+    end)
+end
