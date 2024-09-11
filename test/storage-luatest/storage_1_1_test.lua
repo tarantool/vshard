@@ -2,6 +2,7 @@ local t = require('luatest')
 local vconst = require('vshard.consts')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local lserver = require('test.luatest_helpers.server')
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -530,4 +531,62 @@ test_group.test_noactivity_timeout_for_explicit_master = function(g)
         ilt.assert(ok)
         _G.bucket_gc_wait()
     end, {g.replica_1_a:replicaset_uuid(), bid})
+end
+
+--
+-- gh-490: wait_lsn function didn't take into account, that there may
+-- be non anonymous replicas in box.info.replication, which are not
+-- accessible (e.g. CDC). Such replica broke GC process.
+--
+test_group.test_gc_with_non_anon_replica_in_cluster = function(g)
+    local box_cfg = {}
+    box_cfg.replication = {g.replica_1_a.net_box_uri}
+    local server = lserver:new({box_cfg = box_cfg, alias = 'cdc'})
+    server:start()
+    local id = server:instance_id()
+    server:drop()
+
+    vtest.cluster_exec_each_master(g, function(engine)
+        local format = {
+            {'id', 'unsigned'},
+            {'bid', 'unsigned'},
+        }
+        local s = box.schema.create_space('test', {
+            engine = engine,
+            format = format,
+        })
+        s:create_index('pk')
+        s:create_index('bucket_id', {unique = false, parts = {2}})
+    end, {g.params.engine})
+
+    local bid = g.replica_1_a:exec(function(dst)
+        local opts = {timeout = iwait_timeout}
+        local bid = _G.get_first_bucket()
+        -- Bump vclock of the master.
+        box.space.test:insert({1, bid})
+
+        -- Send bucket so that sent/garbage remains.
+        local ok, err = ivshard.storage.bucket_send(bid, dst, opts)
+        ilt.assert_equals(err, nil, 'bucket_send no error')
+        ilt.assert(ok, 'bucket_send ok')
+
+        -- This failed before the patch.
+        _G.bucket_gc_wait()
+        ivshard.storage.sync()
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    g.replica_2_a:exec(function(bid, dst)
+        local opts = {timeout = iwait_timeout}
+        local ok, err = ivshard.storage.bucket_send(bid, dst, opts)
+        ilt.assert_equals(err, nil, 'bucket_send no error')
+        ilt.assert(ok, 'bucket_send ok')
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+
+    g.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {id})
+    vtest.cluster_exec_each_master(g, function()
+        box.space.test:drop()
+    end)
 end

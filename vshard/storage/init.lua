@@ -1140,12 +1140,35 @@ end
 local function vclock_lesseq(vc1, vc2)
     local lesseq = true
     for i, lsn in ipairs(vc1) do
+        if i == 0 then
+            -- Skip local component.
+            goto continue
+        end
         lesseq = lesseq and lsn <= (vc2[i] or 0)
         if not lesseq then
             break
         end
+        ::continue::
     end
     return lesseq
+end
+
+local function is_replica_in_configuration(replica)
+    local is_named = M.this_replica.id == M.this_replica.name
+    local id = is_named and replica.name or replica.uuid
+    if id ~= nil then
+        -- In most cases name or uuid are properly set.
+        return M.this_replicaset.replicas[id] ~= nil
+    end
+
+    -- When named identification is used it's possible, that names
+    -- have not been set yet: we're working on top of schema < 3.0.0.
+    -- If user passed uuid to the configuration, then we can validate
+    -- such replica by checking UUIDs of replicaset.replicas, but we
+    -- won't do that, since if user didn't specify the uuid, then it's
+    -- anyway better to check the downstream rather than fail immediately,
+    -- in most cases it'll pass.
+    return true
 end
 
 local function wait_lsn(timeout, interval)
@@ -1163,6 +1186,14 @@ local function wait_lsn(timeout, interval)
             if replica.id == current_id then
                 goto continue
             end
+
+            -- We must validate, that we're checking downstream of the replica.
+            -- which was actually configured as vshard storage and not some CDC.
+            -- If we're not sure, then we'll anyway check it.
+            if not is_replica_in_configuration(replica) then
+                goto continue
+            end
+
             local down = replica.downstream
             if not down or (down.status == 'stopped' or
                             not vclock_lesseq(vclock, down.vclock)) then
