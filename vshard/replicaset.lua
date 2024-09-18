@@ -1514,15 +1514,31 @@ local function buildall(sharding_cfg)
     return new_replicasets
 end
 
---
--- Wait for masters connection during RECONNECT_TIMEOUT seconds.
---
-local function wait_masters_connect(replicasets)
-    for _, rs in pairs(replicasets) do
-        if rs.master then
-            rs.master.conn:wait_connected(consts.RECONNECT_TIMEOUT)
+local function wait_masters_connect(replicasets, timeout)
+    local err, err_id
+    -- Start connecting to all masters in parallel.
+    local deadline = fiber_clock() + timeout
+    for _, replicaset in pairs(replicasets) do
+        local master
+        master, err = replicaset:wait_master(timeout)
+        if not master then
+            err_id = replicaset.id
+            goto fail
+        end
+        replicaset:connect_replica(master)
+        timeout = deadline - fiber_clock()
+    end
+    -- Wait until all connections are established.
+    for _, replicaset in pairs(replicasets) do
+        timeout, err = replicaset:wait_connected(timeout)
+        if not timeout then
+            err_id = replicaset.id
+            goto fail
         end
     end
+    do return timeout end
+    ::fail::
+    return nil, err, err_id
 end
 
 return {

@@ -1503,6 +1503,7 @@ error_messages
   - Use replicaset:update_master(...) instead of replicaset.update_master(...)
   - Use replicaset:wait_connected(...) instead of replicaset.wait_connected(...)
   - Use replicaset:wait_connected_all(...) instead of replicaset.wait_connected_all(...)
+  - Use replicaset:wait_master(...) instead of replicaset.wait_master(...)
 ...
 _, replica = next(replicaset.replicas)
 ---

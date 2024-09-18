@@ -226,33 +226,34 @@ test_group.test_bucket_skip_validate = function(g)
     end)
 end
 
-test_group.test_ref_with_lookup = function(g)
+test_group.test_ref_with_buckets = function(g)
     g.replica_1_a:exec(function()
+        local lref = require('vshard.storage.ref')
         local res, err, _
-        local timeout = 0.1
         local rid = 42
         local bids = _G.get_n_buckets(2)
-        local bid_extra = 3001
+        local bucket_count = ivshard.storage.internal.total_bucket_count
 
-        -- Check for a single bucket.
+        -- No buckets.
         res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
-            rid,
-            timeout,
-            {bids[1]}
-        )
+            'storage_ref_with_buckets', rid, iwait_timeout, {})
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {moved = {}})
+        ilt.assert_equals(lref.count, 0)
+
+        -- Check for a single ok bucket.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_buckets', rid, iwait_timeout, {bids[1]})
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {rid = rid, moved = {}})
+        ilt.assert_equals(lref.count, 1)
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
+        ilt.assert_equals(lref.count, 0)
 
-        -- Check for multiple buckets.
+        -- Check for multiple ok buckets.
         res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
-            rid,
-            timeout,
-            {bids[1], bids[2]}
-        )
+            'storage_ref_with_buckets', rid, iwait_timeout, {bids[1], bids[2]})
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {rid = rid, moved = {}})
         _, err = ivshard.storage._call('storage_unref', rid)
@@ -260,83 +261,69 @@ test_group.test_ref_with_lookup = function(g)
 
         -- Check for double referencing.
         res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
-            rid,
-            timeout,
-            {bids[1], bids[1]}
-        )
+            'storage_ref_with_buckets', rid, iwait_timeout, {bids[1], bids[1]})
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {rid = rid, moved = {}})
+        ilt.assert_equals(lref.count, 1)
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
+        ilt.assert_equals(lref.count, 0)
+
+        -- Bucket mix.
+        res, err = ivshard.storage._call(
+            'storage_ref_with_buckets', rid, iwait_timeout,
+            {bucket_count + 1, bids[1], bucket_count + 2, bids[2],
+             bucket_count + 3})
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, {
+            rid = rid,
+            moved = {bucket_count + 1, bucket_count + 2, bucket_count + 3}
+        })
         _, err = ivshard.storage._call('storage_unref', rid)
-        t.assert_str_contains(err.message,
-                              'Can not delete a storage ref: no ref')
-
-        -- Check for an absent bucket.
-        res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
-            rid,
-            timeout,
-            {bids[1], bids[2], bid_extra}
-        )
-        ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {rid = rid, moved = {bid_extra}})
-        _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
 
-        -- Check that we do not create a reference if there are no buckets.
+        -- No ref when all buckets are missing.
         res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
+            'storage_ref_with_buckets',
             rid,
-            timeout,
-            {bid_extra}
+            iwait_timeout,
+            {bucket_count + 1, bucket_count + 2}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {rid = nil, moved = {bid_extra}})
-        res, err = ivshard.storage._call('storage_unref', rid)
-        t.assert_str_contains(err.message,
-                              'Can not delete a storage ref: no ref')
-        ilt.assert_equals(res, nil)
+        ilt.assert_equals(res, {moved = {bucket_count + 1, bucket_count + 2}})
+        ilt.assert_equals(lref.count, 0)
 
-        -- Check for a timeout.
-        -- Emulate a case when all buckets are not writable.
-        local func = ivshard.storage.internal.bucket_are_all_rw
-        ivshard.storage.internal.bucket_are_all_rw = function() return false end
+        -- Timeout when some buckets aren't writable. Doesn't have to be the
+        -- same buckets as for moving.
+        _G.bucket_recovery_pause()
+        box.space._bucket:update(
+            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}})
         res, err = ivshard.storage._call(
-            'storage_ref_with_lookup',
-            rid,
-            timeout,
-            {bids[1]}
-        )
-        ivshard.storage.internal.bucket_are_all_rw = func
+            'storage_ref_with_buckets', rid, 0.01, {bids[2]})
+        box.space._bucket:update(
+            {bids[1]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _G.bucket_recovery_continue()
         t.assert_str_contains(err.message, 'Timeout exceeded')
         ilt.assert_equals(res, nil)
-        -- Check that the reference was not created.
-        res, err = ivshard.storage._call('storage_unref', rid)
-        t.assert_str_contains(err.message,
-                              'Can not delete a storage ref: no ref')
-        ilt.assert_equals(res, nil)
+        ilt.assert_equals(lref.count, 0)
     end)
 end
 
-test_group.test_absent_buckets = function(g)
+test_group.test_moved_buckets = function(g)
     g.replica_1_a:exec(function()
         local res, err = ivshard.storage._call(
-            'storage_absent_buckets',
+            'moved_buckets',
             {_G.get_first_bucket()}
         )
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {moved = {}})
-    end)
 
-    g.replica_1_a:exec(function()
-        local bid_extra = 3001
-        local res, err = ivshard.storage._call(
-            'storage_absent_buckets',
-            {_G.get_first_bucket(), bid_extra}
+        local bucket_count = ivshard.storage.internal.total_bucket_count
+        res, err = ivshard.storage._call(
+            'moved_buckets',
+            {_G.get_first_bucket(), bucket_count + 1, bucket_count + 2}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {bid_extra}})
+        ilt.assert_equals(res, {moved = {bucket_count + 1, bucket_count + 2}})
     end)
 end

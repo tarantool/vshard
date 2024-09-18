@@ -3187,7 +3187,7 @@ end
 -- @return A dictionary with a list of bucket identifiers which are
 --         not present on the current instance.
 --
-local function storage_absent_buckets(bucket_ids)
+local function storage_moved_buckets(bucket_ids)
     local status = consts.BUCKET
     local moved_buckets = {}
     for _, bucket_id in pairs(bucket_ids) do
@@ -3212,31 +3212,13 @@ end
 --         are absent, the reference is not created and a nil reference id
 --         with the list of absent buckets is returned.
 --
-local function storage_ref_with_lookup(rid, timeout, bucket_ids)
-    local moved = storage_absent_buckets(bucket_ids).moved
+local function storage_ref_with_buckets(rid, timeout, bucket_ids)
+    local moved = storage_moved_buckets(bucket_ids).moved
     if #moved == #bucket_ids then
-        -- Take an advantage that moved buckets are returned in the same
-        -- order as in the input list.
-        local do_match = true
-        local next_moved = next(moved)
-        local next_passed = next(bucket_ids)
-        ::continue::
-        if next_moved then
-            if next_moved == next_passed then
-                next_moved = next(moved, next_moved)
-                next_passed = next(bucket_ids, next_passed)
-                goto continue
-            else
-                do_match = false
-            end
-        end
-        if do_match then
-            -- If all the passed buckets are absent, there is no need
-            -- to create a ref.
-            return {rid = nil, moved = moved}
-        end
+        -- If all the passed buckets are absent, there is no need to create a
+        -- ref.
+        return {rid = nil, moved = moved}
     end
-
     local ok, err = storage_ref(rid, timeout)
     if not ok then
         return nil, err
@@ -3298,9 +3280,9 @@ service_call_api = setmetatable({
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
-    storage_absent_buckets = storage_absent_buckets,
+    moved_buckets = storage_moved_buckets,
     storage_ref = storage_ref,
-    storage_ref_with_lookup = storage_ref_with_lookup,
+    storage_ref_with_buckets = storage_ref_with_buckets,
     storage_unref = storage_unref,
     storage_map = storage_map,
     info = storage_service_info,
