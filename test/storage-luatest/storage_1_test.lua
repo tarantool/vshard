@@ -282,7 +282,8 @@ test_group.test_ref_with_lookup = function(g)
         )
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {rid = rid, moved = {bid_extra}})
-        ivshard.storage._call('storage_unref', rid)
+        _, err = ivshard.storage._call('storage_unref', rid)
+        ilt.assert_equals(err, nil)
 
         -- Check that we do not create a reference if there are no buckets.
         res, err = ivshard.storage._call(
@@ -326,7 +327,7 @@ test_group.test_absent_buckets = function(g)
             {_G.get_first_bucket()}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {})
+        ilt.assert_equals(res, {moved = {}})
     end)
 
     g.replica_1_a:exec(function()
@@ -336,6 +337,6 @@ test_group.test_absent_buckets = function(g)
             {_G.get_first_bucket(), bid_extra}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {bid_extra})
+        ilt.assert_equals(res, {moved = {bid_extra}})
     end)
 end
