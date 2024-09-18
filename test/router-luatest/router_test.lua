@@ -288,21 +288,16 @@ end
 
 g.test_group_buckets = function(g)
     local bids = vtest.storage_get_n_buckets(g.replica_1_a, 2)
-
-    local res = g.router:exec(function(bid1, bid2)
-        local val, err = ivshard.router._buckets_group({bid2, bid1, bid1})
-        return {
-            val = val,
-            err = err,
-        }
+    local val, err = g.router:exec(function(bid1, bid2)
+        return ivshard.router._buckets_group({bid2, bid1, bid1, bid2},
+                                             ivtest.wait_timeout)
     end, {bids[1], bids[2]})
-    assert(res.err == nil)
+    assert(err == nil)
     local rs1_uuid = g.replica_1_a:replicaset_uuid()
     local expected = {
-        [rs1_uuid] = {bids[1], bids[2]},
+        [rs1_uuid] = {bids[2], bids[1]},
     }
-    table.sort(expected[rs1_uuid])
-    t.assert_equals(res.val, expected)
+    t.assert_equals(val, expected)
 end
 
 g.test_uri_compare_and_reuse = function(g)
