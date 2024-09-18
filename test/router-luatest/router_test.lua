@@ -290,7 +290,7 @@ g.test_group_buckets = function(g)
     local bids = vtest.storage_get_n_buckets(g.replica_1_a, 2)
 
     local res = g.router:exec(function(bid1, bid2)
-        local val, err = ivshard.router.group({bid2, bid1, bid1})
+        local val, err = ivshard.router._buckets_group({bid2, bid1, bid1})
         return {
             val = val,
             err = err,

@@ -2066,6 +2066,7 @@ local router_mt = {
         discovery_set = router_make_api(discovery_set),
         _route_map_clear = router_make_api(route_map_clear),
         _bucket_reset = router_make_api(bucket_reset),
+        _buckets_group = router_make_api(buckets_group),
         disable = router_disable,
         enable = router_enable,
     }
