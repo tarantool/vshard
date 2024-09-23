@@ -12,8 +12,8 @@ vshard_copy_path = util.git_checkout('vshard_git_tree_copy',                    
 
 REPLICASET_1 = { 'storage_1_a', 'storage_1_b' }
 REPLICASET_2 = { 'storage_2_a', 'storage_2_b' }
-test_run:create_cluster(REPLICASET_1, 'reload_evolution')
-test_run:create_cluster(REPLICASET_2, 'reload_evolution')
+test_run:create_cluster(REPLICASET_1, 'reload_evolution', {args = vshard_copy_path})
+test_run:create_cluster(REPLICASET_2, 'reload_evolution', {args = vshard_copy_path})
 util = require('util')
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
 util.wait_master(test_run, REPLICASET_2, 'storage_2_a')

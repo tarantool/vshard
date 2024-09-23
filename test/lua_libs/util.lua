@@ -181,8 +181,10 @@ if not BUILDDIR then
     BUILDDIR = SOURCEDIR
 end
 
+local VARDIR = fio.abspath(os.getenv('VARDIR') or './')
+
 local function git_checkout(dst_dir, version)
-    local vshard_copy_path = BUILDDIR..'/test/var/'..dst_dir
+    local vshard_copy_path = VARDIR..'/'..dst_dir
     -- Cleanup the directory after a previous build.
     os.execute('rm -rf ' .. vshard_copy_path)
     -- `git worktree` cannot be used because PACKPACK mounts
