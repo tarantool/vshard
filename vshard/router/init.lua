@@ -762,6 +762,95 @@ local function router_call(router, bucket_id, opts, ...)
 end
 
 --
+-- Perform map-reduce stages on the given set of replicasets. The map expects a
+-- valid ref ID which must be done beforehand.
+--
+local function replicasets_map_reduce(replicasets, rid, func, args, opts)
+    assert(opts)
+    local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    local do_return_raw = opts.return_raw
+    local deadline = fiber_clock() + timeout
+    local opts_map = {is_async = true, return_raw = do_return_raw}
+    local futures = {}
+    local map = {}
+    --
+    -- Map stage: send.
+    --
+    args = {'storage_map', rid, func, args}
+    for _, rs in pairs(replicasets) do
+        local res, err = rs:callrw('vshard.storage._call', args, opts_map)
+        if res == nil then
+            return nil, err, rs.id
+        end
+        futures[rs.id] = res
+    end
+    --
+    -- Map stage: collect.
+    --
+    if do_return_raw then
+        for id, f in pairs(futures) do
+            local res, err = future_wait(f, timeout)
+            if res == nil then
+                return nil, err, id
+            end
+            -- Map returns true,res or nil,err.
+            res = res:iterator()
+            local count = res:decode_array_header()
+            local ok = res:decode()
+            if ok == nil then
+                return nil, res:decode(), id
+            end
+            if count > 1 then
+                map[id] = res:take_array(count - 1)
+            end
+            timeout = deadline - fiber_clock()
+        end
+    else
+        for id, f in pairs(futures) do
+            local res, err = future_wait(f, timeout)
+            if res == nil then
+                return nil, err, id
+            end
+            local ok
+            -- Map returns true,res or nil,err.
+            ok, res = res[1], res[2]
+            if ok == nil then
+                return nil, res, id
+            end
+            if res ~= nil then
+                -- Store as a table so in future it could be extended for
+                -- multireturn.
+                map[id] = {res}
+            end
+            timeout = deadline - fiber_clock()
+        end
+    end
+    return map
+end
+
+--
+-- Cancel whatever pending requests are still waiting for a response and free
+-- the given ref ID on all the affected storages. This is helpful when
+-- map-reduce breaks in the middle. Makes sense to let the refs go to unblock
+-- the rebalancer.
+--
+local function replicasets_map_cancel_refs(replicasets, futures, rid)
+    local opts_async = {is_async = true}
+    for id, f in pairs(futures) do
+        f:discard()
+        -- Best effort to remove the created refs before exiting. Can help if
+        -- the timeout was big and the error happened early.
+        f = replicasets[id]:callrw('vshard.storage._call',
+                                     {'storage_unref', rid}, opts_async)
+        if f ~= nil then
+            -- Don't care waiting for a result - no time for this. But it won't
+            -- affect the request sending if the connection is still alive.
+            f:discard()
+        end
+    end
+end
+
+--
 -- Consistent Map-Reduce. The given function is called on all masters in the
 -- cluster with a guarantee that in case of success it was executed with all
 -- buckets being accessible for reads and writes.
@@ -811,11 +900,10 @@ local function router_map_callrw(router, func, args, opts)
         timeout = consts.CALL_TIMEOUT_MIN
     end
     local deadline = fiber_clock() + timeout
-    local err, err_id, res, ok, map
+    local err, err_id, res, map
     local futures = {}
     local bucket_count = 0
-    local opts_ref = {is_async = true}
-    local opts_map = {is_async = true, return_raw = do_return_raw}
+    local opts_async = {is_async = true}
     local rs_count = 0
     local rid = M.ref_id
     M.ref_id = rid + 1
@@ -834,7 +922,7 @@ local function router_map_callrw(router, func, args, opts)
             goto fail
         end
         res, err = rs:callrw('vshard.storage._call',
-                              {'storage_ref', rid, timeout}, opts_ref)
+                              {'storage_ref', rid, timeout}, opts_async)
         if res == nil then
             err_id = id
             goto fail
@@ -842,7 +930,6 @@ local function router_map_callrw(router, func, args, opts)
         futures[id] = res
         rs_count = rs_count + 1
     end
-    map = table_new(0, rs_count)
     --
     -- Ref stage: collect.
     --
@@ -873,79 +960,14 @@ local function router_map_callrw(router, func, args, opts)
                             router.total_bucket_count - bucket_count)
         goto fail
     end
-    --
-    -- Map stage: send.
-    --
-    args = {'storage_map', rid, func, args}
-    for id, rs in pairs(replicasets) do
-        res, err = rs:callrw('vshard.storage._call', args, opts_map)
-        if res == nil then
-            err_id = id
-            goto fail
-        end
-        futures[id] = res
+    map, err, err_id = replicasets_map_reduce(replicasets, rid, func, args, {
+        timeout = timeout, return_raw = do_return_raw
+    })
+    if map then
+        return map
     end
-    --
-    -- Ref stage: collect.
-    --
-    if do_return_raw then
-        for id, f in pairs(futures) do
-            res, err = future_wait(f, timeout)
-            if res == nil then
-                err_id = id
-                goto fail
-            end
-            -- Map returns true,res or nil,err.
-            res = res:iterator()
-            local count = res:decode_array_header()
-            ok = res:decode()
-            if ok == nil then
-                err = res:decode()
-                err_id = id
-                goto fail
-            end
-            if count > 1 then
-                map[id] = res:take_array(count - 1)
-            end
-            timeout = deadline - fiber_clock()
-        end
-    else
-        for id, f in pairs(futures) do
-            res, err = future_wait(f, timeout)
-            if res == nil then
-                err_id = id
-                goto fail
-            end
-            -- Map returns true,res or nil,err.
-            ok, res = res[1], res[2]
-            if ok == nil then
-                err = res
-                err_id = id
-                goto fail
-            end
-            if res ~= nil then
-                -- Store as a table so in future it could be extended for
-                -- multireturn.
-                map[id] = {res}
-            end
-            timeout = deadline - fiber_clock()
-        end
-    end
-    do return map end
-
 ::fail::
-    for id, f in pairs(futures) do
-        f:discard()
-        -- Best effort to remove the created refs before exiting. Can help if
-        -- the timeout was big and the error happened early.
-        f = replicasets[id]:callrw('vshard.storage._call',
-                                     {'storage_unref', rid}, opts_ref)
-        if f ~= nil then
-            -- Don't care waiting for a result - no time for this. But it won't
-            -- affect the request sending if the connection is still alive.
-            f:discard()
-        end
-    end
+    replicasets_map_cancel_refs(replicasets, futures, rid)
     err = lerror.make(err)
     return nil, err, err_id
 end
