@@ -38,12 +38,12 @@ g.before_all(function(cg)
     cg.router = router
     local res, err = router:exec(function()
         local res, err = ivshard.router.bootstrap({timeout = iwait_timeout})
-        rawset(_G, 'do_map', function(bids, args, opts)
-            local old_bids = table.copy(bids)
-            local val, err, err_uuid = ivshard.router.map_part_callrw(
-                bids, 'do_map', args, opts)
-            -- Make sure the bucket list isn't changed by vshard.
-            ilt.assert_equals(bids, old_bids)
+        rawset(_G, 'do_map', function(args, opts)
+            local old_opts = table.copy(opts)
+            local val, err, err_uuid = ivshard.router.map_callrw(
+                'do_map', args, opts)
+            -- Make sure the options aren't changed by vshard.
+            ilt.assert_equals(old_opts, opts)
             local val_type
             if opts.return_raw and val ~= nil then
                 -- Src+value. The src is plain Lua data. The value is raw.
@@ -82,16 +82,18 @@ g.after_all(function(cg)
     cg.cluster:drop()
 end)
 
-local function router_do_map(router, bids, args, opts)
-    return router:exec(function(bids, args, opts)
-        return _G.do_map(bids, args, opts)
-    end, {bids, args, opts})
+local function router_do_map(router, args, opts)
+    return router:exec(function(args, opts)
+        return _G.do_map(args, opts)
+    end, {args, opts})
 end
 
 g.test_map_part_single_rs = function(cg)
     local bids = vtest.storage_get_n_buckets(cg.replica_1_a, 4)
-    local res = router_do_map(cg.router, {bids[3], bids[2]},
-                              {123}, {timeout = vtest.wait_timeout})
+    local res = router_do_map(cg.router, {123}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bids[3], bids[2]},
+    })
     t.assert_equals(res.err, nil)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -102,8 +104,10 @@ end
 g.test_map_part_multi_rs = function(cg)
     local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
     local bid2 = vtest.storage_first_bucket(cg.replica_2_a)
-    local res = router_do_map(cg.router, {bid1, bid2},
-                              {123}, {timeout = vtest.wait_timeout})
+    local res = router_do_map(cg.router, {123}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.err, nil)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -123,8 +127,10 @@ g.test_map_part_ref = function(cg)
         _G.bucket_send(bid2, to)
     end, {bids1[1], bids1[2], cg.rs2_uuid})
     -- The buckets are ACTIVE on rs2, so the partial map should succeed.
-    local res = router_do_map(cg.router, {bids1[1], bids1[2]},
-                              {42}, {timeout = vtest.wait_timeout})
+    local res = router_do_map(cg.router, {42}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bids1[1], bids1[2]},
+    })
     t.assert_equals(res.err, nil)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -133,7 +139,10 @@ g.test_map_part_ref = function(cg)
     -- But if we use some active bucket from rs1, the partial map should fail.
     -- The reason is that the moved buckets are still in the SENT state and
     -- we can't take a ref.
-    res = router_do_map(cg.router, {bids1[3]}, {42}, {timeout = 0.1})
+    res = router_do_map(cg.router, {42}, {
+        timeout = 0.1,
+        bucket_ids = {bids1[3]},
+    })
     t.assert_equals(res.val, nil)
     t.assert(res.err)
     t.assert_equals(res.err_uuid, cg.rs1_uuid)
@@ -152,8 +161,10 @@ g.test_map_part_ref = function(cg)
         _G.bucket_send(bid2, to)
     end, {bids1[1], bids1[2], cg.rs1_uuid})
 
-    res = router_do_map(cg.router, {bids1[1], bids1[2]},
-                        {42}, {timeout = vtest.wait_timeout})
+    res = router_do_map(cg.router, {42}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bids1[1], bids1[2]},
+    })
     t.assert_equals(res.err, nil)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -187,8 +198,10 @@ g.test_map_part_double_ref = function(cg)
     -- from rs2. The ref stage should be done in two steps:
     -- 1. ref rs2 and returns the moved bucket;
     -- 2. discover the moved bucket on rs2 and avoid double reference;
-    local res = router_do_map(cg.router, {bid1, bid2},
-                              {42}, {timeout = vtest.wait_timeout})
+    local res = router_do_map(cg.router, {42}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.err, nil)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -256,8 +269,10 @@ g.test_map_part_ref_timeout = function(cg)
         end
     end)
     local f = fiber.new(function()
-        return router_do_map(cg.router, {bid1, bid2, bid3, bid4},
-                             {42}, {timeout = vtest.wait_timeout})
+        return router_do_map(cg.router, {42}, {
+            timeout = vtest.wait_timeout,
+            bucket_ids = {bid1, bid2, bid3, bid4},
+        })
     end)
     f:set_joinable(true)
     cg.replica_2_a:exec(function()
@@ -307,8 +322,10 @@ g.test_map_part_map = function(cg)
             return box.error(box.error.PROC_LUA, "map_err")
         end
     end)
-    local res = router_do_map(cg.router, {bid1, bid2},
-                              {3}, {timeout = vtest.wait_timeout})
+    local res = router_do_map(cg.router, {3}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.val, nil)
     t.assert_covers(res.err, {
         code = box.error.PROC_LUA,
@@ -325,8 +342,10 @@ g.test_map_part_map = function(cg)
         _G.do_map = _G.old_do_map
         _G.old_do_map = nil
     end)
-    res = router_do_map(cg.router, {bid1, bid2},
-                        {3}, {timeout = vtest.wait_timeout})
+    res = router_do_map(cg.router, {3}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.err, nil, res.err)
     t.assert_equals(res.err_uuid, nil)
     t.assert_equals(res.val, {
@@ -342,8 +361,11 @@ g.test_map_part_callrw_raw = function(cg)
     --
     local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
     local bid2 = vtest.storage_first_bucket(cg.replica_2_a)
-    local res = router_do_map(cg.router, {bid1, bid2}, {3},
-                              {timeout = vtest.wait_timeout, return_raw = true})
+    local res = router_do_map(cg.router, {3}, {
+        timeout = vtest.wait_timeout,
+        return_raw = true,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.val, {
         [cg.rs1_uuid] = {{cg.rs1_uuid, 3}},
         [cg.rs2_uuid] = {{cg.rs2_uuid, 3}},
@@ -359,8 +381,11 @@ g.test_map_part_callrw_raw = function(cg)
             return
         end
     end)
-    res = router_do_map(cg.router, {bid1, bid2}, {},
-                        {timeout = vtest.wait_timeout, return_raw = true})
+    res = router_do_map(cg.router, {}, {
+        timeout = vtest.wait_timeout,
+        return_raw = true,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.val, {
         [cg.rs1_uuid] = {{cg.rs1_uuid}},
     })
@@ -372,8 +397,11 @@ g.test_map_part_callrw_raw = function(cg)
             return box.error(box.error.PROC_LUA, "map_err")
         end
     end)
-    res = router_do_map(cg.router, {bid1, bid2}, {},
-                        {timeout = vtest.wait_timeout, return_raw = true})
+    res = router_do_map(cg.router, {}, {
+        timeout = vtest.wait_timeout,
+        return_raw = true,
+        bucket_ids = {bid1, bid2},
+    })
     t.assert_equals(res.val, nil)
     t.assert_covers(res.err, {
         code = box.error.PROC_LUA,
