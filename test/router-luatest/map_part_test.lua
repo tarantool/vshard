@@ -22,8 +22,16 @@ local cfg_template = {
                 replica_2_b = {},
             },
         },
+        {
+            replicas = {
+                replica_3_a = {
+                    master = true,
+                },
+                replica_3_b = {},
+            },
+        },
     },
-    bucket_count = 10,
+    bucket_count = 30,
     test_user_grant_range = 'super',
 }
 local global_cfg = vtest.config_new(cfg_template)
@@ -76,6 +84,7 @@ g.before_all(function(cg)
     t.assert_equals(err, nil)
     cg.rs1_uuid = cg.replica_1_a:replicaset_uuid()
     cg.rs2_uuid = cg.replica_2_a:replicaset_uuid()
+    cg.rs3_uuid = cg.replica_3_a:replicaset_uuid()
 end)
 
 g.after_all(function(cg)
@@ -113,6 +122,23 @@ g.test_map_part_multi_rs = function(cg)
     t.assert_equals(res.val, {
         [cg.rs1_uuid] = {{cg.rs1_uuid, 123}},
         [cg.rs2_uuid] = {{cg.rs2_uuid, 123}},
+    })
+end
+
+g.test_map_part_all_rs = function(cg)
+    local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(cg.replica_2_a)
+    local bid3 = vtest.storage_first_bucket(cg.replica_3_a)
+    local res = router_do_map(cg.router, {123}, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1, bid2, bid3},
+    })
+    t.assert_equals(res.err, nil)
+    t.assert_equals(res.err_uuid, nil)
+    t.assert_equals(res.val, {
+        [cg.rs1_uuid] = {{cg.rs1_uuid, 123}},
+        [cg.rs2_uuid] = {{cg.rs2_uuid, 123}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid, 123}},
     })
 end
 
@@ -430,6 +456,7 @@ g.test_map_all_callrw_raw = function(cg)
     t.assert_equals(res.val, {
         [cg.rs1_uuid] = {{cg.rs1_uuid, 3}},
         [cg.rs2_uuid] = {{cg.rs2_uuid, 3}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid, 3}},
     })
     t.assert_equals(res.val_type, 'userdata')
     t.assert(not res.err)
@@ -448,6 +475,7 @@ g.test_map_all_callrw_raw = function(cg)
     })
     t.assert_equals(res.val, {
         [cg.rs1_uuid] = {{cg.rs1_uuid}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid}},
     })
     --
     -- Error at map stage.
