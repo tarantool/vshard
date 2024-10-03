@@ -3181,22 +3181,38 @@ local function storage_ref(rid, timeout)
 end
 
 --
--- Lookup for absent active buckets.
---
--- @param bucket_ids List of bucket identifiers.
--- @return A dictionary with a list of bucket identifiers which are
---         not present on the current instance.
+-- Lookup buckets which are definitely not going to recover into ACTIVE state
+-- under any circumstances.
 --
 local function storage_moved_buckets(bucket_ids)
-    local status = consts.BUCKET
+    local allstatus = consts.BUCKET
     local moved_buckets = {}
     for _, bucket_id in pairs(bucket_ids) do
         local bucket = box.space._bucket:get{bucket_id}
-        if not bucket or bucket.status ~= status.ACTIVE then
-            table.insert(moved_buckets, bucket_id)
+        local is_moved
+        if not bucket then
+            is_moved = true
+        else
+            local status = bucket.status
+            is_moved = status == allstatus.GARBAGE or status == allstatus.SENT
+        end
+        if is_moved then
+            table.insert(moved_buckets, {
+                id = bucket_id,
+                dst = bucket and bucket.destination or M.route_map[bucket_id],
+                status = bucket and bucket.status,
+            })
         end
     end
     return { moved = moved_buckets }
+end
+
+--
+-- Drop a storage ref from the current box session. Is used as a part of
+-- Map-Reduce API.
+--
+local function storage_unref(rid)
+    return lref.del(rid, box.session.id())
 end
 
 --
@@ -3219,19 +3235,21 @@ local function storage_ref_with_buckets(rid, timeout, bucket_ids)
         -- ref.
         return {rid = nil, moved = moved}
     end
+    local bucket_generation = M.bucket_generation
     local ok, err = storage_ref(rid, timeout)
     if not ok then
         return nil, err
     end
+    if M.bucket_generation ~= bucket_generation then
+        -- Need to redo it. Otherwise there is a risk that some buckets were
+        -- moved while waiting for the ref.
+        moved = storage_moved_buckets(bucket_ids).moved
+        if #moved == #bucket_ids then
+            storage_unref(rid)
+            rid = nil
+        end
+    end
     return {rid = rid, moved = moved}
-end
-
---
--- Drop a storage ref from the current box session. Is used as a part of
--- Map-Reduce API.
---
-local function storage_unref(rid)
-    return lref.del(rid, box.session.id())
 end
 
 --

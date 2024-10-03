@@ -947,9 +947,17 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
                 err_id = id
                 goto fail
             end
-            for _, bucket_id in pairs(res.moved) do
-                bucket_reset(router, bucket_id)
-                table.insert(bucket_ids, bucket_id)
+            for _, bucket in pairs(res.moved) do
+                local bid = bucket.id
+                local dst = bucket.dst
+                -- 'Reset' regardless of 'set'. So as not to
+                -- bother with 'set' errors. If it fails, then
+                -- won't matter. It is a best-effort thing.
+                bucket_reset(router, bid)
+                if dst ~= nil then
+                    bucket_set(router, bid, dst)
+                end
+                table.insert(bucket_ids, bid)
             end
             if res.rid then
                 assert(not replicasets_to_map[id])

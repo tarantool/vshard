@@ -226,7 +226,7 @@ test_group.test_bucket_skip_validate = function(g)
     end)
 end
 
-test_group.test_ref_with_buckets = function(g)
+test_group.test_ref_with_buckets_basic = function(g)
     g.replica_1_a:exec(function()
         local lref = require('vshard.storage.ref')
         local res, err, _
@@ -277,7 +277,11 @@ test_group.test_ref_with_buckets = function(g)
         ilt.assert_equals(err, nil)
         ilt.assert_equals(res, {
             rid = rid,
-            moved = {bucket_count + 1, bucket_count + 2, bucket_count + 3}
+            moved = {
+                {id = bucket_count + 1},
+                {id = bucket_count + 2},
+                {id = bucket_count + 3},
+            }
         })
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
@@ -290,40 +294,296 @@ test_group.test_ref_with_buckets = function(g)
             {bucket_count + 1, bucket_count + 2}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {bucket_count + 1, bucket_count + 2}})
-        ilt.assert_equals(lref.count, 0)
-
-        -- Timeout when some buckets aren't writable. Doesn't have to be the
-        -- same buckets as for moving.
-        _G.bucket_recovery_pause()
-        box.space._bucket:update(
-            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}})
-        res, err = ivshard.storage._call(
-            'storage_ref_with_buckets', rid, 0.01, {bids[2]})
-        box.space._bucket:update(
-            {bids[1]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
-        _G.bucket_recovery_continue()
-        t.assert_str_contains(err.message, 'Timeout exceeded')
-        ilt.assert_equals(res, nil)
+        ilt.assert_equals(res, {moved = {
+            {id = bucket_count + 1},
+            {id = bucket_count + 2},
+        }})
         ilt.assert_equals(lref.count, 0)
     end)
 end
 
-test_group.test_moved_buckets = function(g)
+test_group.test_ref_with_buckets_timeout = function(g)
     g.replica_1_a:exec(function()
+        local lref = require('vshard.storage.ref')
+        local rid = 42
+        local bids = _G.get_n_buckets(2)
+        --
+        -- Timeout when some buckets aren't writable. Doesn't have to be the
+        -- same buckets as for moving.
+        --
+        _G.bucket_recovery_pause()
+        box.space._bucket:update(
+            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}})
         local res, err = ivshard.storage._call(
-            'moved_buckets',
-            {_G.get_first_bucket()}
-        )
-        ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {}})
+            'storage_ref_with_buckets', rid, 0.01, {bids[2]})
+        box.space._bucket:update(
+            {bids[1]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        t.assert_str_contains(err.message, 'Timeout exceeded')
+        ilt.assert_equals(res, nil)
+        ilt.assert_equals(lref.count, 0)
+        _G.bucket_recovery_continue()
+    end)
+end
 
-        local bucket_count = ivshard.storage.internal.total_bucket_count
-        res, err = ivshard.storage._call(
-            'moved_buckets',
-            {_G.get_first_bucket(), bucket_count + 1, bucket_count + 2}
-        )
+test_group.test_ref_with_buckets_return_last_known_dst = function(g)
+    g.replica_1_a:exec(function()
+        local lref = require('vshard.storage.ref')
+        local rid = 42
+        local bid = _G.get_first_bucket()
+        local luuid = require('uuid')
+        local id = luuid.str()
+        -- Make the bucket follow the correct state sequence. Another way is
+        -- validated and not allowed.
+        _G.bucket_recovery_pause()
+        _G.bucket_gc_pause()
+        box.space._bucket:update(
+            {bid}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        box.space._bucket:update(
+            {bid}, {{'=', 2, ivconst.BUCKET.SENT}})
+        local res, err = ivshard.storage._call(
+            'storage_ref_with_buckets', rid, iwait_timeout, {bid})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {bucket_count + 1, bucket_count + 2}})
+        ilt.assert_equals(res, {moved = {{
+            id = bid,
+            dst = id,
+            status = ivconst.BUCKET.SENT,
+        }}})
+        ilt.assert_equals(lref.count, 0)
+        -- Cleanup.
+        _G.bucket_gc_continue()
+        _G.bucket_gc_wait()
+        box.space._bucket:insert({bid, ivconst.BUCKET.RECEIVING})
+        box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _G.bucket_recovery_continue()
+    end)
+end
+
+test_group.test_ref_with_buckets_move_part_while_referencing = function(g)
+    g.replica_1_a:exec(function()
+        local lref = require('vshard.storage.ref')
+        local _
+        local rid = 42
+        local bids = _G.get_n_buckets(3)
+        local luuid = require('uuid')
+        local id = luuid.str()
+        --
+        -- Was not moved until ref, but moved while ref was waiting.
+        --
+        _G.bucket_recovery_pause()
+        _G.bucket_gc_pause()
+        -- Block the refs for a while.
+        box.space._bucket:update(
+            {bids[3]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        -- Start referencing.
+        local session_id
+        local f = ifiber.new(function()
+            session_id = box.session.id()
+            return ivshard.storage._call('storage_ref_with_buckets', rid,
+                                         iwait_timeout, {bids[1], bids[2]})
+        end)
+        f:set_joinable(true)
+        -- While waiting, one of the target buckets starts moving.
+        box.space._bucket:update(
+            {bids[2]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        -- Now they are moved.
+        box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.SENT}})
+        box.space._bucket:update({bids[3]}, {{'=', 2, ivconst.BUCKET.SENT}})
+        _G.bucket_gc_continue()
+        _G.bucket_gc_wait()
+        local ok, res, err = f:join()
+        t.assert(ok)
+        t.assert_equals(err, nil)
+        ilt.assert_equals(res, {
+            moved = {{id = bids[2], dst = id}},
+            rid = rid,
+        })
+        -- Ref was done, because at least one bucket was ok.
+        ilt.assert_equals(lref.count, 1)
+        -- Cleanup.
+        _, err = lref.del(rid, session_id)
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(lref.count, 0)
+        box.space._bucket:insert({bids[2], ivconst.BUCKET.RECEIVING})
+        box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        box.space._bucket:insert({bids[3], ivconst.BUCKET.RECEIVING})
+        box.space._bucket:update({bids[3]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _G.bucket_recovery_continue()
+    end)
+end
+
+test_group.test_ref_with_buckets_move_all_while_referencing = function(g)
+    g.replica_1_a:exec(function()
+        local lref = require('vshard.storage.ref')
+        local rid = 42
+        local bids = _G.get_n_buckets(3)
+        local luuid = require('uuid')
+        local id = luuid.str()
+        --
+        -- Now same, but all buckets were moved. No ref should be left then.
+        --
+        _G.bucket_recovery_pause()
+        _G.bucket_gc_pause()
+        -- Block the refs for a while.
+        box.space._bucket:update(
+            {bids[3]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        -- Start referencing.
+        local f = ifiber.new(function()
+            return ivshard.storage._call('storage_ref_with_buckets', rid,
+                                         iwait_timeout, {bids[1], bids[2]})
+        end)
+        f:set_joinable(true)
+        -- While waiting, all the target buckets start moving.
+        box.space._bucket:update(
+            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        box.space._bucket:update(
+            {bids[2]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        -- Now they are moved.
+        box.space._bucket:update({bids[1]}, {{'=', 2, ivconst.BUCKET.SENT}})
+        box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.SENT}})
+        -- And the other bucket doesn't matter. Can revert it back.
+        box.space._bucket:update({bids[3]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _G.bucket_gc_continue()
+        _G.bucket_gc_wait()
+        local ok, res, err = f:join()
+        t.assert(ok)
+        t.assert_equals(err, nil)
+        ilt.assert_equals(res, {
+            moved = {
+                {id = bids[1], dst = id},
+                {id = bids[2], dst = id},
+            }
+        })
+        -- Ref was not done, because all the buckets moved out.
+        ilt.assert_equals(lref.count, 0)
+        -- Cleanup.
+        box.space._bucket:insert({bids[1], ivconst.BUCKET.RECEIVING})
+        box.space._bucket:update({bids[1]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        box.space._bucket:insert({bids[2], ivconst.BUCKET.RECEIVING})
+        box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        _G.bucket_recovery_continue()
+    end)
+end
+
+test_group.test_moved_buckets_various_statuses = function(g)
+    g.replica_1_a:exec(function()
+        local _bucket = box.space._bucket
+        -- Make sure that if any bucket status is added/deleted/changed, the
+        -- test gets an update.
+        ilt.assert_equals(ivconst.BUCKET, {
+            ACTIVE = 'active',
+            PINNED = 'pinned',
+            SENDING = 'sending',
+            SENT = 'sent',
+            RECEIVING = 'receiving',
+            GARBAGE = 'garbage',
+        })
+        _G.bucket_recovery_pause()
+        _G.bucket_gc_pause()
+        local luuid = require('uuid')
+        -- +1 to delete and make it a 404 bucket.
+        local bids = _G.get_n_buckets(7)
+
+        -- ACTIVE = bids[1].
+        --
+        -- PINNED = bids[2].
+        local bid_pinned = bids[2]
+        _bucket:update({bid_pinned},
+            {{'=', 2, ivconst.BUCKET.PINNED}})
+
+        -- SENDING = bids[3].
+        local bid_sending = bids[3]
+        local id_sending = luuid.str()
+        _bucket:update({bid_sending},
+            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sending}})
+
+        -- SENT = bids[4].
+        local bid_sent = bids[4]
+        local id_sent = luuid.str()
+        _bucket:update({bid_sent},
+            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sent}})
+        _bucket:update({bid_sent},
+            {{'=', 2, ivconst.BUCKET.SENT}})
+
+        -- RECEIVING = bids[5].
+        local bid_receiving = bids[5]
+        local id_receiving = luuid.str()
+        _bucket:update({bid_receiving},
+            {{'=', 2, ivconst.BUCKET.SENDING}})
+        _bucket:update({bid_receiving},
+            {{'=', 2, ivconst.BUCKET.SENT}})
+        _bucket:update({bid_receiving},
+            {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        _bucket:delete({bid_receiving})
+        _bucket:insert({bid_receiving, ivconst.BUCKET.RECEIVING, id_receiving})
+
+        -- GARBAGE = bids[6].
+        local bid_garbage = bids[6]
+        local id_garbage = luuid.str()
+        _bucket:update({bid_garbage},
+            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_garbage}})
+        _bucket:update({bid_garbage},
+            {{'=', 2, ivconst.BUCKET.SENT}})
+        _bucket:update({bid_garbage},
+            {{'=', 2, ivconst.BUCKET.GARBAGE}})
+
+        -- NOT EXISTING = bids[7].
+        local bid_404 = bids[7]
+        _bucket:update({bid_404},
+            {{'=', 2, ivconst.BUCKET.SENDING}})
+        _bucket:update({bid_404},
+            {{'=', 2, ivconst.BUCKET.SENT}})
+        _bucket:update({bid_404},
+            {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        _bucket:delete({bid_404})
+
+        local res, err = ivshard.storage._call('moved_buckets', bids)
+        ilt.assert_equals(err, nil)
+        ilt.assert(res and res.moved)
+        ilt.assert_items_equals(res.moved, {
+            {
+                id = bid_sent,
+                dst = id_sent,
+                status = ivconst.BUCKET.SENT,
+            },
+            {
+                id = bid_garbage,
+                dst = id_garbage,
+                status = ivconst.BUCKET.GARBAGE,
+            },
+            {
+                id = bid_404,
+            }
+        })
+        --
+        -- Cleanup.
+        --
+        -- NOT EXISTING.
+        _bucket:insert({bid_404, ivconst.BUCKET.RECEIVING})
+        _bucket:update({bid_404},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- GARBAGE.
+        _bucket:delete({bid_garbage})
+        _bucket:insert({bid_garbage, ivconst.BUCKET.RECEIVING})
+        _bucket:update({bid_garbage},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- RECEIVING.
+        _bucket:update({bid_receiving},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- SENT.
+        _bucket:update({bid_sent},
+            {{'=', 2, ivconst.BUCKET.GARBAGE}})
+        _bucket:delete({bid_sent})
+        _bucket:insert({bid_sent, ivconst.BUCKET.RECEIVING})
+        _bucket:update({bid_sent},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- SENDING.
+        _bucket:update({bid_sending},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- PINNED.
+        _bucket:update({bid_pinned},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+
+        _G.bucket_recovery_continue()
+        _G.bucket_gc_continue()
     end)
 end
