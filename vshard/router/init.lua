@@ -1056,9 +1056,13 @@ local function replicasets_map_cancel_refs(replicasets, futures, rid)
 end
 
 --
--- Consistent Map-Reduce. The given function is called on all masters in the
--- cluster with a guarantee that in case of success it was executed with all
--- buckets being accessible for reads and writes.
+-- Consistent Map-Reduce. The given function is called on masters in the cluster
+-- with a guarantee that in case of success it was executed with all buckets
+-- being accessible for reads and writes.
+--
+-- The selection of masters depends on bucket_ids option. When specified, the
+-- Map-Reduce is performed only on masters having at least one of these buckets.
+-- Otherwise it is executed on all the masters in the cluster.
 --
 -- Consistency in scope of map-reduce means all the data was accessible, and
 -- didn't move during map requests execution. To preserve the consistency there
@@ -1080,11 +1084,19 @@ end
 -- @param router Router instance to use.
 -- @param func Name of the function to call.
 -- @param args Function arguments passed in netbox style (as an array).
--- @param opts Can only contain 'timeout' as a number of seconds. Note that the
---     refs may end up being kept on the storages during this entire timeout if
---     something goes wrong. For instance, network issues appear. This means
---     better not use a value bigger than necessary. A stuck infinite ref can
---     only be dropped by this router restart/reconnect or the storage restart.
+-- @param opts Options. See below:
+--     - timeout - a number of seconds. Note that the refs may end up being kept
+--         on the storages during this entire timeout if something goes wrong.
+--         For instance, network issues appear. This means better not use a
+--         value bigger than necessary. A stuck infinite ref can only be dropped
+--         by this router restart/reconnect or the storage restart.
+--     - return_raw - true/false. When specified, the returned values are not
+--         decoded into Lua native objects and stay packed as a msgpack object
+--         (see 'msgpack' module). By default all is decoded. That might be
+--         undesirable when the returned values are going to be forwarded back
+--         into the network anyway.
+--     - bucket_ids - an array of bucket IDs which have to be covered by
+--         Map-Reduce. By default the whole cluster is covered.
 --
 -- @return In case of success - a map with replicaset ID (UUID or name) keys and
 --     values being what the function returned from the replicaset.
@@ -1095,84 +1107,25 @@ end
 --     found even though all replicasets were scanned.
 --
 local function router_map_callrw(router, func, args, opts)
-    local replicasets, err, err_id, map, futures, rid
-    local timeout, do_return_raw
+    local replicasets_to_map, err, err_id, map, futures, rid
+    local timeout, do_return_raw, bucket_ids
     if opts then
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
         do_return_raw = opts.return_raw
+        bucket_ids = opts.bucket_ids
     else
         timeout = consts.CALL_TIMEOUT_MIN
     end
-    timeout, err, err_id, rid, futures, replicasets =
-        router_ref_storage_all(router, timeout)
+    if bucket_ids then
+        timeout, err, err_id, rid, futures, replicasets_to_map =
+            router_ref_storage_by_buckets(router, bucket_ids, timeout)
+    else
+        timeout, err, err_id, rid, futures, replicasets_to_map =
+            router_ref_storage_all(router, timeout)
+    end
     if timeout then
-        map, err, err_id = replicasets_map_reduce(replicasets, rid, func,
+        map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
             args, {
-                timeout = timeout, return_raw = do_return_raw
-            })
-        if map then
-            return map
-        end
-    end
-    replicasets_map_cancel_refs(replicasets, futures, rid)
-    err = lerror.make(err)
-    return nil, err, err_id
-end
-
---
--- Partial Ref-Map-Reduce. The given function is called on the masters
--- with a guarantee that in case of success it was executed exactly once
--- on all storages that contain the given buckets. Execution on masters
--- is chosen to allow buckets be accessed for reads and writes during the
--- call.
---
--- The execution consists of the following stages:
---
--- Ref stage. We ref all the storages with the given buckets. It is
--- an iterative process, because the router's cache may be outdated,
--- and we need to discover the moved buckets. At the end of this stage
--- we have refed all the storages containing the given buckets with the
--- given timeout.
---
--- Map stage. We call the given function on all the storages we have
--- refed. On the storage side we use a `storage_map` function, which
--- switches the timeout ref to the manual mode and unrefs the storage
--- after the function is called.
---
--- Reduce stage. We collect the results of the function call.
---
--- @param router Instance to use.
--- @param bucket_ids List of bucket identifiers.
--- @param func Name of the function to call.
--- @param args Function arguments passed in netbox style (as an array).
--- @param opts Can only contain 'timeout' as a number of seconds. Note that the
---     refs may end up being kept on the storages during this entire timeout if
---     something goes wrong. For instance, network issues appear. This means
---     better not use a value bigger than necessary. A stuck infinite ref can
---     only be dropped by this router restart/reconnect or the storage restart.
---
--- @return In case of success - a map with replicaset UUID keys and values being
---     what the function returned from the replicaset.
---
--- @return In case of an error - nil, error object, optional UUID of the
---     replicaset where the error happened. UUID may be not present if it wasn't
---     about concrete replicaset. For example, not all buckets were found even
---     though all replicasets were scanned.
---
-local function router_map_part_callrw(router, bucket_ids, func, args, opts)
-    local timeout, err, err_id, map, futures, do_return_raw, rid
-    local replicasets_to_map
-    if opts then
-        timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
-        do_return_raw = opts.return_raw
-    else
-        timeout = consts.CALL_TIMEOUT_MIN
-    end
-    timeout, err, err_id, rid, futures, replicasets_to_map =
-        router_ref_storage_by_buckets(router, bucket_ids, timeout)
-    if timeout then
-        map, err, err_id = replicasets_map_reduce(
-            replicasets_to_map, rid, func, args, {
                 timeout = timeout, return_raw = do_return_raw
             })
         if map then
@@ -2029,7 +1982,6 @@ local router_mt = {
         callre = router_make_api(router_callre),
         callbre = router_make_api(router_callbre),
         map_callrw = router_make_api(router_map_callrw),
-        map_part_callrw = router_make_api(router_map_part_callrw),
         route = router_make_api(router_route),
         routeall = router_make_api(router_routeall),
         bucket_id = router_make_api(router_bucket_id),
