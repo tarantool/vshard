@@ -106,6 +106,9 @@ small_timeout = 0.001
 function make_ref(rid, timeout)                                                 \
     return lref.add(rid, box.session.id(), timeout)                             \
 end
+function check_ref(rid)                                                         \
+    return lref.check(rid, box.session.id())                                    \
+end
 function use_ref(rid)                                                           \
     return lref.use(rid, box.session.id())                                      \
 end
@@ -120,6 +123,19 @@ c = netbox.connect(remote_uri)
 
 -- Ref is added and does not disappear anywhere on its own.
 c:call('make_ref', {1, small_timeout})
+_ = test_run:switch('storage_2_a')
+assert(lref.count == 1)
+_ = test_run:switch('storage_1_a')
+
+-- Check works.
+ok, err = c:call('check_ref', {1})
+assert(ok and not err)
+_ = test_run:switch('storage_2_a')
+assert(lref.count == 1)
+_ = test_run:switch('storage_1_a')
+
+ok, err = c:call('check_ref', {2})
+assert(ok == nil and err.message)
 _ = test_run:switch('storage_2_a')
 assert(lref.count == 1)
 _ = test_run:switch('storage_1_a')
