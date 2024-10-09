@@ -247,6 +247,14 @@ local function ref_session_new(sid)
         return true
     end
 
+    local function ref_session_check(self, rid)
+        local ref = ref_map[rid]
+        if not ref then
+            return nil, lerror.vshard(lerror.code.STORAGE_REF_USE, 'no ref')
+        end
+        return true
+    end
+
     --
     -- Ref use means it can't be expired until deleted explicitly. Should be
     -- done when the request affecting the whole storage starts. After use it is
@@ -301,6 +309,7 @@ local function ref_session_new(sid)
         del = ref_session_del,
         gc = ref_session_gc,
         add = ref_session_add,
+        check = ref_session_check,
         use = ref_session_use,
         kill = ref_session_kill,
     }
@@ -364,6 +373,14 @@ local function ref_add(rid, sid, timeout)
     return nil, err
 end
 
+local function ref_check(rid, sid)
+    local session = M.session_map[sid]
+    if not session then
+        return nil, lerror.vshard(lerror.code.STORAGE_REF_USE, 'no session')
+    end
+    return session:check(rid)
+end
+
 local function ref_use(rid, sid)
     local session = M.session_map[sid]
     if not session then
@@ -407,6 +424,7 @@ end
 M.del = ref_del
 M.gc = ref_gc
 M.add = ref_add
+M.check = ref_check
 M.use = ref_use
 M.cfg = ref_cfg
 M.kill = ref_kill_session
