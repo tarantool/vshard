@@ -3184,9 +3184,9 @@ end
 -- Lookup buckets which are definitely not going to recover into ACTIVE state
 -- under any circumstances.
 --
-local function storage_moved_buckets(bucket_ids)
+local function bucket_get_moved(bucket_ids)
     local allstatus = consts.BUCKET
-    local moved_buckets = {}
+    local res = {}
     for _, bucket_id in pairs(bucket_ids) do
         local bucket = box.space._bucket:get{bucket_id}
         local is_moved
@@ -3197,14 +3197,14 @@ local function storage_moved_buckets(bucket_ids)
             is_moved = status == allstatus.GARBAGE or status == allstatus.SENT
         end
         if is_moved then
-            table.insert(moved_buckets, {
+            table.insert(res, {
                 id = bucket_id,
                 dst = bucket and bucket.destination or M.route_map[bucket_id],
                 status = bucket and bucket.status,
             })
         end
     end
-    return { moved = moved_buckets }
+    return res
 end
 
 --
@@ -3228,12 +3228,12 @@ end
 --         are absent, the reference is not created and a nil reference id
 --         with the list of absent buckets is returned.
 --
-local function storage_ref_with_buckets(rid, timeout, bucket_ids)
-    local moved = storage_moved_buckets(bucket_ids).moved
+local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
+    local moved = bucket_get_moved(bucket_ids)
     if #moved == #bucket_ids then
         -- If all the passed buckets are absent, there is no need to create a
         -- ref.
-        return {rid = nil, moved = moved}
+        return {moved = moved}
     end
     local bucket_generation = M.bucket_generation
     local ok, err = storage_ref(rid, timeout)
@@ -3243,13 +3243,31 @@ local function storage_ref_with_buckets(rid, timeout, bucket_ids)
     if M.bucket_generation ~= bucket_generation then
         -- Need to redo it. Otherwise there is a risk that some buckets were
         -- moved while waiting for the ref.
-        moved = storage_moved_buckets(bucket_ids).moved
+        moved = bucket_get_moved(bucket_ids)
         if #moved == #bucket_ids then
             storage_unref(rid)
-            rid = nil
+            return {moved = moved}
         end
     end
-    return {rid = rid, moved = moved}
+    return {is_done = true, moved = moved}
+end
+
+--
+-- Check which buckets from the given list are moved out of this storage, while
+-- also making sure that the storage-ref is still in place.
+--
+-- Partial Map-Reduce makes a ref on the storages having any of the needed
+-- buckets, but then can come back if other storages report the already visited
+-- ones as having the needed buckets. Only makes sense to check, if this storage
+-- still holds the ref. Otherwise its previous guarantees given during the ref
+-- creation are all gone.
+--
+local function storage_ref_check_with_buckets(rid, bucket_ids)
+    local ok, err = lref.check(rid, box.session.id())
+    if not ok then
+        return nil, err
+    end
+    return {moved = bucket_get_moved(bucket_ids)}
 end
 
 --
@@ -3298,9 +3316,9 @@ service_call_api = setmetatable({
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
-    moved_buckets = storage_moved_buckets,
     storage_ref = storage_ref,
-    storage_ref_with_buckets = storage_ref_with_buckets,
+    storage_ref_make_with_buckets = storage_ref_make_with_buckets,
+    storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
     storage_map = storage_map,
     info = storage_service_info,
@@ -4182,6 +4200,7 @@ M.bucket_state_edges = bucket_state_edges
 
 M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
+M.bucket_get_moved = bucket_get_moved
 lregistry.storage = M
 
 --

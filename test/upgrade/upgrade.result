@@ -174,13 +174,13 @@ vshard.storage._call('test_api', 1, 2, 3)
  | - - bucket_recv
  |   - bucket_test_gc
  |   - info
- |   - moved_buckets
  |   - rebalancer_apply_routes
  |   - rebalancer_request_state
  |   - recovery_bucket_stat
  |   - storage_map
  |   - storage_ref
- |   - storage_ref_with_buckets
+ |   - storage_ref_check_with_buckets
+ |   - storage_ref_make_with_buckets
  |   - storage_unref
  |   - test_api
  | - 1

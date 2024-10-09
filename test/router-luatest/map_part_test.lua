@@ -267,6 +267,18 @@ g.test_map_part_ref_timeout = function(cg)
         end
     end, {{bid1, bid2, bid3, bid4}})
 
+    -- Count the map calls. The loss of ref must be detected before the
+    -- map-stage.
+    local _, err = vtest.cluster_exec_each_master(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        rawset(_G, 'map_count', 0)
+        _G.do_map = function(...)
+            _G.map_count = _G.map_count + 1
+            return _G.old_do_map(...)
+        end
+    end)
+    t.assert_equals(err, nil)
+
     -- Send bucket so the router thinks:
     --     rs1: {b1, b2}, rs2: {b3, b4}
     -- and actually the state is:
@@ -324,8 +336,17 @@ g.test_map_part_ref_timeout = function(cg)
     t.assert_equals(res.err_uuid, cg.rs2_uuid)
 
     -- Make sure there are no references left.
-    local _, err = vtest.cluster_exec_each(cg, function()
+    _, err = vtest.cluster_exec_each(cg, function()
         ilt.assert_equals(require('vshard.storage.ref').count, 0)
+    end)
+    t.assert_equals(err, nil)
+
+    -- No maps had a chance to get executed.
+    _, err = vtest.cluster_exec_each_master(cg, function()
+        ilt.assert_equals(_G.map_count, 0)
+        _G.do_map = _G.old_do_map
+        _G.old_do_map = nil
+        _G.map_count = nil
     end)
     t.assert_equals(err, nil)
 

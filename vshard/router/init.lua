@@ -919,9 +919,11 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
             if replicasets_to_map[id] then
                 -- Replicaset is already referenced on a previous iteration.
                 -- Simply get the moved buckets without double referencing.
-                args_ref = {'moved_buckets', buckets}
+                args_ref = {
+                    'storage_ref_check_with_buckets', rid, buckets}
             else
-                args_ref = {'storage_ref_with_buckets', rid, timeout, buckets}
+                args_ref = {
+                    'storage_ref_make_with_buckets', rid, timeout, buckets}
             end
             res, err = replicasets_all[id]:callrw('vshard.storage._call',
                                                   args_ref, opts_async)
@@ -941,7 +943,7 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
                 err_id = id
                 goto fail
             end
-            -- Ref returns nil,err or {rid, moved}.
+            -- Ref returns nil,err or {is_done, moved}.
             res, err = res[1], res[2]
             if res == nil then
                 err_id = id
@@ -959,7 +961,7 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
                 end
                 table.insert(bucket_ids, bid)
             end
-            if res.rid then
+            if res.is_done then
                 assert(not replicasets_to_map[id])
                 -- If there are no buckets on the replicaset, it would not be
                 -- referenced.
