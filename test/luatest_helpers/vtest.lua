@@ -8,6 +8,9 @@ local yaml = require('yaml')
 local vcfg = require('vshard.cfg')
 local vrepset = require('vshard.replicaset')
 local log = require('log')
+-- Otherwise in non-Debug builds apparently the unknown variables are treated as
+-- nil-global-variables.
+require('strict').on()
 
 local wait_timeout = 50
 -- Use it in busy-loops like `while !cond do fiber.sleep(busy_step) end`.
