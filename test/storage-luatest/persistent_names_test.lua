@@ -103,3 +103,40 @@ test_group.test_switch_to_uuid = function(g)
         _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_name()})
 end
+
+local function persistent_names_remove(g)
+    return vtest.cluster_exec_each_master(g, function()
+        local name = box.info.name
+        box.cfg{force_recovery = true}
+        box.space._cluster:update(box.info.id, {{'=', 3, box.NULL}})
+        box.cfg{force_recovery = false}
+        return name
+    end)
+end
+
+local function persistent_names_restore(g, names)
+    for vtest_name, persistent_name in pairs(names) do
+        g[vtest_name]:exec(function(name)
+            box.cfg{force_recovery = true}
+            box.space._cluster:update(box.info.id, {{'=', 3, name}})
+            box.cfg{force_recovery = false}
+        end, {persistent_name})
+    end
+end
+
+local function storage_assert_no_alerts(instance)
+    instance:exec(function()
+        ilt.assert_equals(ivshard.storage.info().alerts, {})
+    end)
+end
+
+--
+-- vshard throwed unrelevant UNREACHABLE_REPLICA warning, when names are
+-- not set and `name_as_key` identification_mode is used.
+--
+test_group.test_no_unreachable_replica_alert = function(g)
+    local names = persistent_names_remove(g)
+    storage_assert_no_alerts(g.replica_1_a)
+    storage_assert_no_alerts(g.replica_2_a)
+    persistent_names_restore(g, names)
+end
