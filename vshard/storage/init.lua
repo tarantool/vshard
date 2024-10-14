@@ -3959,8 +3959,10 @@ local function storage_info(opts)
     local is_named = M.this_replica.id == M.this_replica.name
     if this_master and this_master ~= M.this_replica then
         for _, replica in pairs(box.info.replication) do
-            if (not is_named and replica.uuid ~= this_master.uuid)
-                or (is_named and replica.name ~= this_master.name) then
+            -- If at least one identificator matches, we think,
+            -- that this replica is our master.
+            if replica.uuid ~= this_master.uuid and
+               replica.name ~= this_master.name then
                 goto cont
             end
             state.replication.status = replica.upstream.status
@@ -4005,9 +4007,14 @@ local function storage_info(opts)
                 replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
+                    local instance_id = is_named and replica.name or
+                                        replica.uuid
+                    -- May be box.NULL, when names have not been set yet.
+                    if instance_id == nil then
+                        instance_id = replica.id
+                    end
                     table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
-                                                     is_named and replica.name
-                                                     or replica.uuid))
+                                                     instance_id))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
                     not_available_replicas = not_available_replicas + 1
                 end

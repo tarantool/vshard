@@ -1,5 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local server = require('test.luatest_helpers.server')
 local vutil = require('vshard.util')
 
 local test_group = t.group('storage')
@@ -139,4 +140,29 @@ test_group.test_no_unreachable_replica_alert = function(g)
     storage_assert_no_alerts(g.replica_1_a)
     storage_assert_no_alerts(g.replica_2_a)
     persistent_names_restore(g, names)
+end
+
+--
+-- vshard didn't show proper identificator of a replica, when names are
+-- not set and 'name_as_key' identification_mode is used.
+--
+test_group.test_id_is_shown_in_alerts = function(g)
+    -- Connect any kind of replica, non-anonymous CDC or replica in shard.
+    local box_cfg = {replication = {g.replica_1_a.net_box_uri}}
+    local replica = server:new{alias = 'some-replica', box_cfg = box_cfg}
+    replica:start()
+    replica:wait_for_vclock_of(g.replica_1_a)
+    local id = replica:instance_id()
+    replica:stop()
+
+    g.replica_1_a:exec(function(id)
+        ilt.assert_equals(ivshard.storage.info().alerts[1][2],
+                          ("Replica %s isn't active"):format(id))
+    end, {id})
+
+    replica:drop()
+    g.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {id})
+    storage_assert_no_alerts(g.replica_1_a)
 end
