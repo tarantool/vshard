@@ -3998,9 +3998,10 @@ local function storage_info(opts)
         state.replication.status = 'master'
         local replica_count = 0
         local not_available_replicas = 0
+        local id = box.info.id
         for _, replica in pairs(box.info.replication) do
-            if (not is_named and replica.uuid ~= M.this_replica.uuid)
-                or (is_named and replica.name ~= M.this_replica.name) then
+            -- Alerts for other replicas.
+            if id ~= replica.id then
                 replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
