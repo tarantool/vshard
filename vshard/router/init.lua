@@ -1190,7 +1190,11 @@ local function failover_need_down_priority(replicaset, curr_ts)
     -- is wrong with it. Temporary lower its priority.
     local is_sequential_fails =
         r.net_sequential_fail >= consts.FAILOVER_DOWN_SEQUENTIAL_FAIL
-    return is_down_ts or is_sequential_fails
+    -- If replica doesn't have proper connection with its master: connection
+    -- is dead, lag or idle time is too big - then replica has outdated data
+    -- and shouldn't be used as prioritized.
+    local is_unhealthy = r.health_status == consts.STATUS.RED
+    return is_down_ts or is_sequential_fails or is_unhealthy
 end
 
 --
@@ -1218,8 +1222,49 @@ local function failover_collect_to_update(router)
     return id_to_update
 end
 
+--
+-- Check, whether the instance has properly working connection to the master.
+-- Returns the status of the replica and the reason, if it's STATUS.RED.
+--
+local function failover_check_upstream(upstream)
+    if not upstream then
+        return consts.STATUS.RED, 'Missing upstream from the master'
+    end
+    local status = upstream.status
+    if not status or status == 'stopped' or status == 'disconnected' then
+        -- All other states mean either that everything is ok ('follow')
+        -- or that replica is connecting. In all these cases replica
+        -- is considered healthy.
+        local msg = string.format('Upstream to master has status "%s"', status)
+        return consts.STATUS.RED, msg
+    end
+    if upstream.idle and upstream.idle > consts.REPLICA_MAX_IDLE then
+        local msg = string.format('Upstream to master has idle %.15f > %d',
+                                  upstream.idle, consts.REPLICA_MAX_IDLE)
+        return consts.STATUS.RED, msg
+    end
+    if upstream.lag and upstream.lag > consts.REPLICA_MAX_LAG then
+        local msg = string.format('Upstream to master has lag %.15f > %d',
+                                  upstream.lag, consts.REPLICA_MAX_LAG)
+        return consts.STATUS.RED, msg
+    end
+    return consts.STATUS.GREEN
+end
+
 local function failover_ping(replica, opts)
-    return replica:call('vshard.storage._call', {'info'}, opts)
+    local info_opts = {timeout = opts.timeout, with_health = true}
+    local net_status, info, err =
+        replica:call('vshard.storage._call', {'info', info_opts}, opts)
+    if not info then
+        replica:update_health_status(consts.STATUS.YELLOW, err)
+        return net_status, info, err
+    end
+
+    assert(type(info.health) == 'table')
+    local health_status, reason =
+        failover_check_upstream(info.health.master_upstream)
+    replica:update_health_status(health_status, reason)
+    return net_status, info, err
 end
 
 local function failover_ping_round(router, curr_ts)
