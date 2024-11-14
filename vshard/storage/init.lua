@@ -3297,11 +3297,64 @@ local function storage_map(rid, name, args)
     return true
 end
 
-local function storage_service_info()
-    return {
+--
+-- Returns info about the state of the replica. Used in router failover.
+-- Currently returns only the state of replication from master.
+--
+local function storage_health_state(timeout)
+    if this_is_master() then
+        -- Master is always up to date with itself.
+        return {
+            master_upstream = {
+                status = 'follow',
+                idle = 0,
+                lag = 0,
+            },
+        }
+    end
+    -- Find master. In case of 'auto' master it may be unknown.
+    local master = M.this_replicaset:wait_master(timeout)
+    if not master then
+        return nil, lerror.timeout()
+    end
+    -- Find master in box.info.replication.
+    for _, replica in ipairs(box.info.replication) do
+        if ((master.name ~= nil and replica.name == master.name) or
+           (master.uuid ~= nil and replica.uuid == master.uuid)) then
+            -- The instance was started without master in box.cfg.replication.
+            -- Should not happen on vshard storage at all.
+            if not replica.upstream then
+                return {}
+            end
+            return {
+                master_upstream = {
+                    status = replica.upstream.status,
+                    idle = replica.upstream.idle,
+                    lag = replica.upstream.lag,
+                }
+            }
+        end
+    end
+    -- We may not find the master at all, e.g. when name identification is used
+    -- names have not been set yet and uuid have not been passed to the config.
+    return nil, lerror.vshard(lerror.code.MISSING_MASTER, M.this_replicaset.id)
+end
+
+local function storage_service_info(opts)
+    local info = {
         is_master = this_is_master(),
         name = box.info.name,
     }
+    if opts and opts.with_health then
+        local timeout = opts.timeout or consts.MASTER_SEARCH_TIMEOUT
+        local health, err = storage_health_state(timeout)
+        if not health then
+            -- Info is atomic, partial result is not returned.
+            return nil, err
+        end
+        info.health = health
+    end
+    return info
 end
 
 local service_call_api

@@ -26,6 +26,9 @@
 --             net_sequential_fail = <count of sequential failed
 --                                    requests to the replica>,
 --             is_outdated = nil/true,
+--             health_status = <STATUS.GREEN  - replica is healthy,
+--                              STATUS.YELLOW - health of replica is unknown,
+--                              STATUS.RED    - replica is unhealthy>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -486,7 +489,8 @@ local function replicaset_down_replica_priority(replicaset)
     assert(old_replica and ((old_replica.down_ts and
            not old_replica:is_connected()) or
            old_replica.net_sequential_fail >=
-           consts.FAILOVER_DOWN_SEQUENTIAL_FAIL))
+           consts.FAILOVER_DOWN_SEQUENTIAL_FAIL or
+           old_replica.health_status == consts.STATUS.RED))
     local new_replica = old_replica.next_by_priority
     if new_replica then
         assert(new_replica ~= old_replica)
@@ -513,7 +517,8 @@ local function replicaset_up_replica_priority(replicaset)
             -- Failed to up priority.
             return
         end
-        local is_healthy = replica.net_sequential_ok > 0
+        local is_healthy = replica.health_status == consts.STATUS.GREEN
+        is_healthy = is_healthy and replica.net_sequential_ok > 0
         if replica:is_connected() and (is_healthy or not old_replica) then
             assert(replica.net_sequential_fail == 0)
             replicaset.replica = replica
@@ -1213,6 +1218,24 @@ local function locate_masters(replicasets)
     return is_all_done, is_all_nop, last_err
 end
 
+local function replica_update_health_status(replica, status, reason)
+    if replica.health_status == status then
+        return
+    end
+
+    replica.health_status = status
+    if status == consts.STATUS.GREEN then
+        log.info("Replica %s is healthy", replica.id)
+    elseif status == consts.STATUS.RED then
+        assert(reason ~= nil)
+        log.warn("Replica %s is unhealthy: %s", replica.id, reason)
+    else
+        assert(status == consts.STATUS.YELLOW and reason ~= nil)
+        log.warn("The healthiness of the replica %s is unknown: %s",
+                 replica.id, reason)
+    end
+end
+
 --
 -- Meta-methods
 --
@@ -1271,6 +1294,7 @@ local replica_mt = {
         end,
         detach_conn = replica_detach_conn,
         call = replica_call,
+        update_health_status = replica_update_health_status,
     },
     __tostring = function(replica)
         if replica.name then
@@ -1469,7 +1493,7 @@ local function buildall(sharding_cfg)
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
-                id = replica_id,
+                id = replica_id, health_status = consts.STATUS.YELLOW,
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then

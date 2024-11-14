@@ -1533,6 +1533,7 @@ error_messages
   - Use replica:detach_conn(...) instead of replica.detach_conn(...)
   - Use replica:is_connected(...) instead of replica.is_connected(...)
   - Use replica:safe_uri(...) instead of replica.safe_uri(...)
+  - Use replica:update_health_status(...) instead of replica.update_health_status(...)
 ...
 --
 -- gh-117: Preserve route_map on router.cfg.
