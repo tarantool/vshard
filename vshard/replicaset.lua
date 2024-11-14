@@ -513,7 +513,8 @@ local function replicaset_up_replica_priority(replicaset)
             -- Failed to up priority.
             return
         end
-        if replica:is_connected() and replica.net_sequential_ok > 0 then
+        local is_healthy = replica.net_sequential_ok > 0
+        if replica:is_connected() and (is_healthy or not old_replica) then
             assert(replica.net_sequential_fail == 0)
             replicaset.replica = replica
             assert(not old_replica or
