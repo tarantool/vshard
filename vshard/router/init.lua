@@ -1781,10 +1781,10 @@ local function router_info(router, opts)
                                      -- Master exists, but not
                                      -- available.
                                      lerror.code.UNREACHABLE_MASTER,
-                                     {replicaset.uuid, 'disconnected'},
+                                     {replicaset.id, 'disconnected'},
                                      -- Master does not exists.
                                      lerror.code.MISSING_MASTER,
-                                     {replicaset.uuid})
+                                     {replicaset.id})
         state.status = math.max(state.status, color)
         rs_info.master = info
 

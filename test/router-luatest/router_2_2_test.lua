@@ -2,6 +2,7 @@ local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 local vconsts = require('vshard.consts')
+local vserver = require('test.luatest_helpers.server')
 
 local g = t.group('router')
 local cfg_template = {
@@ -580,15 +581,19 @@ g.test_router_box_cfg_mode = function(g)
     t.assert(g.router:grep_log('Calling box.cfg()'))
 end
 
-g.test_named_config_identification = function(g)
-    t.run_only_if(vutil.feature.persistent_names)
+local function router_named_cfg_template()
     local new_cfg_template = table.deepcopy(cfg_template)
     new_cfg_template.identification_mode = 'name_as_key'
     new_cfg_template.sharding['replicaset_1'] = new_cfg_template.sharding[1]
     new_cfg_template.sharding['replicaset_2'] = new_cfg_template.sharding[2]
     new_cfg_template.sharding[1] = nil
     new_cfg_template.sharding[2] = nil
-    local new_global_cfg = vtest.config_new(new_cfg_template)
+    return new_cfg_template
+end
+
+g.test_named_config_identification = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+    local new_global_cfg = vtest.config_new(router_named_cfg_template())
 
     -- Set names, as they should be verified on connection.
     g.replica_1_a:exec(function()
@@ -1037,4 +1042,51 @@ g.test_failed_calls_affect_priority = function()
     end, {g.replica_1_b:replicaset_uuid(), g.replica_1_b:instance_uuid()})
 
     vtest.router_cfg(g.router, global_cfg)
+end
+
+local function info_find_alert(alerts, alert_name)
+    for _, v in pairs(alerts) do
+        if v[1] == alert_name then
+            return v
+        end
+    end
+end
+
+--
+-- gh-474: error during alert construction
+--
+g.test_info_with_named_identification = function()
+    t.run_only_if(vutil.feature.persistent_names)
+    --
+    -- Missing master alert.
+    --
+    local template = router_named_cfg_template(g)
+    -- Intentionally skip master in order to get info warning.
+    template.sharding['replicaset_1'].replicas.replica_1_a.master = nil
+    vtest.router_cfg(g.router, vtest.config_new(template))
+    local alerts = g.router:exec(function()
+        local ok, result = pcall(ivshard.router.info)
+        ilt.assert(ok, 'no error')
+        return result.alerts
+    end)
+    t.assert(info_find_alert(alerts, 'MISSING_MASTER'),
+             'MISSING_MASTER alert is constructed')
+
+    --
+    -- Unreachable master alert.
+    --
+    template.sharding['replicaset_1'].replicas.replica_1_a.master = true
+    local new_global_cfg = vtest.config_new(template)
+    new_global_cfg.sharding['replicaset_1'].replicas.replica_1_a.uri =
+        vserver.build_listen_uri('nonexistent')
+    vtest.router_cfg(g.router, new_global_cfg)
+    alerts = g.router:exec(function()
+        local ok, result = pcall(ivshard.router.info)
+        ilt.assert(ok, 'no error')
+        return result.alerts
+    end)
+    local alert = info_find_alert(alerts, 'UNREACHABLE_MASTER')
+    t.assert(alert, 'UNREACHABLE_MASTER alert is constructed')
+    t.assert_not_str_contains(alert[2], 'replicaset nil',
+                              'alert contains valid replicaset id')
 end
