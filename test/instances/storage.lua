@@ -13,6 +13,7 @@ _G.ivconst = require('vshard.consts')
 _G.ivutil = require('vshard.util')
 _G.iverror = require('vshard.error')
 _G.ivtest = require('test.luatest_helpers.vtest')
+_G.iyaml = require('yaml')
 
 _G.iwait_timeout = _G.ivtest.wait_timeout
 

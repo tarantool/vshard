@@ -4,7 +4,6 @@ local cluster = require('test.luatest_helpers.cluster')
 local fio = require('fio')
 local fiber = require('fiber')
 local uuid = require('uuid')
-local yaml = require('yaml')
 local vcfg = require('vshard.cfg')
 local vrepset = require('vshard.replicaset')
 local log = require('log')
@@ -552,7 +551,7 @@ local function storage_wait_follow_f(id)
         do return end
     ::retry::
         if ifiber.clock() > deadline or status == 'stopped' then
-            ilt.fail(yaml.encode({
+            ilt.fail(iyaml.encode({
                 err = last_err,
                 dst_id = id,
                 replication_info = box.info.replication,

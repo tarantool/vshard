@@ -13,6 +13,7 @@ _G.ivtest = require('test.luatest_helpers.vtest')
 _G.ivconst = require('vshard.consts')
 _G.iverror = require('vshard.error')
 _G.iwait_timeout = _G.ivtest.wait_timeout
+_G.iyaml = require('yaml')
 
 -- Do not load entire vshard into the global namespace to catch errors when code
 -- relies on that.

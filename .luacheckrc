@@ -36,6 +36,7 @@ local test_rules = {
         '113/ivtest',
         '113/ivutil',
         '113/iwait_timeout',
+        '113/iyaml',
     }
 }
 
