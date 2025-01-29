@@ -15,7 +15,7 @@ jobs:
   scm:
     if: github.ref == 'refs/heads/master'
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v3
@@ -30,7 +30,7 @@ jobs:
     # We need to run this job only on tag push.
     if: startsWith(github.ref, 'refs/tags/')
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Check module version
@@ -41,7 +41,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags')
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     needs: version-check
 
