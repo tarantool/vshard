@@ -96,6 +96,7 @@ local gsc = util.generate_self_checker
 
 local replicaset_errinj = {
     ERRINJ_REPLICA_FAILOVER_DELAY = false,
+    ERRINJ_MASTER_SEARCH_DELAY = false,
 }
 
 local replica_errinj = {
@@ -416,6 +417,9 @@ local function replicaset_wait_master(replicaset, timeout)
     if replicaset.on_master_required then
         pcall(replicaset.on_master_required)
     end
+    if replicaset.worker then
+        replicaset.worker:wakeup_service('replicaset_master_search')
+    end
     while true do
         master = replicaset.master
         if master then
@@ -711,6 +715,9 @@ local function replicaset_master_call(replicaset, func, args, opts)
         -- must try to find it.
         if replicaset.on_master_required then
             pcall(replicaset.on_master_required)
+        end
+        if replicaset.worker then
+            replicaset.worker:wakeup_service('replicaset_master_search')
         end
     end
     -- luacheck: ignore 211/net_status
@@ -1881,6 +1888,94 @@ local function replica_collect_idle_conns_service_step(replica, data)
 end
 
 --------------------------------------------------------------------------------
+-- Master search
+--------------------------------------------------------------------------------
+
+local function replicaset_master_search_lazy_step(rs)
+    if rs.master and rs.is_master_auto and not rs.master:is_connected() then
+        log.warn('Discarded a not connected master %s in rs %s',
+            rs.master, rs.id)
+        rs.master = nil
+    end
+    if rs.is_master_auto and not rs.master and rs.master_wait_count > 0 then
+        return rs:locate_master()
+    end
+    return true, true
+end
+
+local function replicaset_master_search_aggressive_step(rs)
+    return rs:locate_master()
+end
+
+local function replicaset_master_search_step(rs, args)
+    if args and args.mode == 'lazy' then
+        return replicaset_master_search_lazy_step(rs)
+    end
+    return replicaset_master_search_aggressive_step(rs)
+end
+
+--
+-- Master discovery background function. It is supposed to notice master changes
+-- and find new masters in the replicasets, which are configured for that.
+--
+-- XXX: due to polling the search might notice master change not right when it
+-- happens. In future it makes sense to rewrite master search using
+-- subscriptions. The problem is that at the moment of writing the subscriptions
+-- are not working well in all Tarantool versions.
+--
+local function replicaset_master_search_service_step(replicaset, data)
+    if not data.info then
+        data.info = lservice_info.new('master_search')
+        data.is_in_progress = false
+    end
+    data.info:next_iter()
+    data.info:set_activity('locating master')
+    if replicaset.errinj.ERRINJ_MASTER_SEARCH_DELAY then
+        replicaset.errinj.ERRINJ_MASTER_SEARCH_DELAY = 'in'
+        repeat
+            fiber.sleep(0.001)
+        until not replicaset.errinj.ERRINJ_MASTER_SEARCH_DELAY
+    end
+    local timeout
+    local start_time = fiber_clock()
+    local mode = data.args and data.args.mode
+    local is_done, is_nop, err =
+        replicaset_master_search_step(replicaset, {mode = mode})
+    if err then
+        log.error(data.info:set_status_error(
+            'Error during master search: %s', lerror.make(err)))
+    end
+    if is_done then
+        timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
+        data.info:set_status_ok()
+        data.info:set_activity('idling')
+    elseif err then
+        timeout = consts.MASTER_SEARCH_BACKOFF_INTERVAL
+        data.info:set_activity('backoff')
+    else
+        timeout = consts.MASTER_SEARCH_WORK_INTERVAL
+    end
+    if not data.is_in_progress then
+        if not is_nop and is_done then
+            log.info('Master search happened')
+        elseif not is_done then
+            log.info('Master search is started')
+            data.is_in_progress = true
+        end
+    elseif is_done then
+        log.info('Master search is finished')
+        data.is_in_progress = false
+    end
+    local end_time = fiber_clock()
+    local duration = end_time - start_time
+    if not is_nop then
+        log.verbose('Master search step took %s seconds. Next in %s '..
+                    'seconds', duration, timeout)
+    end
+    return timeout
+end
+
+--------------------------------------------------------------------------------
 -- Worker
 --------------------------------------------------------------------------------
 
@@ -1937,6 +2032,7 @@ local worker_service_to_func = {
     replica_failover = replica_failover_service_step,
     replicaset_failover = replicaset_failover_service_step,
     replica_collect_idle_conns = replica_collect_idle_conns_service_step,
+    replicaset_master_search = replicaset_master_search_service_step,
 }
 
 local function worker_add_service(worker, service_name, args)

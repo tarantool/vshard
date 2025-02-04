@@ -116,12 +116,11 @@ test_group.test_bucket_send = function(g)
     -- the new master sooner or later.
     --
     local bid2 = g.replica_1_a:exec(function(uuid)
-        ivtest.service_wait_for_new_ok(
-            ivshard.storage.internal.conn_manager_service,
-            {on_yield = function()
-                ivshard.storage.internal.conn_manager_fiber:wakeup()
-            end})
         local rs = ivshard.storage.internal.replicasets[uuid]
+        local name = 'replicaset_master_search'
+        ivtest.service_wait_for_new_ok(
+            rs.worker.services[name].data.info,
+            {on_yield = function() rs.worker:wakeup_service(name) end})
         ilt.assert_equals(rs.master, nil)
 
         local bid = _G.get_first_bucket()

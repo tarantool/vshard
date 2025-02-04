@@ -175,10 +175,6 @@ if not M then
         instance_watch_fiber = nil,
         instance_watch_service = nil,
 
-        ----------------- Connection management ------------------
-        conn_manager_fiber = nil,
-        conn_manager_service = nil,
-
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
         collect_bucket_garbage_fiber = nil,
@@ -3434,12 +3430,6 @@ local function master_auto_synchronize()
     end
 end
 
-local function master_on_required()
-    if M.conn_manager_fiber then
-        M.conn_manager_fiber:wakeup()
-    end
-end
-
 --------------------------------------------------------------------------------
 -- Instance state management
 --------------------------------------------------------------------------------
@@ -3495,79 +3485,6 @@ local function instance_watch_update()
     if M.instance_watch_fiber then
         M.instance_watch_fiber:cancel()
         M.instance_watch_fiber = nil
-    end
-end
-
---------------------------------------------------------------------------------
--- Connection management
---------------------------------------------------------------------------------
-
-local function conn_manager_locate_masters(service)
-    local is_all_done = true
-    local is_done, _, err
-    for rs_id, rs in pairs(M.replicasets) do
-        if rs.master and rs.is_master_auto and
-           not rs.master:is_connected() then
-            log.warn('Discarded a not connected master %s in rs %s',
-                rs.master, rs_id)
-            rs.master = nil
-        end
-        if rs.is_master_auto and not rs.master and rs.master_wait_count > 0 then
-            is_done, _, err = rs:locate_master()
-            if err then
-                log.error(service:set_status_error(
-                    'Error during master discovery for %s: %s', rs_id, err))
-            end
-            is_all_done = is_all_done and is_done
-        end
-    end
-    return is_all_done
-end
-
-local function conn_manager_service_f(service)
-    local module_version = M.module_version
-    while module_version == M.module_version do
-        service:next_iter()
-        local timeout
-        service:set_activity('master discovery')
-        lfiber.testcancel()
-        if not conn_manager_locate_masters(service) then
-            timeout = consts.MASTER_SEARCH_WORK_INTERVAL
-            service:set_activity('backoff')
-        else
-            service:set_status_ok()
-            service:set_activity('idling')
-            timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
-        end
-        lfiber.testcancel()
-        lfiber.sleep(timeout)
-    end
-end
-
-local function conn_manager_f()
-    assert(not M.conn_manager_service)
-    local service = lservice_info.new('conn_manager')
-    M.conn_manager_service = service
-    local ok, err = pcall(conn_manager_service_f, service)
-    assert(M.conn_manager_service == service)
-    M.conn_manager_service = nil
-    if not ok then
-        error(err)
-    end
-end
-
-local function conn_manager_update()
-    local replica_service_name = 'replica_collect_idle_conns'
-    for _, replicaset in pairs(M.replicasets) do
-        for _, replica in pairs(replicaset.replicas) do
-            if not replica.worker.services[replica_service_name] then
-                replica.worker:add_service(replica_service_name)
-            end
-        end
-    end
-    if not M.conn_manager_fiber then
-        M.conn_manager_fiber = util.reloadable_fiber_create(
-            'vshard.conn_man', M, 'conn_manager_f')
     end
 end
 
@@ -3761,6 +3678,22 @@ local function storage_cfg_context_extend(cfgctx)
     cfgctx.is_master_auto = new_rs_cfg.master == 'auto'
 end
 
+local function conn_manager_update()
+    local replica_service_name = 'replica_collect_idle_conns'
+    local replicaset_service_name = 'replicaset_master_search'
+    for _, replicaset in pairs(M.replicasets) do
+        if not replicaset.worker.services[replicaset_service_name] then
+            replicaset.worker:add_service(replicaset_service_name,
+                                          {mode = 'lazy'})
+        end
+        for _, replica in pairs(replicaset.replicas) do
+            if not replica.worker.services[replica_service_name] then
+                replica.worker:add_service(replica_service_name)
+            end
+        end
+    end
+end
+
 local function storage_cfg_services_update()
     instance_watch_update()
     conn_manager_update()
@@ -3788,9 +3721,6 @@ local function storage_cfg_xc(cfgctx)
     end
 
     local new_replicasets = lreplicaset.buildall(new_cfg)
-    for _, rs in pairs(new_replicasets) do
-        rs.on_master_required = master_on_required
-    end
     -- It is considered that all possible errors during cfg
     -- process occur only before this place.
     -- This check should be placed as late as possible.
@@ -4224,7 +4154,6 @@ M.recovery_f = recovery_f
 M.rebalancer_f = rebalancer_f
 M.gc_bucket_f = gc_bucket_f
 M.instance_watch_f = instance_watch_f
-M.conn_manager_f = conn_manager_f
 
 M.api_call_cache = storage_api_call_unsafe
 
