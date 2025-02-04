@@ -258,10 +258,10 @@ test_group.test_noactivity_timeout_for_auto_master = function(g)
         --
         local ok, err = ivshard.storage.bucket_send(bid1, uuid,
                                                     {timeout = iwait_timeout})
+        local master = ivshard.storage.internal.replicasets[uuid].master
         ilt.assert_equals(err, nil)
         ilt.assert(ok)
-        ilt.assert_not_equals(
-            ivshard.storage.internal.replicasets[uuid].master, nil)
+        ilt.assert_not_equals(master, nil)
         --
         -- Wait for the noactivity timeout to expire. The connection must be
         -- dropped. The master role is reset, because it is automatic and wasn't
@@ -271,6 +271,10 @@ test_group.test_noactivity_timeout_for_auto_master = function(g)
         local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
         ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
         ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        local name = 'replica_collect_idle_conns'
+        ivtest.service_wait_for_new_ok(
+            master.worker.services[name].data.info,
+            {on_yield = function() master.worker:wakeup_service(name) end})
         ivtest.service_wait_for_new_ok(
             ivshard.storage.internal.conn_manager_service,
             {on_yield = function()
@@ -320,11 +324,16 @@ test_group.test_conn_manager_connect_self = function(g)
 
         -- Assert, that connection to self is created.
         local replicaset = ivshard.storage.internal.replicasets[uuid]
-        ilt.assert_not_equals(replicaset.master, nil)
+        local master = replicaset.master
+        ilt.assert_not_equals(master, nil)
 
         local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
         ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
         ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        local name = 'replica_collect_idle_conns'
+        ivtest.service_wait_for_new_ok(
+            master.worker.services[name].data.info,
+            {on_yield = function() master.worker:wakeup_service(name) end})
         local conn_manager = ivshard.storage.internal.conn_manager_service
         ivtest.service_wait_for_new_ok(conn_manager, {on_yield = function()
             ivshard.storage.internal.conn_manager_fiber:wakeup()

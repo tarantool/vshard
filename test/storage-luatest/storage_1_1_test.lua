@@ -511,6 +511,10 @@ test_group.test_noactivity_timeout_for_explicit_master = function(g)
         local old_timeout = ivconst.REPLICA_NOACTIVITY_TIMEOUT
         ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.01
         ifiber.sleep(ivconst.REPLICA_NOACTIVITY_TIMEOUT)
+        local name = 'replica_collect_idle_conns'
+        ivtest.service_wait_for_new_ok(
+            master.worker.services[name].data.info,
+            {on_yield = function() master.worker:wakeup_service(name) end})
         ivtest.service_wait_for_new_ok(
             ivshard.storage.internal.conn_manager_service,
             {on_yield = function()
