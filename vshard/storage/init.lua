@@ -3506,6 +3506,12 @@ local function conn_manager_locate_masters(service)
     local is_all_done = true
     local is_done, _, err
     for rs_id, rs in pairs(M.replicasets) do
+        if rs.master and rs.is_master_auto and
+           not rs.master:is_connected() then
+            log.warn('Discarded a not connected master %s in rs %s',
+                rs.master, rs_id)
+            rs.master = nil
+        end
         if rs.is_master_auto and not rs.master and rs.master_wait_count > 0 then
             is_done, _, err = rs:locate_master()
             if err then
@@ -3518,39 +3524,10 @@ local function conn_manager_locate_masters(service)
     return is_all_done
 end
 
-local function conn_manager_collect_idle_conns()
-    local ts = fiber_clock()
-    local count = 0
-    for rs_id, rs in pairs(M.replicasets) do
-        for _, replica in pairs(rs.replicas) do
-            if replica == rs.master and rs.is_master_auto and
-               not replica:is_connected() then
-                log.warn('Discarded a not connected master %s in rs %s',
-                         rs.master, rs_id)
-                rs.master = nil
-            end
-            local c = replica.conn
-            if c and replica.activity_ts and
-               replica.activity_ts + consts.REPLICA_NOACTIVITY_TIMEOUT < ts then
-                if replica == rs.master and rs.is_master_auto then
-                    rs.master = nil
-                end
-                replica.conn = nil
-                c:close()
-                count = count + 1
-            end
-        end
-    end
-    if count > 0 then
-        log.info('Closed %s unused connections', count)
-    end
-end
-
 local function conn_manager_service_f(service)
     local module_version = M.module_version
     while module_version == M.module_version do
         service:next_iter()
-        conn_manager_collect_idle_conns()
         local timeout
         service:set_activity('master discovery')
         lfiber.testcancel()
@@ -3580,6 +3557,14 @@ local function conn_manager_f()
 end
 
 local function conn_manager_update()
+    local replica_service_name = 'replica_collect_idle_conns'
+    for _, replicaset in pairs(M.replicasets) do
+        for _, replica in pairs(replicaset.replicas) do
+            if not replica.worker.services[replica_service_name] then
+                replica.worker:add_service(replica_service_name)
+            end
+        end
+    end
     if not M.conn_manager_fiber then
         M.conn_manager_fiber = util.reloadable_fiber_create(
             'vshard.conn_man', M, 'conn_manager_f')

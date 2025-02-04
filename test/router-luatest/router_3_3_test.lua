@@ -291,11 +291,11 @@ local function failover_health_check_master_switch(g)
         replica:exec(function()
             local old_noactivity = ivconst.REPLICA_NOACTIVITY_TIMEOUT
             ivconst.REPLICA_NOACTIVITY_TIMEOUT = 0.1
-            local rs = ivshard.storage.internal.this_replicaset
-            ilt.helpers.retrying({timeout = iwait_timeout}, function()
-                ivshard.storage.internal.conn_manager_fiber:wakeup()
-                ilt.assert_equals(rs.master, nil)
-            end)
+            local master = ivshard.storage.internal.this_replicaset.master
+            local name = 'replica_collect_idle_conns'
+            ivtest.service_wait_for_new_ok(
+                master.worker.services[name].data.info,
+                {on_yield = function() master.worker:wakeup_service(name) end})
             ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_noactivity
         end)
     end

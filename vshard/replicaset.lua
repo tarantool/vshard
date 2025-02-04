@@ -1859,6 +1859,28 @@ local function replicaset_failover_service_step(replicaset, data)
 end
 
 --------------------------------------------------------------------------------
+-- Replica connection management
+--------------------------------------------------------------------------------
+
+local function replica_collect_idle_conns_service_step(replica, data)
+    if not data.info then
+        -- Service info is recreated on every reload.
+        data.info = lservice_info.new('collect_idle_conns')
+    end
+    data.info:next_iter()
+    local c = replica.conn
+    local timeout = consts.REPLICA_NOACTIVITY_TIMEOUT
+    if c and replica.activity_ts and
+       replica.activity_ts + timeout < fiber_clock() then
+        replica.conn = nil
+        c:close()
+        log.info('Closed unused connection to %s', replica)
+    end
+    data.info:set_status_ok()
+    return consts.MASTER_SEARCH_IDLE_INTERVAL
+end
+
+--------------------------------------------------------------------------------
 -- Worker
 --------------------------------------------------------------------------------
 
@@ -1914,6 +1936,7 @@ end
 local worker_service_to_func = {
     replica_failover = replica_failover_service_step,
     replicaset_failover = replicaset_failover_service_step,
+    replica_collect_idle_conns = replica_collect_idle_conns_service_step,
 }
 
 local function worker_add_service(worker, service_name, args)
