@@ -44,7 +44,6 @@ if not M then
         errinj = {
             ERRINJ_CFG = false,
             ERRINJ_CFG_DELAY = false,
-            ERRINJ_FAILOVER_CHANGE_CFG = false,
             ERRINJ_FAILOVER_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
@@ -1352,10 +1351,6 @@ local function failover_step(router)
     local replica_is_changed = false
     for _, id in pairs(id_to_update) do
         local rs = router.replicasets[id]
-        if M.errinj.ERRINJ_FAILOVER_CHANGE_CFG then
-            rs = nil
-            M.errinj.ERRINJ_FAILOVER_CHANGE_CFG = false
-        end
         if rs == nil then
             log.info('Configuration has changed, restart failovering')
             lfiber.yield()
