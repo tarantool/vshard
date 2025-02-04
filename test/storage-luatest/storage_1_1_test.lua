@@ -504,7 +504,8 @@ test_group.test_noactivity_timeout_for_explicit_master = function(g)
                                                     {timeout = iwait_timeout})
         ilt.assert_equals(err, nil)
         ilt.assert(ok)
-        local master = ivshard.storage.internal.replicasets[uuid].master
+        local replicaset = ivshard.storage.internal.replicasets[uuid]
+        local master = replicaset.master
         ilt.assert_not_equals(master, nil)
         ilt.assert_not_equals(master.conn, nil)
 
@@ -515,10 +516,11 @@ test_group.test_noactivity_timeout_for_explicit_master = function(g)
         ivtest.service_wait_for_new_ok(
             master.worker.services[name].data.info,
             {on_yield = function() master.worker:wakeup_service(name) end})
+        name = 'replicaset_master_search'
         ivtest.service_wait_for_new_ok(
-            ivshard.storage.internal.conn_manager_service,
+            replicaset.worker.services[name].data.info,
             {on_yield = function()
-                ivshard.storage.internal.conn_manager_fiber:wakeup()
+                replicaset.worker:wakeup_service(name)
             end})
         master = ivshard.storage.internal.replicasets[uuid].master
         ilt.assert_not_equals(master, nil)

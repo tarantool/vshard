@@ -258,7 +258,8 @@ test_group.test_noactivity_timeout_for_auto_master = function(g)
         --
         local ok, err = ivshard.storage.bucket_send(bid1, uuid,
                                                     {timeout = iwait_timeout})
-        local master = ivshard.storage.internal.replicasets[uuid].master
+        local replicaset = ivshard.storage.internal.replicasets[uuid]
+        local master = replicaset.master
         ilt.assert_equals(err, nil)
         ilt.assert(ok)
         ilt.assert_not_equals(master, nil)
@@ -275,11 +276,10 @@ test_group.test_noactivity_timeout_for_auto_master = function(g)
         ivtest.service_wait_for_new_ok(
             master.worker.services[name].data.info,
             {on_yield = function() master.worker:wakeup_service(name) end})
+        name = 'replicaset_master_search'
         ivtest.service_wait_for_new_ok(
-            ivshard.storage.internal.conn_manager_service,
-            {on_yield = function()
-                ivshard.storage.internal.conn_manager_fiber:wakeup()
-            end})
+            replicaset.worker.services[name].data.info,
+            {on_yield = function() replicaset.worker:wakeup_service(name) end})
         ilt.assert_equals(
             ivshard.storage.internal.replicasets[uuid].master, nil)
         ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
@@ -334,17 +334,13 @@ test_group.test_conn_manager_connect_self = function(g)
         ivtest.service_wait_for_new_ok(
             master.worker.services[name].data.info,
             {on_yield = function() master.worker:wakeup_service(name) end})
-        local conn_manager = ivshard.storage.internal.conn_manager_service
-        ivtest.service_wait_for_new_ok(conn_manager, {on_yield = function()
-            ivshard.storage.internal.conn_manager_fiber:wakeup()
-        end})
+        name = 'replicaset_master_search'
+        ivtest.service_wait_for_new_ok(
+            replicaset.worker.services[name].data.info,
+            {on_yield = function() replicaset.worker:wakeup_service(name) end})
         ilt.assert_equals(replicaset.master, nil)
         ivconst.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
     end, {g.replica_1_a:replicaset_uuid()})
-
-    -- Check, that assert not fails
-    local err_msg = 'conn_manager_f has been failed'
-    t.assert_equals(g.replica_1_a:grep_log(err_msg), nil)
 
     -- Cleanup
     vtest.cluster_rebalancer_disable(g)
