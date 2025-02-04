@@ -284,16 +284,6 @@ test_group.test_locate_master_after_disconnect = function(g)
     local ok, err = rs:callrw('get_uuid', {}, {timeout = 0.01})
     t.assert_not_equals(err, nil)
     t.assert(not ok)
-    -- Trigger is invoked when specified.
-    local is_master_required = false
-    rs.on_master_required = function()
-        is_master_required = true
-        error('Has to be in pcall')
-    end
-    ok, err = rs:callrw('get_uuid', {}, {timeout = 0.01})
-    t.assert_not_equals(err, nil)
-    t.assert(not ok)
-    t.assert(is_master_required)
     --
     -- Discovery won't be stuck on just the broken master.
     --

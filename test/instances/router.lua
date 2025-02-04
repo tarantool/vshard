@@ -76,8 +76,33 @@ local function failover_continue(router)
     end
 end
 
+local function master_search_pause(router)
+    router = router or _G.ivshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.errinj.ERRINJ_MASTER_SEARCH_DELAY = true
+    end
+    -- Wait for stop.
+    _G.ilt.helpers.retrying({timeout = _G.iwait_timeout}, function()
+        _G.ivshard.router.master_search_wakeup()
+        for _, rs in pairs(replicasets) do
+            _G.ilt.assert_equals(rs.errinj.ERRINJ_MASTER_SEARCH_DELAY, 'in')
+        end
+    end)
+end
+
+local function master_search_continue(router)
+    router = router or _G.ivshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.errinj.ERRINJ_MASTER_SEARCH_DELAY = false
+    end
+end
+
 _G.failover_wakeup = failover_wakeup
 _G.failover_pause = failover_pause
 _G.failover_continue = failover_continue
+_G.master_search_pause = master_search_pause
+_G.master_search_continue = master_search_continue
 
 _G.ready = true

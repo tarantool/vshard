@@ -47,7 +47,6 @@ if not M then
             ERRINJ_FAILOVER_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_LONG_DISCOVERY = false,
-            ERRINJ_MASTER_SEARCH_DELAY = false,
         },
         -- Dictionary, key is router name, value is a router.
         routers = {},
@@ -79,10 +78,6 @@ local ROUTER_TEMPLATE = {
         route_map = {},
         -- All known replicasets used for bucket re-balancing
         replicasets = nil,
-        -- Fiber to watch for master changes and find new masters.
-        master_search_fiber = nil,
-        -- Save statuses and errors for the master_search_service fiber
-        master_search_service = nil,
         -- Fiber to discovery buckets in background.
         discovery_fiber = nil,
         -- Save statuses and errors for the discovery fiber
@@ -1188,89 +1183,6 @@ end
 -- Master search
 --------------------------------------------------------------------------------
 
-local function master_search_step(router)
-    local ok, is_done, is_nop, err = pcall(lreplicaset.locate_masters,
-                                           router.replicasets)
-    if not ok then
-        err = is_done
-        is_done = false
-        is_nop = false
-    end
-    return is_done, is_nop, err
-end
-
---
--- Master discovery background function. It is supposed to notice master changes
--- and find new masters in the replicasets, which are configured for that.
---
--- XXX: due to polling the search might notice master change not right when it
--- happens. In future it makes sense to rewrite master search using
--- subscriptions. The problem is that at the moment of writing the subscriptions
--- are not working well in all Tarantool versions.
---
-local function master_search_service_f(router, service)
-    local module_version = M.module_version
-    local is_in_progress = false
-    local errinj = M.errinj
-    while module_version == M.module_version do
-        service:next_iter()
-        service:set_activity('locating masters')
-        if errinj.ERRINJ_MASTER_SEARCH_DELAY then
-            errinj.ERRINJ_MASTER_SEARCH_DELAY = 'in'
-            repeat
-                lfiber.sleep(0.001)
-            until not errinj.ERRINJ_MASTER_SEARCH_DELAY
-        end
-        local timeout
-        local start_time = fiber_clock()
-        local is_done, is_nop, err = master_search_step(router)
-        if err then
-            log.error(service:set_status_error(
-                'Error during master search: %s', lerror.make(err)))
-        end
-        if is_done then
-            timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
-            service:set_status_ok()
-            service:set_activity('idling')
-        elseif err then
-            timeout = consts.MASTER_SEARCH_BACKOFF_INTERVAL
-            service:set_activity('backoff')
-        else
-            timeout = consts.MASTER_SEARCH_WORK_INTERVAL
-        end
-        if not is_in_progress then
-            if not is_nop and is_done then
-                log.info('Master search happened')
-            elseif not is_done then
-                log.info('Master search is started')
-                is_in_progress = true
-            end
-        elseif is_done then
-            log.info('Master search is finished')
-            is_in_progress = false
-        end
-        local end_time = fiber_clock()
-        local duration = end_time - start_time
-        if not is_nop then
-            log.verbose('Master search step took %s seconds. Next in %s '..
-                        'seconds', duration, timeout)
-        end
-        lfiber.sleep(timeout)
-    end
-end
-
-local function master_search_f(router)
-    assert(not router.master_search_service)
-    local service = lservice_info.new('master_search')
-    router.master_search_service = service
-    local ok, err = pcall(master_search_service_f, router, service)
-    assert(router.master_search_service == service)
-    router.master_search_service = nil
-    if not ok then
-        error(err)
-    end
-end
-
 local function master_search_set(router)
     local enable = false
     for _, rs in pairs(router.replicasets) do
@@ -1279,27 +1191,28 @@ local function master_search_set(router)
             break
         end
     end
-    local search_fiber = router.master_search_fiber
-    if enable and search_fiber == nil then
+    local service_name = 'replicaset_master_search'
+    if enable then
         log.info('Master auto search is enabled')
-        router.master_search_fiber = util.reloadable_fiber_create(
-            'vshard.master_search.' .. router.name, M, 'master_search_f',
-            router)
-    elseif not enable and search_fiber ~= nil then
+        for _, replicaset in pairs(router.replicasets) do
+            if not replicaset.worker.services[service_name] then
+                replicaset.worker:add_service(service_name,
+                                              {mode = 'aggressive'})
+            end
+        end
+    else
         -- Do not make users pay for what they do not use - when the search is
         -- disabled for all replicasets, there should not be any fiber.
         log.info('Master auto search is disabled')
-        if search_fiber:status() ~= 'dead' then
-            search_fiber:cancel()
+        for _, replicaset in pairs(router.replicasets) do
+            replicaset.worker:remove_service(service_name)
         end
-        router.master_search_fiber = nil
     end
 end
 
 local function master_search_wakeup(router)
-    local f = router.master_search_fiber
-    if f then
-        f:wakeup()
+    for _, replicaset in pairs(router.replicasets) do
+        replicaset.worker:wakeup_service('replicaset_master_search')
     end
 end
 
@@ -1339,11 +1252,6 @@ local function router_cfg(router, cfg, is_reload)
                  "box_cfg_mode")
     end
     local new_replicasets = lreplicaset.buildall(vshard_cfg)
-    for _, rs in pairs(new_replicasets) do
-        rs.on_master_required = function()
-            master_search_wakeup(router)
-        end
-    end
     -- Move connections from an old configuration to a new one.
     -- It must be done with no yields to prevent usage both of not
     -- fully moved old replicasets, and not fully built new ones.
@@ -1609,7 +1517,8 @@ local function router_info(router, opts)
         -- Build info about working services.
         if opts and opts.with_services then
             rs_info.services = {
-                failover = replicaset:service_info('failover')
+                failover = replicaset:service_info('failover'),
+                master_search = replicaset:service_info('master_search'),
             }
         end
     end
@@ -1630,8 +1539,6 @@ local function router_info(router, opts)
         state.services = {
             discovery = router.discovery_service and
                 router.discovery_service:info(),
-            master_search = router.master_search_service and
-                router.master_search_service:info(),
         }
     end
     return state
@@ -1931,7 +1838,6 @@ else
 end
 
 M.discovery_f = discovery_f
-M.master_search_f = master_search_f
 M.router_mt = router_mt
 
 module.cfg = legacy_cfg
