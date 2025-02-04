@@ -107,26 +107,31 @@ function stop_aggressive_master_search()                                        
 end
 
 function master_discovery_block()                                               \
-    vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = true             \
+    for _, rs in pairs(vshard.router.static.replicasets) do                     \
+        rs.errinj.ERRINJ_MASTER_SEARCH_DELAY = true                             \
+    end                                                                         \
 end
 
 function check_master_discovery_block()                                         \
-    if vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY == 'in' then    \
-        return true                                                             \
-    end                                                                         \
     vshard.router.master_search_wakeup()                                        \
-    return false                                                                \
+    for _, rs in pairs(vshard.router.static.replicasets) do                     \
+        if rs.errinj.ERRINJ_MASTER_SEARCH_DELAY ~= 'in' then                    \
+            return false                                                        \
+        end                                                                     \
+    end                                                                         \
+    return true                                                                 \
 end
 
 function master_discovery_unblock()                                             \
-    vshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = false            \
+    for _, rs in pairs(vshard.router.static.replicasets) do                     \
+        rs.errinj.ERRINJ_MASTER_SEARCH_DELAY = false                            \
+    end                                                                         \
 end
 
 --
 -- Simulate the first cfg when no masters are known.
 --
 forget_masters()
-assert(vshard.router.static.master_search_fiber ~= nil)
 test_run:wait_cond(check_all_masters_found)
 test_run:wait_cond(check_all_buckets_found)
 

@@ -551,10 +551,10 @@ g.test_router_service_info = function(g)
         for _, rs in pairs(info.replicasets) do
             ilt.assert_not_equals(rs.services, nil)
             ilt.assert_not_equals(rs.services.failover, nil)
+            ilt.assert_not_equals(rs.services.master_search, nil)
         end
         ilt.assert_not_equals(info.services, nil)
         ilt.assert_not_equals(info.services.discovery, nil)
-        ilt.assert_not_equals(info.services.master_search, nil)
     end)
 
     -- Restore everything back.
@@ -661,15 +661,6 @@ g.test_master_discovery_on_disconnect = function(g)
     vtest.cluster_cfg(g, new_cluster_cfg)
     g.replica_1_a:update_box_cfg{read_only = false}
     g.replica_1_b:update_box_cfg{read_only = true}
-    g.router:exec(function()
-        -- gh-ee-9: old master search service might be still not finished.
-        ilt.helpers.retrying({timeout = iwait_timeout}, function()
-            local router = ivshard.router.internal.static_router
-            if router.master_search_service ~= nil then
-                error('Old master search still is not canceled')
-            end
-        end)
-    end)
     vtest.router_cfg(g.router, new_cluster_cfg)
 
     g.router:exec(function()
@@ -680,9 +671,13 @@ g.test_master_discovery_on_disconnect = function(g)
         consts.MASTER_SEARCH_IDLE_INTERVAL = iwait_timeout + 10
 
         -- Ensure the service enters the long sleep.
+        local service_name = 'replicaset_master_search'
         local router = ivshard.router.internal.static_router
-        ivtest.service_wait_for_new_ok(router.master_search_service,
-            {on_yield = ivshard.router.master_search_wakeup})
+        for _, rs in pairs(router.replicasets) do
+            local service = rs.worker.services[service_name].data.info
+            ivtest.service_wait_for_new_ok(service,
+                {on_yield = rs.worker:wakeup_service(service_name)})
+        end
     end)
 
     local bid = vtest.storage_first_bucket(g.replica_1_a)

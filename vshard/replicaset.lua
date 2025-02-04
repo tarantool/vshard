@@ -42,8 +42,6 @@
 --                     changes its master>,
 --      is_master_auto = <true when is configured to find the master on
 --                        its own>,
---      on_master_required = <trigger invoked every time when a new master call
---                            stumbles upon not knowing the master's location>,
 --      master_wait_count = <number of fibers right now waiting for the master to be
 --                           discovered>,
 --      replica = <nearest available replica object>,
@@ -414,9 +412,6 @@ local function replicaset_wait_master(replicaset, timeout)
     -- Slow path.
     local deadline = fiber_clock() + timeout
     replicaset.master_wait_count = replicaset.master_wait_count + 1
-    if replicaset.on_master_required then
-        pcall(replicaset.on_master_required)
-    end
     if replicaset.worker then
         replicaset.worker:wakeup_service('replicaset_master_search')
     end
@@ -713,9 +708,6 @@ local function replicaset_master_call(replicaset, func, args, opts)
         -- It could be that the master was disconnected due to a critical
         -- failure and now a new master is assigned. The owner of the connector
         -- must try to find it.
-        if replicaset.on_master_required then
-            pcall(replicaset.on_master_required)
-        end
         if replicaset.worker then
             replicaset.worker:wakeup_service('replicaset_master_search')
         end

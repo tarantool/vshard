@@ -205,21 +205,39 @@ local function test_master_search_template(g, router, auto_master_cfg)
 
     router:exec(function()
         local router = ivshard.router.internal.static_router
-        ivtest.service_wait_for_ok(router.master_search_service,
-            {on_yield = ivshard.router.master_search_wakeup})
+        if router.master_search_service then
+            -- Old version.
+            ivtest.service_wait_for_ok(router.master_search_service,
+                {on_yield = ivshard.router.master_search_wakeup})
+        else
+            -- New version.
+            local service_name = 'replicaset_master_search'
+            for _, rs in pairs(router.replicasets) do
+                local service = rs.worker.services[service_name]
+                ivtest.wait_for_not_nil(service.data, 'info',
+                    {on_yield = rs.worker:wakeup_service(service_name)})
+                ivtest.service_wait_for_new_ok(service.data.info,
+                    {on_yield = rs.worker:wakeup_service(service_name)})
+            end
+        end
         for _, rs in pairs(router.replicasets) do
             ilt.assert_not_equals(rs.master, nil)
         end
 
         -- Stop master search
-        ivshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = true
-        ilt.helpers.retrying({timeout = ivtest.wait_timeout,
-                              delay = ivtest.busy_step}, function()
+        if router.master_search_service then
             local errinj = ivshard.router.internal.errinj
-            if errinj.ERRINJ_MASTER_SEARCH_DELAY ~= 'in' then
-                error('Master search is not stopped yet')
-            end
-        end)
+            errinj.ERRINJ_MASTER_SEARCH_DELAY = true
+            ilt.helpers.retrying({timeout = ivtest.wait_timeout,
+                                  delay = ivtest.busy_step}, function()
+                ivshard.router.master_search_wakeup()
+                if errinj.ERRINJ_MASTER_SEARCH_DELAY ~= 'in' then
+                    error('Master search is not stopped yet')
+                end
+            end)
+        else
+            _G.master_search_pause()
+        end
     end)
 
     -- Change master and wait, until it's found
@@ -227,13 +245,22 @@ local function test_master_search_template(g, router, auto_master_cfg)
     global_cfg.sharding[rs_uuid].replicas[replica_uuid].master = true
     vtest.cluster_cfg(g, global_cfg)
 
-    router:exec(function(rs, master)
-        -- Continue and check master search
-        ivshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = false
+    router:exec(function(rs_uuid, master)
         local router = ivshard.router.internal.static_router
-        ivtest.service_wait_for_new_ok(router.master_search_service,
-            {on_yield = ivshard.router.master_search_wakeup})
-        ilt.assert_equals(master, router.replicasets[rs].master.uuid)
+        local rs = router.replicasets[rs_uuid]
+        -- Continue and check master search
+        if router.master_search_service then
+            ivshard.router.internal.errinj.ERRINJ_MASTER_SEARCH_DELAY = false
+            ivtest.service_wait_for_new_ok(router.master_search_service,
+                {on_yield = ivshard.router.master_search_wakeup})
+        else
+            _G.master_search_continue()
+            local service_name = 'replicaset_master_search'
+            local service = rs.worker.services[service_name].data.info
+            ivtest.service_wait_for_new_ok(service,
+                {on_yield = rs.worker:wakeup_service(service_name)})
+        end
+        ilt.assert_equals(master, rs.master.uuid)
     end, {rs_uuid, replica_uuid})
 
     -- Restore configuration of the cluster
