@@ -1329,7 +1329,7 @@ local function failover_ping_round(router, curr_ts)
                 -- way it will be eventually garbage collected
                 -- and closed.
                 replica:detach_conn()
-                replicaset:connect_replica(replica)
+                replica:connect()
             end
         end
     end
