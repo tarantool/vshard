@@ -46,8 +46,7 @@
 --      balance_i = <index of a next replica in priority_list to
 --                   use for a load-balanced request>,
 --      replica_up_ts = <timestamp updated on each attempt to
---                       connect to the nearest replica, and on
---                       each connect event>,
+--                       connect to the nearest replica>,
 --      name = <replicaset_name>,
 --      uuid = <replicaset_uuid>,
 --      id = <replicaset_name or replicaset_uuid>,
@@ -232,7 +231,6 @@ end
 --
 local function netbox_on_connect(conn)
     log.info("connected to %s:%s", conn.host, conn.port)
-    local rs = conn.replicaset
     local replica = conn.replica
     assert(replica ~= nil)
     -- If a replica's connection has revived, then unset
@@ -258,13 +256,6 @@ local function netbox_on_connect(conn)
                  '"%s"', replica, replica.uuid, conn.peer_uuid)
         conn:close()
         return
-    end
-    if replica == rs.replica and replica == rs.priority_list[1] then
-        -- Update replica_up_ts, if the current replica has the
-        -- biggest priority. Really, it is not necessary to
-        -- increase replica connection priority, if the current
-        -- one already has the biggest priority. (See failover_f).
-        rs.replica_up_ts = fiber_clock()
     end
 end
 
@@ -376,7 +367,7 @@ end
 -- in the replica object. Note, that the function does not wait
 -- until a connection is established.
 --
-local function replicaset_connect_to_replica(replicaset, replica)
+local function replica_connect(replica)
     replica.activity_ts = fiber_clock()
     local conn = replica.conn
     if not conn or netbox_is_conn_dead(conn) then
@@ -386,7 +377,6 @@ local function replicaset_connect_to_replica(replicaset, replica)
             fetch_schema = replica.fetch_schema
         })
         conn.replica = replica
-        conn.replicaset = replicaset
         -- vconnect must be set before the time, connection is established,
         -- as we must know, that the connection cannot be used. If vconnect
         -- is nil, it means all checks passed, so we may make a call and
@@ -440,7 +430,7 @@ local function replicaset_connect_master(replicaset)
         return nil, lerror.vshard(lerror.code.MISSING_MASTER,
                                   replicaset.id)
     end
-    return replicaset_connect_to_replica(replicaset, master)
+    return replica_connect(master)
 end
 
 --
@@ -452,7 +442,7 @@ local function replicaset_wait_connected(replicaset, timeout)
     if not master then
         return nil, timeout
     end
-    local conn = replicaset_connect_to_replica(replicaset, master)
+    local conn = replica_connect(master)
     return netbox_wait_connected(conn, timeout)
 end
 
@@ -469,7 +459,7 @@ local function replicaset_wait_connected_all(replicaset, opts)
             if replica_id == except then
                 goto next_check
             end
-            local conn = replicaset_connect_to_replica(replicaset, replica)
+            local conn = replica_connect(replica)
             if not conn:is_connected() then
                 timeout, err = netbox_wait_connected(conn, timeout)
                 if not timeout then
@@ -490,7 +480,7 @@ end
 --
 local function replicaset_connect_all(replicaset)
     for _, replica in pairs(replicaset.replicas) do
-        replicaset_connect_to_replica(replicaset, replica)
+        replica_connect(replica)
     end
 end
 
@@ -509,7 +499,7 @@ local function replicaset_down_replica_priority(replicaset)
     local new_replica = old_replica.next_by_priority
     if new_replica then
         assert(new_replica ~= old_replica)
-        replicaset_connect_to_replica(replicaset, new_replica)
+        replica_connect(new_replica)
         replicaset.replica = new_replica
     end
     -- Else the current replica already has the lowest priority.
@@ -668,7 +658,6 @@ local function replica_detach_conn(replica)
         -- Detach looks like disconnect for an observer.
         netbox_on_disconnect(c)
         c.replica = nil
-        c.replicaset = nil
         replica.conn = nil
     end
 end
@@ -703,7 +692,7 @@ local function replicaset_master_call(replicaset, func, args, opts)
         end
     end
     if not master.conn or not master.conn:is_connected() then
-        replicaset_connect_to_replica(replicaset, master)
+        replica_connect(master)
         -- It could be that the master was disconnected due to a critical
         -- failure and now a new master is assigned. The owner of the connector
         -- must try to find it.
@@ -869,7 +858,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                 if not replica then
                     return nil, timeout
                 end
-                replicaset_connect_to_replica(replicaset, replica)
+                replica_connect(replica)
                 if replica.backoff_ts then
                     return nil, lerror.vshard(
                         lerror.code.REPLICASET_IN_BACKOFF, replicaset.id,
@@ -1029,7 +1018,6 @@ local function rebind_replicasets(replicasets, old_replicasets)
                     replica.conn = conn
                     if conn then
                         conn.replica = replica
-                        conn.replicaset = replicaset
                     end
                 end
             end
@@ -1186,7 +1174,7 @@ local function replicaset_locate_master(replicaset)
             -- check it and it didn't respond.
             goto next_replica
         end
-        replicaset_connect_to_replica(replicaset, replica)
+        replica_connect(replica)
         ok, err = replica:check_is_connected()
         if ok then
             ok, res, err = replica_call(replica, func, args, async_opts)
@@ -1283,7 +1271,6 @@ local replicaset_mt = {
         connect = replicaset_connect_master;
         connect_master = replicaset_connect_master;
         connect_all = replicaset_connect_all;
-        connect_replica = replicaset_connect_to_replica;
         down_replica_priority = replicaset_down_replica_priority;
         up_replica_priority = replicaset_up_replica_priority;
         wait_connected = replicaset_wait_connected,
@@ -1331,6 +1318,7 @@ local replica_mt = {
             uri.password = nil
             return util.uri_format(uri)
         end,
+        connect = replica_connect,
         detach_conn = replica_detach_conn,
         call = replica_call,
         update_health_status = replica_update_health_status,
@@ -1599,7 +1587,7 @@ local function wait_masters_connect(replicasets, timeout)
             err_id = replicaset.id
             goto fail
         end
-        replicaset:connect_replica(master)
+        replica_connect(master)
         timeout = deadline - fiber_clock()
     end
     -- Wait until all connections are established.
