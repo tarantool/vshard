@@ -267,6 +267,11 @@ vshard.storage.enable()
 test_run:switch('router_1')
 -- Drop the backoff.
 fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+storage_2 = vshard.router.static.replicasets[replicasets[2]]
+-- Simulate successful ping.
+storage_2_a = storage_2.replicas[util.name_to_uuid.storage_2_a]
+storage_2_a.net_sequential_fail = 0
+storage_2_a.net_sequential_ok = 1
 -- Now goes to the best replica - it is enabled again.
 res, err = vshard.router.callro(1, 'echo', {100}, long_timeout)
 assert(res == 100)
