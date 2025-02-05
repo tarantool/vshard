@@ -58,6 +58,7 @@ g.before_all(function(g)
             parts = {'bucket_id'}, unique = false
         })
     end)
+    vtest.cluster_wait_fullsync(g)
 end)
 
 g.after_all(function(g)
@@ -241,6 +242,43 @@ local function failover_health_check_small_failover_timeout(g)
     vtest.router_cfg(g.router, old_cfg)
 end
 
+local function failover_health_check_master_down(g)
+    router_wait_prioritized(g, g.replica_1_c)
+    local old_cfg = g.replica_1_a:exec(function()
+        return ivshard.storage.internal.current_cfg
+    end)
+    g.replica_1_a:stop()
+
+    local rs_uuid = g.replica_1_c:replicaset_uuid()
+    local instance_uuid = g.replica_1_c:instance_uuid()
+    g.router:exec(function(rs_uuid, uuid)
+        rawset(_G, 'wait_for_failover', function(rs_uuid, uuid)
+            local router = ivshard.router.internal.static_router
+            local rs = router.replicasets[rs_uuid]
+            local r = rs.replicas[uuid]
+            local s = r.worker.services['replica_failover']
+            local opts = {on_yield = function()
+                r.worker:wakeup_service('replica_failover')
+            end}
+            ivtest.wait_for_not_nil(s.data, 'info', opts)
+            ivtest.service_wait_for_new_ok(s.data.info, opts)
+        end)
+        _G.wait_for_failover(rs_uuid, uuid)
+    end, {rs_uuid, instance_uuid})
+    -- Since all nodes are broken, prioritized replica is not changed.
+    router_assert_prioritized(g, g.replica_1_c)
+    g.replica_1_a:start()
+    g.replica_1_a:exec(function(cfg)
+        ivshard.storage.cfg(cfg, box.info.uuid)
+    end, {old_cfg})
+    router_wait_prioritized(g, g.replica_1_c)
+    -- Restore connection
+    g.router:exec(function(rs_uuid, uuid)
+        _G.wait_for_failover(rs_uuid, uuid)
+        _G.wait_for_failover = nil
+    end, {rs_uuid, g.replica_1_a:instance_uuid()})
+end
+
 local function failover_health_check_missing_master(g)
     router_wait_prioritized(g, g.replica_1_c)
     local old_cfg = g.replica_1_c:exec(function()
@@ -374,6 +412,7 @@ local function failover_health_check(g, auto_master)
     failover_health_check_big_lag(g)
     failover_health_check_small_failover_timeout(g)
     failover_health_check_missing_health(g)
+    failover_health_check_master_down(g)
     if not auto_master then
         failover_health_check_missing_master(g)
     else

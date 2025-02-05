@@ -1754,10 +1754,25 @@ local function replicaset_failover_need_down_priority(replicaset, curr_ts)
     -- is wrong with it. Temporary lower its priority.
     local is_sequential_fails =
         r.net_sequential_fail >= consts.FAILOVER_DOWN_SEQUENTIAL_FAIL
+    -- The replication health check must be applied if and only if there's
+    -- node in replicaset with alive replication or master with alive
+    -- connection.
+    local is_replication_alive = false
+    for _, r in pairs(replicaset.replicas) do
+        local is_master = r == replicaset.master
+        if (is_master and r.health_status == consts.STATUS.GREEN) or
+           (not is_master and r.health_status ~= consts.STATUS.RED) then
+            is_replication_alive = true
+            break
+        end
+    end
     -- If replica doesn't have proper connection with its master: connection
     -- is dead, lag or idle time is too big - then replica has outdated data
     -- and shouldn't be used as prioritized.
-    local is_unhealthy = r.health_status == consts.STATUS.RED
+    local is_unhealthy = false
+    if is_replication_alive then
+        is_unhealthy = r.health_status == consts.STATUS.RED
+    end
     return is_down_ts or is_sequential_fails or is_unhealthy
 end
 
