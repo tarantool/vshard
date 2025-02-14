@@ -1,7 +1,9 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local vutil = require('vshard.util')
 
-local test_group = t.group('storage')
+local group_config = {{is_sync = false}, {is_sync = true}}
+local test_group = t.group('storage', group_config)
 
 local cfg_template = {
     sharding = {
@@ -45,6 +47,8 @@ local cfg_template = {
 local global_cfg
 
 test_group.before_all(function(g)
+    t.run_only_if(not g.params.is_sync or
+        vutil.version_is_at_least(2, 6, 3, nil, 0, 0))
     global_cfg = vtest.config_new(cfg_template)
 
     vtest.cluster_new(g, global_cfg)
@@ -55,8 +59,13 @@ test_group.before_all(function(g)
         ivconst.MASTER_SEARCH_WORK_INTERVAL = ivtest.busy_step
     end)
 
-    vtest.cluster_exec_each_master(g, function()
+    vtest.cluster_exec_each_master(g, function(is_sync)
+        if is_sync then
+            box.ctl.promote()
+        end
         local s = box.schema.space.create('test', {
+            -- 1.10 doesn't have is_sync option at all.
+            is_sync = is_sync or nil,
             format = {
                 {'id', 'unsigned'},
                 {'bucket_id', 'unsigned'},
@@ -66,12 +75,18 @@ test_group.before_all(function(g)
         s:create_index('bucket_id', {
             parts = {'bucket_id'}, unique = false
         })
-    end)
+    end, {g.params.is_sync})
 end)
 
 test_group.after_all(function(g)
     g.cluster:drop()
 end)
+
+local function promote_if_needed(g, server)
+    if g.params.is_sync then
+        server:exec(function() box.ctl.promote() end)
+    end
+end
 
 test_group.test_bootstrap = function(g)
     local function check_auto_master()
@@ -142,6 +157,7 @@ test_group.test_notice_change = function(g)
     rs2_template.replicas.replica_2_b.read_only = false
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
+    promote_if_needed(g, g.replica_2_b)
     --
     -- Next bucket send should notice the master change and send the bucket to
     -- the new master.
@@ -180,6 +196,7 @@ test_group.test_notice_change = function(g)
     end, {bid1, bid2, g.replica_1_a:replicaset_uuid()})
 
     vtest.cluster_cfg(g, global_cfg)
+    promote_if_needed(g, g.replica_2_a)
 end
 
 test_group.test_recovery = function(g)
@@ -210,6 +227,7 @@ test_group.test_recovery = function(g)
     rs2_template.replicas.replica_2_b.read_only = false
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
+    promote_if_needed(g, g.replica_2_b)
     --
     -- Recovery on rs1 anyway finds the new master on rs2.
     --
@@ -224,6 +242,7 @@ test_group.test_recovery = function(g)
     -- Cleanup.
     --
     vtest.cluster_cfg(g, global_cfg)
+    promote_if_needed(g, g.replica_2_a)
     g.replica_2_a:exec(function()
         ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
         _G.bucket_recovery_wait()
@@ -385,6 +404,7 @@ test_group.test_master_discovery_on_disconnect = function(g)
     --
     g.replica_2_a:stop()
     g.replica_2_b:update_box_cfg{read_only = false}
+    promote_if_needed(g, g.replica_2_b)
     send_bucket_to_new_master(g.replica_1_a, g.replica_2_b)
     -- Can't GC the bucket until the old master is back. But can send it.
     g.replica_2_b:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
@@ -392,6 +412,7 @@ test_group.test_master_discovery_on_disconnect = function(g)
     -- Restore everything back.
     g.replica_2_a:start()
     vtest.cluster_cfg(g, global_cfg)
+    promote_if_needed(g, g.replica_2_a)
     g.replica_2_b:exec(bucket_gc_wait)
     g.replica_2_b:update_box_cfg{read_only = true}
     vtest.cluster_exec_each(g, function()
