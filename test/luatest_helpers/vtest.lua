@@ -181,6 +181,8 @@ local function cluster_new(g, cfg)
             local is_master
             if replica.read_only ~= nil then
                 is_master = not replica.read_only
+            elseif replica.election_mode ~= nil then
+                is_master = replica.election_mode == 'candidate'
             else
                 is_master = replica.master
             end
@@ -194,6 +196,7 @@ local function cluster_new(g, cfg)
             end
             box_cfg.read_only = not is_master
             box_cfg.memtx_use_mvcc_engine = cfg.memtx_use_mvcc_engine
+            box_cfg.election_mode = replica.election_mode
             if is_named then
                 box_cfg.instance_name = replica_name
                 box_cfg.replicaset_name = replicaset_name
