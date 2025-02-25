@@ -165,8 +165,8 @@ end
 -- Discovery
 --------------------------------------------------------------------------------
 
--- Search bucket in whole cluster
-local function bucket_discovery(router, bucket_id)
+-- Resolve bucket id to replicaset
+local function bucket_resolve(router, bucket_id)
     local replicaset = router.route_map[bucket_id]
     if replicaset ~= nil then
         return replicaset
@@ -206,21 +206,6 @@ local function bucket_discovery(router, bucket_id)
     end
 
     return nil, err
-end
-
--- Resolve bucket id to replicaset
-local function bucket_resolve(router, bucket_id)
-    local replicaset, err
-    replicaset = router.route_map[bucket_id]
-    if replicaset ~= nil then
-        return replicaset
-    end
-    -- Replicaset removed from cluster, perform discovery
-    replicaset, err = bucket_discovery(router, bucket_id)
-    if replicaset == nil then
-        return nil, err
-    end
-    return replicaset
 end
 
 -- Group bucket ids by replicasets according to the router cache.
@@ -2045,7 +2030,6 @@ local router_mt = {
         bucket_count = router_make_api(router_bucket_count),
         sync = router_make_api(router_sync),
         bootstrap = router_make_api(cluster_bootstrap),
-        bucket_discovery = router_make_api(bucket_discovery),
         discovery_wakeup = router_make_api(discovery_wakeup),
         master_search_wakeup = router_make_api(master_search_wakeup),
         discovery_set = router_make_api(discovery_set),

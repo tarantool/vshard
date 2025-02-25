@@ -64,7 +64,7 @@ _ = test_run:cmd("setopt delimiter ''");
 -- Initial distribution
 --
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
-replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
+replicaset, err = vshard.router.route(1); return err == nil or err
 vshard.router.bootstrap({timeout = 5})
 
 -- Second one should produce error
@@ -109,9 +109,9 @@ vshard.router.callro(1, 'echo', {nil, 'error_object'}, {})
 util.check_error(vshard.router.call, vshard.consts.DEFAULT_BUCKET_COUNT + 1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, -1, 'read', 'echo', {123})
 util.check_error(vshard.router.call, 0, 'read', 'echo', {123})
-replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
-replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
-replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
+replicaset, err = vshard.router.route(0); return err == nil or err
+replicaset, err = vshard.router.route(1); return err == nil or err
+replicaset, err = vshard.router.route(2); return err == nil or err
 
 _ = test_run:switch('storage_2_a')
 -- Pause recovery. It is too aggressive, and the test needs to see buckets in
@@ -146,8 +146,8 @@ vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
 _ = test_run:switch('router_1')
 
 -- Check unavailability of master of a replicaset.
-_ = vshard.router.bucket_discovery(2)
-_ = vshard.router.bucket_discovery(3)
+_ = vshard.router.route(2)
+_ = vshard.router.route(3)
 vshard.router.buckets_info(0, 3)
 _ = test_run:cmd('stop server storage_2_a')
 vshard.router.static.failover_fiber:wakeup()

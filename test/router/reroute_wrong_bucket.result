@@ -77,7 +77,7 @@ test_run:switch('router_1')
 util = require('util')
 ---
 ...
-vshard.router.bucket_discovery(100) ~= nil
+vshard.router.route(100) ~= nil
 ---
 - true
 ...

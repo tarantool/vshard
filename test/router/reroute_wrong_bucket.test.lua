@@ -27,7 +27,7 @@ vshard.storage.bucket_force_create(101, 100)
 
 test_run:switch('router_1')
 util = require('util')
-vshard.router.bucket_discovery(100) ~= nil
+vshard.router.route(100) ~= nil
 
 test_run:switch('storage_1_a')
 box.space._bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.SENT}, {'=', 3, util.replicasets[2]}})
