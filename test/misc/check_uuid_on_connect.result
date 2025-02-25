@@ -188,7 +188,7 @@ test_run:switch('bad_uuid_router')
 vshard.router.static.route_map[1] = nil
 ---
 ...
-vshard.router.bucket_discovery(1)
+vshard.router.route(1)
 ---
 - null
 - replicaset: ac522f65-aa94-4134-9f64-51ee384f1a54
@@ -199,7 +199,7 @@ vshard.router.bucket_discovery(1)
   bucket_id: 1
 ...
 -- Ok to work with correct replicasets.
-vshard.router.bucket_discovery(2).uuid
+vshard.router.route(2).uuid
 ---
 - cbf06940-0790-498b-948d-042b62cf3d29
 ...

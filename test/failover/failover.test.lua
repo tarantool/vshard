@@ -55,9 +55,9 @@ test_run:switch('router_1')
 vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
 priority_order()
-vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
-vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
-vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
+vshard.router.route(1).uuid == rs_uuid[1]
+vshard.router.route(31).uuid == rs_uuid[2]
+vshard.router.route(61).uuid == rs_uuid[3]
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_d')
 -- Not 0 - 'read' echo was called here.
@@ -145,27 +145,27 @@ create_router('router_2')
 test_run:switch('router_2')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
-vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
-vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
+vshard.router.route(1).uuid == rs_uuid[1]
+vshard.router.route(31).uuid == rs_uuid[2]
+vshard.router.route(61).uuid == rs_uuid[3]
 test_run:switch('default')
 
 create_router('router_3')
 test_run:switch('router_3')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
-vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
-vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
+vshard.router.route(1).uuid == rs_uuid[1]
+vshard.router.route(31).uuid == rs_uuid[2]
+vshard.router.route(61).uuid == rs_uuid[3]
 test_run:switch('default')
 
 create_router('router_4')
 test_run:switch('router_4')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.bucket_discovery(1).uuid == rs_uuid[1]
-vshard.router.bucket_discovery(31).uuid == rs_uuid[2]
-vshard.router.bucket_discovery(61).uuid == rs_uuid[3]
+vshard.router.route(1).uuid == rs_uuid[1]
+vshard.router.route(31).uuid == rs_uuid[2]
+vshard.router.route(61).uuid == rs_uuid[3]
 
 --
 -- gh-169: do not close connections on too long ping when this is

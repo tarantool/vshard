@@ -151,7 +151,7 @@ util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
   message: Bucket 1 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
-replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
+replicaset, err = vshard.router.route(1); return err == nil or err
 ---
 - bucket_id: 1
   code: 9
@@ -292,7 +292,7 @@ util.check_error(vshard.router.call, 0, 'read', 'echo', {123})
 ---
 - 'Bucket is unreachable: bucket id is out of range'
 ...
-replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
+replicaset, err = vshard.router.route(0); return err == nil or err
 ---
 - bucket_id: 0
   code: 9
@@ -300,11 +300,11 @@ replicaset, err = vshard.router.bucket_discovery(0); return err == nil or err
   message: Bucket 0 cannot be found. Is rebalancing in progress?
   name: NO_ROUTE_TO_BUCKET
 ...
-replicaset, err = vshard.router.bucket_discovery(1); return err == nil or err
+replicaset, err = vshard.router.route(1); return err == nil or err
 ---
 - true
 ...
-replicaset, err = vshard.router.bucket_discovery(2); return err == nil or err
+replicaset, err = vshard.router.route(2); return err == nil or err
 ---
 - true
 ...
@@ -385,10 +385,10 @@ _ = test_run:switch('router_1')
 ---
 ...
 -- Check unavailability of master of a replicaset.
-_ = vshard.router.bucket_discovery(2)
+_ = vshard.router.route(2)
 ---
 ...
-_ = vshard.router.bucket_discovery(3)
+_ = vshard.router.route(3)
 ---
 ...
 vshard.router.buckets_info(0, 3)

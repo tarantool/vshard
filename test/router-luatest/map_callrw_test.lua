@@ -210,7 +210,7 @@ g.test_map_part_double_ref = function(cg)
     cg.router:exec(function(bid, uuid)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true
         -- Make sure the location of the bucket is known.
-        local rs, err = ivshard.router.bucket_discovery(bid)
+        local rs, err = ivshard.router.route(bid)
         ilt.assert_equals(err, nil)
         ilt.assert_equals(rs.uuid, uuid)
     end, {bid1, cg.rs1_uuid})
@@ -262,7 +262,7 @@ g.test_map_part_ref_timeout = function(cg)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true
         -- Make sure the location of the bucket is known.
         for _, bid in pairs(bids) do
-            local _, err = ivshard.router.bucket_discovery(bid)
+            local _, err = ivshard.router.route(bid)
             ilt.assert_equals(err, nil)
         end
     end, {{bid1, bid2, bid3, bid4}})
