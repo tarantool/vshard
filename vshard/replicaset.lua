@@ -1568,6 +1568,42 @@ local function cluster_calculate_etalon_balance(replicasets, bucket_count)
     end
 end
 
+local replicaset_public_mt = {
+    __index = {
+        call = function(self, ...)
+            return self._replicaset:call(...)
+        end,
+        callrw = function(self, ...)
+            return self._replicaset:callrw(...)
+        end,
+        callro = function(self, ...)
+            return self._replicaset:callro(...)
+        end,
+        callbro = function(self, ...)
+            return self._replicaset:callbro(...)
+        end,
+        callre = function(self, ...)
+            return self._replicaset:callre(...)
+        end,
+        callbre = function(self, ...)
+            return self._replicaset:callbre(...)
+        end,
+    },
+    __newindex = function()
+        error("Modification of replicaset table is not allowed")
+    end,
+    __metatable = "Replicaset table is protected",
+}
+
+local function make_replicasets_public(replicasets)
+    local replicasets_public = {}
+    for key, rs in pairs(replicasets) do
+        replicasets_public[key] =
+            setmetatable({ _replicaset = rs, }, replicaset_public_mt)
+    end
+    return replicasets_public
+end
+
 --
 -- Update/build replicasets from configuration
 --
@@ -2147,5 +2183,6 @@ return {
     create_workers = create_workers,
     locate_masters = locate_masters,
     -- Functions, exported for testing.
-    _worker_service_to_func = worker_service_to_func
+    _worker_service_to_func = worker_service_to_func,
+    make_replicasets_public = make_replicasets_public,
 }

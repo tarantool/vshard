@@ -352,7 +352,7 @@ vshard.consts.REPLICA_BACKOFF_INTERVAL = 0.1
  | ...
 
 -- Indeed fails when called directly via netbox.
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
  | ---
  | ...
 ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
@@ -473,7 +473,7 @@ test_run:switch('router_1')
  | ---
  | - true
  | ...
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
  | ---
  | ...
 ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \

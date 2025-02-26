@@ -114,7 +114,7 @@ check_reloaded()
 --
 -- Outdate old replicaset and replica objects.
 --
-rs = vshard.router.route(1)
+rs = vshard.router.route(1)._replicaset
 rs:callro('echo', {'some_data'})
 package.loaded["vshard.router"] = nil
 _ = require('vshard.router')
@@ -122,7 +122,7 @@ _ = require('vshard.router')
 while not rs.is_outdated do fiber.sleep(0.001) end
 rs.callro(rs, 'echo', {'some_data'})
 vshard.router = require('vshard.router')
-rs = vshard.router.route(1)
+rs = vshard.router.route(1)._replicaset
 rs:callro('echo', {'some_data'})
 -- Test `connection_outdate_delay`.
 old_connection_delay = cfg.connection_outdate_delay
@@ -130,7 +130,7 @@ cfg.connection_outdate_delay = 0.3
 vshard.router.cfg(cfg)
 cfg.connection_outdate_delay = old_connection_delay
 vshard.router.static.connection_outdate_delay = nil
-rs_new = vshard.router.route(1)
+rs_new = vshard.router.route(1)._replicaset
 rs_old = rs
 _, replica_old = next(rs_old.replicas)
 rs_new:callro('echo', {'some_data'})

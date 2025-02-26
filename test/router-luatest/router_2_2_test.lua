@@ -122,6 +122,65 @@ g.test_msgpack_args = function(g)
     t.assert_equals(res, 100, 'good result')
 end
 
+local function router_check_replicaset_protection_init()
+    g.router:exec(function()
+        rawset(_G, "check_replicaset_protection",
+            function(rs)
+                t.assert_not_equals(rs._replicaset, nil)
+                t.assert_equals(next(rs, next(rs)), nil)
+                t.assert_not_equals(rs.call, nil)
+                t.assert_not_equals(rs.callrw, nil)
+                t.assert_not_equals(rs.callro, nil)
+                t.assert_not_equals(rs.callbro, nil)
+                t.assert_not_equals(rs.callre, nil)
+                t.assert_not_equals(rs.callbre, nil)
+                local err_msg =
+                    "Modification of replicaset table is not allowed"
+                -- Adding a field is prohibited.
+                t.assert_error_msg_contains(
+                    err_msg, function(t) t.new_field = 1 end, rs)
+                err_msg = "cannot change a protected metatable"
+                t.assert_error_msg_equals(err_msg, setmetatable, rs, {})
+            end)
+    end)
+end
+
+local function router_check_replicaset_protection_clear()
+    g.router:exec(function()
+        rawset(_G, "check_replicaset_protection", nil)
+    end)
+end
+
+g.test_router_route_return_value_protection = function(g)
+    router_check_replicaset_protection_init()
+    g.router:exec(function()
+        _G.check_replicaset_protection(ivshard.router.route(1))
+    end)
+    router_check_replicaset_protection_clear()
+end
+
+g.test_router_routeall_return_value_protection = function(g)
+    router_check_replicaset_protection_init()
+    g.router:exec(function()
+        local replicasets = ivshard.router.routeall()
+        for _, rs in pairs(replicasets) do
+            _G.check_replicaset_protection(rs)
+        end
+        -- Adding a field.
+        replicasets.new_field = 1
+        t.assert_equals(replicasets.new_field, 1)
+        replicasets = ivshard.router.routeall()
+        t.assert_equals(replicasets.new_field, nil)
+        -- Deleting a field.
+        local id, _ = next(replicasets)
+        replicasets[id] = nil
+        t.assert_equals(replicasets[id], nil)
+        replicasets = ivshard.router.routeall()
+        t.assert_not_equals(replicasets[id], nil)
+    end)
+    router_check_replicaset_protection_clear()
+end
+
 local function test_return_raw_template(g, mode)
     --
     -- Normal call.
@@ -1083,7 +1142,7 @@ g.test_retryable_transfer_in_progress = function(g)
     end)
     g.router:exec(function(bid, uuid)
         local rs = ivshard.router.route(bid)
-        ilt.assert_equals(rs.uuid, uuid)
+        ilt.assert_equals(rs._replicaset.uuid, uuid)
     end, {bid, g.replica_2_a:replicaset_uuid()})
 
     -- Block bucket receive.

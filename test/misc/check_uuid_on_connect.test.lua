@@ -74,7 +74,7 @@ test_run:switch('bad_uuid_router')
 vshard.router.static.route_map[1] = nil
 vshard.router.route(1)
 -- Ok to work with correct replicasets.
-vshard.router.route(2).uuid
+vshard.router.route(2)._replicaset.uuid
 
 _ = test_run:cmd("switch default")
 test_run:cmd('stop server bad_uuid_router')

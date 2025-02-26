@@ -55,9 +55,9 @@ test_run:switch('router_1')
 vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
 priority_order()
-vshard.router.route(1).uuid == rs_uuid[1]
-vshard.router.route(31).uuid == rs_uuid[2]
-vshard.router.route(61).uuid == rs_uuid[3]
+vshard.router.route(1)._replicaset.uuid == rs_uuid[1]
+vshard.router.route(31)._replicaset.uuid == rs_uuid[2]
+vshard.router.route(61)._replicaset.uuid == rs_uuid[3]
 vshard.router.call(1, 'read', 'echo', {123})
 test_run:switch('box_1_d')
 -- Not 0 - 'read' echo was called here.
@@ -145,27 +145,27 @@ create_router('router_2')
 test_run:switch('router_2')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.route(1).uuid == rs_uuid[1]
-vshard.router.route(31).uuid == rs_uuid[2]
-vshard.router.route(61).uuid == rs_uuid[3]
+vshard.router.route(1)._replicaset.uuid == rs_uuid[1]
+vshard.router.route(31)._replicaset.uuid == rs_uuid[2]
+vshard.router.route(61)._replicaset.uuid == rs_uuid[3]
 test_run:switch('default')
 
 create_router('router_3')
 test_run:switch('router_3')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.route(1).uuid == rs_uuid[1]
-vshard.router.route(31).uuid == rs_uuid[2]
-vshard.router.route(61).uuid == rs_uuid[3]
+vshard.router.route(1)._replicaset.uuid == rs_uuid[1]
+vshard.router.route(31)._replicaset.uuid == rs_uuid[2]
+vshard.router.route(61)._replicaset.uuid == rs_uuid[3]
 test_run:switch('default')
 
 create_router('router_4')
 test_run:switch('router_4')
 vshard.router.cfg(cfg)
 priority_order()
-vshard.router.route(1).uuid == rs_uuid[1]
-vshard.router.route(31).uuid == rs_uuid[2]
-vshard.router.route(61).uuid == rs_uuid[3]
+vshard.router.route(1)._replicaset.uuid == rs_uuid[1]
+vshard.router.route(31)._replicaset.uuid == rs_uuid[2]
+vshard.router.route(61)._replicaset.uuid == rs_uuid[3]
 
 --
 -- gh-169: do not close connections on too long ping when this is
@@ -178,7 +178,7 @@ vshard.router.cfg(cfg)
 while not test_run:grep_log('router_1', 'Ping error from', 1000) do fiber.sleep(0.01) end
 
 t = string.rep('a', 1024 * 1024 * 500)
-rs = vshard.router.route(31)
+rs = vshard.router.route(31)._replicaset
 while rs.master ~= rs.replica do fiber.sleep(0.01) end
 future = nil
 -- Create strong reference to prevent Lua GC from closing the

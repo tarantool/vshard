@@ -212,6 +212,7 @@ g.test_map_part_double_ref = function(cg)
         -- Make sure the location of the bucket is known.
         local rs, err = ivshard.router.route(bid)
         ilt.assert_equals(err, nil)
+        rs = rs._replicaset
         ilt.assert_equals(rs.uuid, uuid)
     end, {bid1, cg.rs1_uuid})
     -- Then, move the bucket form rs1 to rs2. Now the router has an outdated
@@ -251,7 +252,7 @@ g.test_map_part_double_ref = function(cg)
             ivshard.router.discovery_wakeup()
             local rs, err = ivshard.router.route(bid)
             ilt.assert_equals(err, nil)
-            ilt.assert_equals(rs.uuid, uuid)
+            ilt.assert_equals(rs._replicaset.uuid, uuid)
         end)
     end, {bid1, cg.rs1_uuid})
 end
@@ -273,7 +274,7 @@ g.test_map_part_ref_timeout = function(cg)
             for _, bid in ipairs(bids) do
                 local rs, err = ivshard.router.route(bid)
                 ilt.assert_equals(err, nil)
-                ilt.assert_equals(rs.uuid, uuid)
+                ilt.assert_equals(rs._replicaset.uuid, uuid)
             end
         end
     end, {{[cg.rs1_uuid] = {bid1, bid2}, [cg.rs2_uuid] = {bid3, bid4}}})
@@ -379,7 +380,7 @@ g.test_map_part_ref_timeout = function(cg)
             ivshard.router.discovery_wakeup()
             local rs, err = ivshard.router.route(bid)
             ilt.assert_equals(err, nil)
-            ilt.assert_equals(rs.uuid, uuid)
+            ilt.assert_equals(rs._replicaset.uuid, uuid)
         end)
     end, {bid2, cg.rs1_uuid})
 end

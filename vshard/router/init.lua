@@ -1168,7 +1168,11 @@ local function router_route(router, bucket_id)
     if type(bucket_id) ~= 'number' then
         error('Usage: router.route(bucket_id)')
     end
-    return bucket_resolve(router, bucket_id)
+    local replicaset, err = bucket_resolve(router, bucket_id)
+    if replicaset == nil then
+        return nil, err
+    end
+    return router.replicasets_public[replicaset.id], err
 end
 
 --
@@ -1176,7 +1180,7 @@ end
 -- @retval See self.replicasets map.
 --
 local function router_routeall(router)
-    return router.replicasets
+    return table.copy(router.replicasets_public)
 end
 
 --------------------------------------------------------------------------------
@@ -1269,6 +1273,9 @@ local function router_cfg(router, cfg, is_reload)
     router.total_bucket_count = vshard_cfg.bucket_count
     router.current_cfg = cfg
     router.replicasets = new_replicasets
+    router.replicasets_public =
+        lreplicaset.make_replicasets_public(new_replicasets)
+    router.failover_ping_timeout = vshard_cfg.failover_ping_timeout
     router.sync_timeout = vshard_cfg.sync_timeout
     local old_route_map = router.route_map
     local known_bucket_count = 0

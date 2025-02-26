@@ -30,9 +30,6 @@ _ = test_run:cmd("switch router_1")
 vshard.router.call(1, 'write', 'do_replace', {{1, 1}})
 vshard.router.call(1, 'read', 'do_select', {1})
 
--- Test that static router is just a router object under the hood.
-vshard.router.static:route(1) == vshard.router.route(1)
-
 -- Configure extra router.
 router_2 = vshard.router.new('router_2', configs.cfg_2)
 router_2:bootstrap()

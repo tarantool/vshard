@@ -139,7 +139,7 @@ test_run:switch('router_1')
 vshard.consts.REPLICA_BACKOFF_INTERVAL = 0.1
 
 -- Indeed fails when called directly via netbox.
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
 ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
                 {1, 'read', 'echo', {1}})
 assert(not ok and err.code == box.error.ACCESS_DENIED)
@@ -188,7 +188,7 @@ vshard.storage.call = nil
 
 -- Indeed fails when called directly via netbox.
 test_run:switch('router_1')
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
 ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
                 {1, 'read', 'echo', {1}})
 assert(not ok and err.code == box.error.NO_SUCH_PROC)

@@ -67,7 +67,8 @@ end)
 local function router_wait_for_leader(bid, uuid)
     ilt.helpers.retrying({timeout = ivtest.wait_timeout}, function()
         ivshard.router.master_search_wakeup()
-        ilt.assert_equals(ivshard.router.route(bid).master.uuid, uuid)
+        ilt.assert_equals(
+            ivshard.router.route(bid)._replicaset.master.uuid, uuid)
     end)
 end
 

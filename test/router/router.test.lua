@@ -169,7 +169,7 @@ _ = test_run:cmd('start server storage_2_a')
 vshard.router.route(vshard.consts.DEFAULT_BUCKET_COUNT + 100)
 util.check_error(vshard.router.route, 'asdfg')
 util.check_error(vshard.router.route)
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
 conn.state
 -- Test missing master.
 rs = vshard.router.static.replicasets[util.replicasets[2]]
@@ -179,7 +179,7 @@ vshard.router.route(1).master
 rs.master = master
 -- Test reconnect on bucker_route().
 master.conn:close()
-conn = vshard.router.route(1):connect()
+conn = vshard.router.route(1)._replicaset:connect()
 conn:wait_connected()
 conn.state
 

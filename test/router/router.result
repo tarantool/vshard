@@ -454,7 +454,7 @@ util.check_error(vshard.router.route)
 ---
 - 'Usage: router.route(bucket_id)'
 ...
-conn = vshard.router.route(1).master.conn
+conn = vshard.router.route(1)._replicaset.master.conn
 ---
 ...
 conn.state
@@ -482,7 +482,7 @@ rs.master = master
 master.conn:close()
 ---
 ...
-conn = vshard.router.route(1):connect()
+conn = vshard.router.route(1)._replicaset:connect()
 ---
 ...
 conn:wait_connected()

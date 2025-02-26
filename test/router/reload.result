@@ -203,7 +203,7 @@ check_reloaded()
 --
 -- Outdate old replicaset and replica objects.
 --
-rs = vshard.router.route(1)
+rs = vshard.router.route(1)._replicaset
 ---
 ...
 rs:callro('echo', {'some_data'})
@@ -233,7 +233,7 @@ rs.callro(rs, 'echo', {'some_data'})
 vshard.router = require('vshard.router')
 ---
 ...
-rs = vshard.router.route(1)
+rs = vshard.router.route(1)._replicaset
 ---
 ...
 rs:callro('echo', {'some_data'})
@@ -258,7 +258,7 @@ cfg.connection_outdate_delay = old_connection_delay
 vshard.router.static.connection_outdate_delay = nil
 ---
 ...
-rs_new = vshard.router.route(1)
+rs_new = vshard.router.route(1)._replicaset
 ---
 ...
 rs_old = rs
