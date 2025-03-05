@@ -227,3 +227,47 @@ test_group.test_locate_master = function()
     t.assert_equals(is_nop, false)
     t.assert_equals(ok, false)
 end
+
+--
+-- gh-517: net.box connection leaks on detach, when vconnect hangs.
+--
+test_group.test_conn_not_leaks_on_detach = function(g)
+    local _, rs = next(vreplicaset.buildall(global_cfg))
+    rs:wait_connected(vtest.wait_timeout)
+
+    g.replica:exec(function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'info' then
+                ifiber.sleep(ivconst.TIMEOUT_INFINITY)
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+
+    -- Connection is detached new one is created, it hangs.
+    rs.master:detach_conn()
+    rs:connect_master()
+    t.helpers.retrying({}, function()
+        t.assert_not_equals(rs.master.conn.vconnect, nil)
+        t.assert_not_equals(rs.master.conn.vconnect.future, nil)
+    end)
+
+    -- Hanged connection must be garbage collected.
+    local tmp = setmetatable({conn = rs.master.conn}, {__mode = 'v'})
+    rs.master:detach_conn()
+
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        -- jit.flush is required in order to drop all traces, since
+        -- otherwise object may be referenced on a trace via the function
+        -- prototype of the t.helpers.retrying.
+        jit.flush()
+        collectgarbage()
+        t.assert_equals(tmp.conn, nil)
+    end)
+
+    g.replica:exec(function()
+        ivshard.storage._call = _G.old_call
+    end)
+    rs:wait_connected(vtest.wait_timeout)
+end

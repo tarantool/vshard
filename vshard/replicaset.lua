@@ -98,12 +98,7 @@ local function conn_vconnect_set(conn)
         -- Connections are preserved during reconfiguration,
         -- identification may be changed.
         conn.vconnect.is_named = is_named
-        if not conn.vconnect.future then
-            return
-        end
-        -- Future object must be updated. Old result is irrelevant.
-        conn.vconnect.future:discard()
-        conn.vconnect.future = nil
+        assert(conn.vconnect.future == nil)
         return
     end
     -- Create new vconnect.
@@ -270,6 +265,13 @@ local function netbox_on_disconnect(conn)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
     conn.replica.down_ts = fiber_clock()
+    -- Future object must be removed from the connection, otherwise
+    -- the connection cannot be garbage collected (gh-517).
+    -- Moreover, future object must be updated. Old result is irrelevant.
+    if conn.vconnect and conn.vconnect.future then
+        conn.vconnect.future:discard()
+        conn.vconnect.future = nil
+    end
 end
 
 --
