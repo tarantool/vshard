@@ -271,3 +271,52 @@ test_group.test_conn_not_leaks_on_detach = function(g)
     end)
     rs:wait_connected(vtest.wait_timeout)
 end
+
+--
+-- gh-517: net.box connection leaks on rebind, when vconnect hangs.
+--
+test_group.test_conn_not_leaks_on_rebind = function(g)
+    local rss = vreplicaset.buildall(global_cfg)
+    local _, rs = next(rss)
+    rs:wait_connected(vtest.wait_timeout)
+
+    g.replica:exec(function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'info' then
+                ifiber.sleep(ivconst.TIMEOUT_INFINITY)
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+
+    -- Create hanged connection.
+    rs.master:detach_conn()
+    rs:connect_master()
+    t.helpers.retrying({}, function()
+        t.assert_not_equals(rs.master.conn.vconnect, nil)
+        t.assert_not_equals(rs.master.conn.vconnect.future, nil)
+    end)
+
+    local tmp = setmetatable({conn = rs.master.conn}, {__mode = 'v'})
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding.replicaset.replicas.replica = nil
+    new_cfg_template.sharding.replicaset.replicas.new_replica = {master = true}
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    local new_rss = vreplicaset.buildall(new_global_cfg)
+    vreplicaset.rebind_replicasets(new_rss, rss)
+
+    -- Remove strong reference to the old replicasets and wait for GC.
+    -- luacheck: ignore 311/rss
+    rss = nil
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        -- See test_conn_not_leaks_on_detach, why jit.flush is needed.
+        jit.flush()
+        collectgarbage()
+        t.assert_equals(tmp.conn, nil)
+    end)
+
+    g.replica:exec(function()
+        ivshard.storage._call = _G.old_call
+    end)
+end

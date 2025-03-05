@@ -1004,6 +1004,7 @@ local function rebind_replicasets(replicasets, old_replicasets)
                                 old_replicaset.replicas[replica_id]
             if old_replica and util.uri_eq(old_replica.uri, replica.uri) then
                 local conn = old_replica.conn
+                old_replica.conn = nil
                 replica.conn = conn
                 replica.down_ts = old_replica.down_ts
                 replica.backoff_ts = old_replica.backoff_ts
@@ -1031,6 +1032,14 @@ local function rebind_replicasets(replicasets, old_replicasets)
             if old_replicaset.is_master_auto then
                 old_replicaset.is_master_auto = false
                 old_replicaset.master_cond:broadcast()
+            end
+        end
+    end
+    if old_replicasets then
+        for _, replicaset in pairs(old_replicasets) do
+            for _, replica in pairs(replicaset.replicas) do
+                -- The connection may still be in use, so detach and not close.
+                replica:detach_conn()
             end
         end
     end
