@@ -18,6 +18,13 @@ if arg[1] == 'discovery_disable' then
     cfg.discovery_mode = 'off'
 end
 
+if not os.getenv('ADMIN') then
+    cfg.listen = 3305
+end
 -- Start the database with sharding
 vshard = require('vshard')
 vshard.router.cfg(cfg)
+if not os.getenv('ADMIN') then
+    -- Allow load generator to execute arbitrary functions.
+    box.schema.user.grant('guest', 'super', nil, nil, {if_not_exists = true})
+end

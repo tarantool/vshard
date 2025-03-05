@@ -26,4 +26,7 @@ logcat:
 clean:
 	rm -rf data/
 
+load:
+	tarantoolctl start generate_load.lua
+
 .PHONY: console test deploy clean
