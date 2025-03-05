@@ -335,7 +335,7 @@ local function netbox_is_conn_dead(conn)
         -- be filtered out above then.
         return false
     end
-    return conn._fiber:status() ~= "dead"
+    return conn._fiber:status() == "dead"
 end
 
 --

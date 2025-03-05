@@ -501,3 +501,21 @@ test_group.test_stateless_balancing_callre = function(g)
     reset_get_uuid(g.replica_1_b)
     reset_get_uuid(g.replica_1_c)
 end
+
+--
+-- gh-518: connection was recreated on every call, when
+-- instance is down.
+--
+test_group.test_conn_is_not_recreated = function(g)
+    local _, rs = next(vreplicaset.buildall(global_cfg))
+    rs:wait_connected(vtest.wait_timeout)
+
+    -- Kill master, the connection should not be recreated.
+    g.replica_1_a:stop()
+    local conn = rs.master.conn
+    rs:callrw('echo', {'hello'})
+    t.assert_equals(conn, rs.master.conn)
+
+    g.replica_1_a:start()
+    rs:wait_connected(vtest.wait_timeout)
+end

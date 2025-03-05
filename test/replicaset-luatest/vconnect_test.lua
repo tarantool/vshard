@@ -146,27 +146,13 @@ test_group.test_vconnect_on_reconnect = function(g)
     g.replica:start()
     vtest.cluster_cfg(g, new_cfg)
 
-    -- First call might see the storage not configured if the vconnect was
-    -- already started on netbox automatic reconnect and could reach the storage
-    -- after restart but before reconfigure.
-    local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
-    t.assert_not_equals(err, nil)
-    t.assert_equals(ret, nil)
-    if err.type == 'LuajitError' or err.type == 'ClientError' then
-        err = verror.from_string(err.message)
-    end
-    t.assert_equals(err.type, 'ShardingError')
-    t.assert(err.name == 'INSTANCE_NAME_MISMATCH' or
-             err.name == 'STORAGE_IS_DISABLED')
-    t.assert_equals(rs.master.conn.state, 'closed')
-
-    -- Second reconnect is surely done after the config is done which guarantees
-    -- the storage is fully configured.
-    ret, err = rs:callrw('get_uuid', {}, timeout_opts)
-    t.assert_equals(err.type, 'ShardingError')
-    t.assert_equals(err.name, 'INSTANCE_NAME_MISMATCH')
-    t.assert_equals(ret, nil)
-    t.assert_equals(rs.master.conn.state, 'closed')
+    t.helpers.retrying(timeout_opts, function()
+        local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
+        t.assert_equals(err.type, 'ShardingError')
+        t.assert_equals(err.name, 'INSTANCE_NAME_MISMATCH')
+        t.assert_equals(ret, nil)
+        t.assert_equals(rs.master.conn.state, 'closed')
+    end)
 
     g.replica:exec(function()
         box.cfg{instance_name = 'replica', force_recovery = true}
