@@ -29,6 +29,7 @@
 --             health_status = <STATUS.GREEN  - replica is healthy,
 --                              STATUS.YELLOW - health of replica is unknown,
 --                              STATUS.RED    - replica is unhealthy>,
+--             fetch_schema = <whether the connection should fetch schema>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -370,7 +371,8 @@ local function replicaset_connect_to_replica(replicaset, replica)
     if not conn or netbox_is_conn_dead(conn) then
         conn = netbox.connect(replica.uri, {
             reconnect_after = consts.RECONNECT_TIMEOUT,
-            wait_connected = false
+            wait_connected = false,
+            fetch_schema = replica.fetch_schema
         })
         conn.replica = replica
         conn.replicaset = replicaset
@@ -1003,18 +1005,21 @@ local function rebind_replicasets(replicasets, old_replicasets)
             local old_replica = old_replicaset and
                                 old_replicaset.replicas[replica_id]
             if old_replica and util.uri_eq(old_replica.uri, replica.uri) then
-                local conn = old_replica.conn
-                old_replica.conn = nil
-                replica.conn = conn
                 replica.down_ts = old_replica.down_ts
                 replica.backoff_ts = old_replica.backoff_ts
                 replica.backoff_err = old_replica.backoff_err
                 replica.net_timeout = old_replica.net_timeout
                 replica.net_sequential_ok = old_replica.net_sequential_ok
                 replica.net_sequential_fail = old_replica.net_sequential_fail
-                if conn then
-                    conn.replica = replica
-                    conn.replicaset = replicaset
+
+                if replica.fetch_schema == old_replica.fetch_schema then
+                    local conn = old_replica.conn
+                    old_replica.conn = nil
+                    replica.conn = conn
+                    if conn then
+                        conn.replica = replica
+                        conn.replicaset = replicaset
+                    end
                 end
             end
         end
@@ -1517,6 +1522,7 @@ local function buildall(sharding_cfg)
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
                 id = replica_id, health_status = consts.STATUS.YELLOW,
+                fetch_schema = sharding_cfg.connection_fetch_schema,
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
