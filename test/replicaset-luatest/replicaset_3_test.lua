@@ -6,6 +6,7 @@ local verror = require('vshard.error')
 local vutil = require('vshard.util')
 local vconst = require('vshard.consts')
 local server = require('test.luatest_helpers.server')
+local vcfg = require('vshard.cfg')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -649,4 +650,51 @@ test_group.test_storage_info_fail_while_replica_has_master_name = function(g)
     g.replica_1_a:exec(function(id)
         box.space._cluster:delete(id)
     end, {id})
+end
+
+-- gh-408: connection doesn't fetch schema.
+--
+-- The behavior of the `fetch_schema` connection option is tested inside
+-- of Tarantool, so let's not copy-paste this test here, simply check the
+-- `opts.fetch_schema` flag inside the connection.
+--
+test_group.test_conn_does_not_fetch_schema = function()
+    -- Default `connection_fetch_schema` value
+    local new_cfg = vcfg.check(global_cfg)
+    local _, rs = next(vreplicaset.buildall(new_cfg))
+    rs:wait_connected(vtest.wait_timeout)
+    t.assert(rs.master.conn.opts.fetch_schema)
+
+    -- A config with manually disabled `connection_fetch_schema`
+    new_cfg.connection_fetch_schema = false
+    _, rs = next(vreplicaset.buildall(new_cfg))
+    rs:wait_connected(vtest.wait_timeout)
+    t.assert_not(rs.master.conn.opts.fetch_schema)
+end
+
+test_group.test_rebinding_fetch_schema = function()
+    local new_cfg = table.deepcopy(global_cfg)
+
+    for _, old_fetch_schema in pairs({ true, false }) do
+        for _, fetch_schema in pairs({ true, false }) do
+            new_cfg.connection_fetch_schema = old_fetch_schema
+            local old_replicasets = vreplicaset.buildall(new_cfg)
+            local _, rs = next(old_replicasets)
+            rs:wait_connected(vtest.wait_timeout)
+            t.assert_equals(rs.master.conn.opts.fetch_schema, old_fetch_schema)
+
+            new_cfg.connection_fetch_schema = fetch_schema
+            local replicasets = vreplicaset.buildall(new_cfg)
+            _, rs = next(replicasets)
+            vreplicaset.rebind_replicasets(replicasets, old_replicasets)
+
+            if old_fetch_schema == fetch_schema then
+                t.assert_not_equals(rs.master.conn, nil)
+                t.assert_equals(rs.master.conn.opts.fetch_schema, fetch_schema)
+            else
+                t.assert_equals(rs.master.conn, nil)
+            end
+        end
+    end
+
 end

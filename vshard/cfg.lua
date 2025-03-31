@@ -469,6 +469,10 @@ local cfg_template = {
         enum = {'uuid_as_key', 'name_as_key'},
         check = check_identification_mode,
     },
+    connection_fetch_schema = {
+        name = 'Fetch schema', type = 'boolean',
+        is_optional = true, default = true,
+    }
 }
 
 --
