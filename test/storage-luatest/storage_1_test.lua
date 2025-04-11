@@ -207,6 +207,7 @@ test_group.test_named_hot_reload = function(g)
         ilt.assert_equals(ok, true)
         _G.vshard.storage = storage
     end)
+    vtest.cluster_cfg(g, global_cfg)
 end
 
 --
