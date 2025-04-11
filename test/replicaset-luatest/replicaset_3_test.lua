@@ -4,6 +4,7 @@ local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
 local verror = require('vshard.error')
 local vutil = require('vshard.util')
+local vconst = require('vshard.consts')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -518,4 +519,79 @@ test_group.test_conn_is_not_recreated = function(g)
 
     vtest.storage_start(g.replica_1_a, global_cfg)
     rs:wait_connected(vtest.wait_timeout)
+end
+
+--
+-- gh-537: router was unable to find a new master if old one hangs.
+--
+test_group.test_locate_master_when_old_master_hangs = function(g)
+    -- freeze() and thaw() are available only since Tarantool 2.4.1.
+    t.run_only_if(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+
+    local new_global_cfg = get_auto_master_global_cfg()
+    local _, rs = next(vreplicaset.buildall(new_global_cfg))
+    rs:wait_connected_all(timeout_opts)
+
+    -- Find master.
+    t.assert(rs:locate_master())
+    t.assert_equals(rs.master.uuid, g.replica_1_a:instance_uuid())
+
+    -- Change master in the replicaset.
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs_cfg = new_cfg_template.sharding[1]
+    rs_cfg.replicas.replica_1_a.master = nil
+    rs_cfg.replicas.replica_1_b.master = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    -- Make the test faster.
+    local old_timeout = vconst.MASTER_SEARCH_TIMEOUT
+    vconst.MASTER_SEARCH_TIMEOUT = 0.5
+
+    -- Old master hangs.
+    g.replica_1_a:freeze()
+
+    -- Replicaset is able to locate a new one.
+    local is_done, is_nop = rs:locate_master()
+    t.assert(is_done)
+    t.assert_not(is_nop)
+    t.assert_equals(rs.master.uuid, g.replica_1_b:instance_uuid())
+
+    g.replica_1_a:thaw()
+    vconst.MASTER_SEARCH_TIMEOUT = old_timeout
+    vtest.cluster_cfg(g, global_cfg)
+end
+
+--
+-- gh-537: test, that locate_master is NoOp, when master doesn't respond
+-- but there's no another master in replicaset.
+--
+test_group.test_locate_master_noop_when_no_master_with_hanged_one = function(g)
+    -- freeze() and thaw() are available only since Tarantool 2.4.1.
+    t.run_only_if(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+
+    local new_global_cfg = get_auto_master_global_cfg()
+    local _, rs = next(vreplicaset.buildall(new_global_cfg))
+    rs:wait_connected_all(timeout_opts)
+
+    -- Find master.
+    t.assert(rs:locate_master())
+    t.assert_equals(rs.master.uuid, g.replica_1_a:instance_uuid())
+
+    -- Make the test faster.
+    local old_timeout = vconst.MASTER_SEARCH_TIMEOUT
+    vconst.MASTER_SEARCH_TIMEOUT = 0.5
+
+    -- Old master hangs.
+    g.replica_1_a:freeze()
+
+    -- Locate master doesn't change the master, since new one is not found.
+    local is_done, is_nop = rs:locate_master()
+    t.assert_not(is_done)
+    t.assert_not(is_nop)
+    t.assert_equals(rs.master.uuid, g.replica_1_a:instance_uuid())
+
+    g.replica_1_a:thaw()
+    vconst.MASTER_SEARCH_TIMEOUT = old_timeout
+    vtest.cluster_cfg(g, global_cfg)
 end
