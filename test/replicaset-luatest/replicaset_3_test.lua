@@ -511,11 +511,11 @@ test_group.test_conn_is_not_recreated = function(g)
     rs:wait_connected(vtest.wait_timeout)
 
     -- Kill master, the connection should not be recreated.
-    g.replica_1_a:stop()
+    vtest.storage_stop(g.replica_1_a)
     local conn = rs.master.conn
     rs:callrw('echo', {'hello'})
     t.assert_equals(conn, rs.master.conn)
 
-    g.replica_1_a:start()
+    vtest.storage_start(g.replica_1_a, global_cfg)
     rs:wait_connected(vtest.wait_timeout)
 end
