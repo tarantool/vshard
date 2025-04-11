@@ -40,4 +40,10 @@ function asserts:wait_fullmesh(servers, wait_time)
     end)
 end
 
+function asserts:assert_server_no_alerts(server)
+    server:exec(function()
+        ilt.assert_equals(ivshard.storage.info().alerts, {})
+    end)
+end
+
 return asserts

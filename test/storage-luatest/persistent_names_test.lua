@@ -2,6 +2,7 @@ local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local server = require('test.luatest_helpers.server')
 local vutil = require('vshard.util')
+local asserts = require('test.luatest_helpers.asserts')
 
 local test_group = t.group('storage')
 
@@ -125,20 +126,14 @@ local function persistent_names_restore(g, names)
     end
 end
 
-local function storage_assert_no_alerts(instance)
-    instance:exec(function()
-        ilt.assert_equals(ivshard.storage.info().alerts, {})
-    end)
-end
-
 --
 -- vshard throwed unrelevant UNREACHABLE_REPLICA warning, when names are
 -- not set and `name_as_key` identification_mode is used.
 --
 test_group.test_no_unreachable_replica_alert = function(g)
     local names = persistent_names_remove(g)
-    storage_assert_no_alerts(g.replica_1_a)
-    storage_assert_no_alerts(g.replica_2_a)
+    asserts:assert_server_no_alerts(g.replica_1_a)
+    asserts:assert_server_no_alerts(g.replica_2_a)
     persistent_names_restore(g, names)
 end
 
@@ -164,5 +159,5 @@ test_group.test_id_is_shown_in_alerts = function(g)
     g.replica_1_a:exec(function(id)
         box.space._cluster:delete(id)
     end, {id})
-    storage_assert_no_alerts(g.replica_1_a)
+    asserts:assert_server_no_alerts(g.replica_1_a)
 end
