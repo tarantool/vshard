@@ -1130,20 +1130,25 @@ local function replicaset_locate_master(replicaset)
     if master and master:is_connected() then
         local sync_opts = {timeout = const_timeout}
         ok, res, err = replica_call(master, func, args, sync_opts)
-        if not ok then
-            return is_done, is_nop, err
-        end
-        if res.is_master then
+        if ok and res.is_master then
             return is_done, is_nop
         end
         -- Could be changed during the call from the outside. For
         -- instance, by a failed request with a hint from the old
         -- master.
         local cur_master = replicaset.master
-        if cur_master == master then
+        if ok and cur_master == master then
             log.info('Master of replicaset %s, node %s, has resigned. Trying '..
                      'to find a new one', replicaset.id, master.id)
             replicaset.master = nil
+        elseif not ok and cur_master == master then
+            log.info('Master of replicaset %s, node %s, does not respond: ' ..
+                     '%s. Trying to find a new one',
+                      replicaset.id, master.id, err)
+            -- Try to search for a new master. Master is not nullified, since
+            -- we are unsure that there's a new one in the replicaset, but we
+            -- must anyway check, because the connection may be shown as
+            -- connected even when master is down, e.g. after SIGSTOP.
         elseif cur_master then
             -- Another master was already found. But check it via another call
             -- later to avoid an infinite loop here.

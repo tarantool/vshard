@@ -8,6 +8,7 @@ local json = require('json')
 local errno = require('errno')
 local log = require('log')
 local yaml = require('yaml')
+local vutil = require('vshard.util')
 
 local checks = require('checks')
 local luatest = require('luatest')
@@ -19,6 +20,7 @@ ffi.cdef([[
 local Server = luatest.Server:inherit({})
 
 local WAIT_TIMEOUT = 60
+local PING_TIMEOUT = 0.5
 local WAIT_DELAY = 0.1
 
 -- Differences from luatest.Server:
@@ -381,6 +383,30 @@ function Server:wait_vclock_of(other_server)
     -- First component is for local changes.
     vclock[0] = nil
     return self:wait_vclock(vclock)
+end
+
+function Server:freeze()
+    -- popen module is available only since Tarantool 2.4.1.
+    luatest.assert(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+    local popen = require('popen')
+
+    luatest.helpers.retrying({timeout = WAIT_TIMEOUT}, function()
+        self.process:kill(popen.signal.SIGSTOP)
+        luatest.assert_not(self.net_box:ping({timeout = PING_TIMEOUT}))
+        luatest.assert(self.net_box:is_connected())
+    end)
+end
+
+function Server:thaw()
+    -- popen module is available only since Tarantool 2.4.1.
+    luatest.assert(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+    local popen = require('popen')
+
+    luatest.helpers.retrying({timeout = WAIT_TIMEOUT}, function()
+        self.process:kill(popen.signal.SIGCONT)
+        luatest.assert(self.net_box:ping({timeout = PING_TIMEOUT}))
+        luatest.assert(self.net_box:is_connected())
+    end)
 end
 
 return Server
