@@ -212,12 +212,16 @@ test_group.test_map_call = function(g)
     end)
 end
 
-test_group.test_locate_master_when_no_conn_object = function(g)
+local function get_auto_master_global_cfg()
     local new_cfg_template = table.deepcopy(cfg_template)
     local rs_cfg = new_cfg_template.sharding[1]
     rs_cfg.master = 'auto'
     rs_cfg.replicas.replica_1_a.master = nil
-    local new_global_cfg = vtest.config_new(new_cfg_template)
+    return vtest.config_new(new_cfg_template)
+end
+
+test_group.test_locate_master_when_no_conn_object = function(g)
+    local new_global_cfg = get_auto_master_global_cfg()
     local replicasets = vreplicaset.buildall(new_global_cfg)
     local _, rs = next(replicasets)
     t.assert_equals(rs.master, nil)
@@ -253,11 +257,7 @@ end
 -- when the old one is disconnected.
 --
 test_group.test_locate_master_after_disconnect = function(g)
-    local new_cfg_template = table.deepcopy(cfg_template)
-    local rs_cfg = new_cfg_template.sharding[1]
-    rs_cfg.master = 'auto'
-    rs_cfg.replicas.replica_1_a.master = nil
-    local new_global_cfg = vtest.config_new(new_cfg_template)
+    local new_global_cfg = get_auto_master_global_cfg()
     new_global_cfg.read_only = true
     vtest.cluster_cfg(g, new_global_cfg)
     g.replica_1_a:update_box_cfg{read_only = false}
