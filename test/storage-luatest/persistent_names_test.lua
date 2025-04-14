@@ -136,3 +136,32 @@ test_group.test_no_unreachable_replica_alert = function(g)
     asserts:assert_server_no_alerts(g.replica_2_a)
     persistent_names_restore(g, names)
 end
+
+--
+-- gh-493: vshard should not show alerts for replicas, which are not in the
+-- vshard's config.
+--
+test_group.test_alerts_for_named_replica = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+
+    local named_replica = server:new({
+        alias = 'named_replica_with_name_identification',
+        box_cfg = {
+            replication = g.replica_1_a.net_box_uri,
+            instance_name = 'named_replica'
+        }
+    })
+
+    named_replica:start()
+    named_replica:wait_for_vclock_of(g.replica_1_a)
+    asserts:assert_server_no_alerts(g.replica_1_a)
+    local instance_id = named_replica:instance_id()
+
+    named_replica:stop()
+    asserts:assert_server_no_alerts(g.replica_1_a)
+
+    named_replica:drop()
+    g.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {instance_id})
+end

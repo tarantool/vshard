@@ -4003,7 +4003,10 @@ local function storage_info(opts)
         local id = box.info.id
         for _, replica in pairs(box.info.replication) do
             -- Alerts for other replicas.
-            if id ~= replica.id then
+            if id ~= replica.id and (
+                M.this_replicaset.replicas[replica.name] ~= nil or
+                M.this_replicaset.replicas[replica.uuid] ~= nil
+            ) then
                 replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
