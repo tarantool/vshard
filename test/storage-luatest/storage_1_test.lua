@@ -1,6 +1,8 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
+local server = require('test.luatest_helpers.server')
+local asserts = require('test.luatest_helpers.asserts')
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -587,4 +589,48 @@ test_group.test_moved_buckets_various_statuses = function(g)
         _G.bucket_recovery_continue()
         _G.bucket_gc_continue()
     end)
+end
+
+--
+-- gh-493: vshard should not show alerts for replicas, which are not
+-- in the vshard's config.
+--
+local function test_alerts_for_non_vshard_config_template(replicaset, replica)
+    replica:start()
+    replica:wait_for_vclock_of(replicaset.replica_1_a)
+    asserts:assert_server_no_alerts(replicaset.replica_1_a)
+    local id = replica:instance_id()
+
+    replica:stop()
+    asserts:assert_server_no_alerts(replicaset.replica_1_a)
+
+    replica:drop()
+    replicaset.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {id})
+end
+
+test_group.test_alerts_for_unnamed_replica = function(g)
+    local non_config_replica = server:new({
+        alias = 'non_config_replica',
+        box_cfg = {
+            replication = g.replica_1_a.net_box_uri,
+        }
+    })
+
+    test_alerts_for_non_vshard_config_template(g, non_config_replica)
+end
+
+test_group.test_alerts_for_named_replica = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+
+    local non_config_replica = server:new({
+        alias = 'non_config_replica',
+        box_cfg = {
+            replication = g.replica_1_a.net_box_uri,
+            instance_name = 'named_replica'
+        }
+    })
+
+    test_alerts_for_non_vshard_config_template(g, non_config_replica)
 end
