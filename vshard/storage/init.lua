@@ -3959,12 +3959,19 @@ local function storage_info(opts)
     local is_named = M.this_replica.id == M.this_replica.name
     if this_master and this_master ~= M.this_replica then
         for _, replica in pairs(box.info.replication) do
-            -- If at least one identificator matches, we think,
-            -- that this replica is our master.
-            if replica.uuid ~= this_master.uuid and
-               replica.name ~= this_master.name then
+            if replica.uuid ~= this_master.id and
+                replica.name ~= this_master.id then
                 goto cont
             end
+
+            if replica.upstream == nil then
+                local alert_msg = 'The replica is not connected to the master'
+                table.insert(state.alerts, alert(code.UNREACHABLE_MASTER,
+                                                 this_id,
+                                                 alert_msg))
+                goto cont
+            end
+
             state.replication.status = replica.upstream.status
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
