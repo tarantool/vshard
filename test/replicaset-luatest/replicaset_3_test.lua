@@ -356,6 +356,12 @@ test_group.test_named_replicaset = function(g)
     t.assert_equals(err_id, g.replica_1_b.alias)
     t.assert_equals(ret, nil)
     vtest.storage_start(g.replica_1_b, global_cfg)
+
+    g.replica_1_a:exec(function(uuid_a)
+        box.cfg{force_recovery = true}
+        box.space._cluster:replace({box.info.id, uuid_a})
+        box.cfg{force_recovery = false}
+    end, {uuid_a})
 end
 
 test_group.test_ipv6_uri = function(g)
