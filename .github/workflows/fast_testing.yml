@@ -9,7 +9,7 @@ jobs:
   version-check:
     # We need this job to run only on push with tag.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Check module version
         uses: tarantool/actions/check-module-version@master
@@ -29,15 +29,13 @@ jobs:
       matrix:
         tarantool:
           - '1.10'
-          - '2.7'
-          - '2.8'
           - '2.10'
           - 'release-master'
 
     env:
       TNT_RELEASE_PATH: /home/runner/tnt-release
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
         if: startsWith(matrix.tarantool, 'release') != true
