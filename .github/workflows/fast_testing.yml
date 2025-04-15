@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Install tarantool ${{ matrix.tarantool }}
         if: startsWith(matrix.tarantool, 'release') != true
-        uses: tarantool/setup-tarantool@v2
+        uses: tarantool/setup-tarantool@v3
         with:
           tarantool-version: ${{ matrix.tarantool }}
 

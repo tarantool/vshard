@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: tarantool/setup-tarantool@v2
+      - uses: tarantool/setup-tarantool@v3
         with:
           tarantool-version: '2.10'
 
