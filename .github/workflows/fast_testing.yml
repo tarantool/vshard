@@ -29,7 +29,9 @@ jobs:
       matrix:
         tarantool:
           - '1.10'
-          - '2.10'
+          - '2.11'
+          - '3.2'
+          - '3.3'
           - 'release-master'
 
     env:
