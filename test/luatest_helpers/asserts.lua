@@ -40,4 +40,19 @@ function asserts:wait_fullmesh(servers, wait_time)
     end)
 end
 
+function asserts:assert_server_no_alerts(server)
+    server:exec(function()
+        ilt.assert_equals(ivshard.storage.info().alerts, {})
+    end)
+end
+
+function asserts:info_assert_alert(alerts, alert_name)
+    for _, alert in pairs(alerts) do
+        if alert[1] == alert_name then
+            return alert
+        end
+    end
+    t.fail(('There is no %s in alerts').format(alert_name))
+end
+
 return asserts

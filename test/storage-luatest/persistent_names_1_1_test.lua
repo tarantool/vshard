@@ -1,6 +1,8 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local server = require('test.luatest_helpers.server')
 local vutil = require('vshard.util')
+local asserts = require('test.luatest_helpers.asserts')
 
 local test_group = t.group('storage')
 
@@ -102,4 +104,64 @@ test_group.test_switch_to_uuid = function(g)
         _G.bucket_recovery_wait()
         _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_name()})
+end
+
+local function persistent_names_remove(g)
+    return vtest.cluster_exec_each_master(g, function()
+        local name = box.info.name
+        box.cfg{force_recovery = true}
+        box.space._cluster:update(box.info.id, {{'=', 3, box.NULL}})
+        box.cfg{force_recovery = false}
+        return name
+    end)
+end
+
+local function persistent_names_restore(g, names)
+    for vtest_name, persistent_name in pairs(names) do
+        g[vtest_name]:exec(function(name)
+            box.cfg{force_recovery = true}
+            box.space._cluster:update(box.info.id, {{'=', 3, name}})
+            box.cfg{force_recovery = false}
+        end, {persistent_name})
+    end
+end
+
+--
+-- vshard throwed unrelevant UNREACHABLE_REPLICA warning, when names are
+-- not set and `name_as_key` identification_mode is used.
+--
+test_group.test_no_unreachable_replica_alert = function(g)
+    local names = persistent_names_remove(g)
+    asserts:assert_server_no_alerts(g.replica_1_a)
+    asserts:assert_server_no_alerts(g.replica_2_a)
+    persistent_names_restore(g, names)
+end
+
+--
+-- gh-493: vshard should not show alerts for replicas, which are not in the
+-- vshard's config.
+--
+test_group.test_alerts_for_named_replica = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+
+    local named_replica = server:new({
+        alias = 'named_replica_with_name_identification',
+        box_cfg = {
+            replication = g.replica_1_a.net_box_uri,
+            instance_name = 'named_replica'
+        }
+    })
+
+    named_replica:start()
+    named_replica:wait_for_vclock_of(g.replica_1_a)
+    asserts:assert_server_no_alerts(g.replica_1_a)
+    local instance_id = named_replica:instance_id()
+
+    named_replica:stop()
+    asserts:assert_server_no_alerts(g.replica_1_a)
+
+    named_replica:drop()
+    g.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {instance_id})
 end

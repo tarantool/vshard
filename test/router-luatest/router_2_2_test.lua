@@ -3,6 +3,7 @@ local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 local vconsts = require('vshard.consts')
 local vserver = require('test.luatest_helpers.server')
+local asserts = require('test.luatest_helpers.asserts')
 
 local g = t.group('router')
 local cfg_template = {
@@ -1044,14 +1045,6 @@ g.test_failed_calls_affect_priority = function()
     vtest.router_cfg(g.router, global_cfg)
 end
 
-local function info_find_alert(alerts, alert_name)
-    for _, v in pairs(alerts) do
-        if v[1] == alert_name then
-            return v
-        end
-    end
-end
-
 --
 -- gh-474: error during alert construction
 --
@@ -1069,7 +1062,7 @@ g.test_info_with_named_identification = function()
         ilt.assert(ok, 'no error')
         return result.alerts
     end)
-    t.assert(info_find_alert(alerts, 'MISSING_MASTER'),
+    t.assert(asserts:info_assert_alert(alerts, 'MISSING_MASTER'),
              'MISSING_MASTER alert is constructed')
 
     --
@@ -1085,7 +1078,7 @@ g.test_info_with_named_identification = function()
         ilt.assert(ok, 'no error')
         return result.alerts
     end)
-    local alert = info_find_alert(alerts, 'UNREACHABLE_MASTER')
+    local alert = asserts:info_assert_alert(alerts, 'UNREACHABLE_MASTER')
     t.assert(alert, 'UNREACHABLE_MASTER alert is constructed')
     t.assert_not_str_contains(alert[2], 'replicaset nil',
                               'alert contains valid replicaset id')
