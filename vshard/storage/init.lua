@@ -2258,7 +2258,7 @@ local function gc_bucket_service_f(service)
     -- remembered routes from the global route map.
     local route_map = M.route_map
     local route_map_old = {}
-    local route_map_deadline = 0
+    local route_map_clear_time = fiber_clock()
     local status, err, is_done
     while M.module_version == module_version do
         service:next_iter()
@@ -2300,20 +2300,22 @@ local function gc_bucket_service_f(service)
             service:set_status_ok()
         end
 
-        local sleep_time = route_map_deadline - fiber_clock()
-        if sleep_time <= 0 then
+        local sleep_time = route_map_clear_time +
+            consts.BUCKET_SENT_GARBAGE_DELAY - fiber_clock()
+        if sleep_time < 0 then
             local chunk = consts.LUA_CHUNK_SIZE
             util.table_minus_yield(route_map, route_map_old, chunk)
             route_map_old = util.table_copy_yield(route_map, chunk)
+            route_map_clear_time = fiber_clock()
             if next(route_map_old) then
                 sleep_time = consts.BUCKET_SENT_GARBAGE_DELAY
             else
                 sleep_time = consts.TIMEOUT_INFINITY
             end
-            route_map_deadline = fiber_clock() + sleep_time
         end
         bucket_generation_current = M.bucket_generation
 
+        -- By default the fiber sleeps, until bucket generation is bumped.
         local sleep_activity = 'idling'
         if bucket_generation_current ~= bucket_generation_collected then
             -- Generation was changed during collection. Or *by* collection.

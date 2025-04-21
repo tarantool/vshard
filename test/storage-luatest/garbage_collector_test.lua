@@ -1041,3 +1041,33 @@ test_group.test_unit_bucket_test_gc = function(g)
     vtest.cluster_wait_vclock_all(g)
     g.replica_1_b:exec(bucket_set_protection, {true})
 end
+
+test_group.test_route_map_is_cleared = function(g)
+    g.replica_1_a:exec(function()
+        local destination = 'some destination'
+        local bid = _G.get_first_bucket()
+
+        -- Bucket for GC to delete.
+        ivshard.storage.internal.is_bucket_protected = false
+        box.space._bucket:replace({bid, ivconst.BUCKET.GARBAGE, destination})
+        ivshard.storage.internal.is_bucket_protected = true
+
+        -- GC deletes the GARBAGE bucket and updates route map.
+        _G.bucket_gc_wait()
+        t.assert_equals(box.space._bucket:get(bid), nil)
+        t.assert_equals(ivshard.storage.internal.route_map[bid], destination)
+
+        local old_timeout = ivconst.BUCKET_SENT_GARBAGE_DELAY
+        ivconst.BUCKET_SENT_GARBAGE_DELAY = 0.01
+        t.helpers.retrying({timeout = _G.iwait_timeout}, function()
+            ivshard.storage.garbage_collector_wakeup()
+            t.assert_equals(ivshard.storage.internal.route_map[bid], nil)
+        end)
+
+        -- Restore the bucket.
+        ivshard.storage.internal.is_bucket_protected = false
+        box.space._bucket:replace({bid, ivconst.BUCKET.ACTIVE})
+        ivshard.storage.internal.is_bucket_protected = true
+        ivconst.BUCKET_SENT_GARBAGE_DELAY = old_timeout
+    end)
+end
