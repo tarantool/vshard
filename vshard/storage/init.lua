@@ -406,6 +406,28 @@ local function bucket_transfer_end(bid)
 end
 
 --
+-- Check if @a bucket can accept 'write' requests. Writable
+-- buckets can accept 'read' too.
+--
+local function bucket_status_is_writable(status)
+    return status == consts.BUCKET.ACTIVE or status == consts.BUCKET.PINNED
+end
+
+--
+-- Check if @a bucket can accept 'read' requests.
+--
+local function bucket_status_is_readable(status)
+    return bucket_status_is_writable(status) or status == consts.BUCKET.SENDING
+end
+
+--
+-- Check if a bucket is sending or receiving.
+--
+local function bucket_status_is_transfer_in_progress(status)
+    return status == consts.BUCKET.SENDING or status == consts.BUCKET.RECEIVING
+end
+
+--
 -- Handle a bad update of _bucket space.
 --
 local function bucket_reject_update(bid, message, ...)
@@ -640,30 +662,6 @@ local function is_this_replicaset_locked()
 end
 
 --
--- Check if @a bucket can accept 'write' requests. Writable
--- buckets can accept 'read' too.
---
-local function bucket_is_writable(bucket)
-    return bucket.status == consts.BUCKET.ACTIVE or
-           bucket.status == consts.BUCKET.PINNED
-end
-
---
--- Check if @a bucket can accept 'read' requests.
---
-local function bucket_is_readable(bucket)
-    return bucket_is_writable(bucket) or bucket.status == consts.BUCKET.SENDING
-end
-
---
--- Check if a bucket is sending or receiving.
---
-local function bucket_is_transfer_in_progress(bucket)
-    return bucket.status == consts.BUCKET.SENDING or
-           bucket.status == consts.BUCKET.RECEIVING
-end
-
---
 -- Check that a bucket with the specified id has the needed
 -- status.
 -- @param bucket_generation Generation since the last check.
@@ -893,7 +891,7 @@ local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
     if not remote_bucket then
         return false
     end
-    return bucket_is_writable(remote_bucket)
+    return bucket_status_is_writable(remote_bucket.status)
 end
 
 --
@@ -908,7 +906,7 @@ local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
     if not remote_bucket then
         return false
     end
-    if bucket_is_writable(remote_bucket) then
+    if bucket_status_is_writable(remote_bucket.status) then
         return true
     end
     if remote_bucket.status == consts.BUCKET.SENDING then
@@ -950,7 +948,7 @@ local function recovery_step_by_type(type)
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
         end
-        assert(bucket_is_transfer_in_progress(bucket))
+        assert(bucket_status_is_transfer_in_progress(bucket.status))
         local peer_id = bucket.destination
         local destination = M.replicasets[peer_id]
         if not destination then
@@ -991,7 +989,8 @@ local function recovery_step_by_type(type)
         -- It is possible that during lookup a new request arrived
         -- which finished the transfer.
         bucket = _bucket:get{bucket_id}
-        if not bucket or not bucket_is_transfer_in_progress(bucket) then
+        if not bucket or
+           not bucket_status_is_transfer_in_progress(bucket.status) then
             goto continue
         end
         if is_step_empty then
@@ -1240,12 +1239,12 @@ local function bucket_check_state(bucket_id, mode)
     if not bucket then
         reason = 'Not found'
     elseif mode == 'read' then
-        if bucket_is_readable(bucket) then
+        if bucket_status_is_readable(bucket.status) then
             return bucket
         end
         reason = 'read is prohibited'
-    elseif not bucket_is_writable(bucket) then
-        if bucket_is_transfer_in_progress(bucket) then
+    elseif not bucket_status_is_writable(bucket.status) then
+        if bucket_status_is_transfer_in_progress(bucket.status) then
             return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
                                          bucket_id, bucket.destination)
         end
