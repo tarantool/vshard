@@ -444,33 +444,22 @@ end
 local function bucket_commit_update(bucket)
     local status = bucket.status
     local bid = bucket.id
-    if status == consts.BUCKET.SENT or status == consts.BUCKET.GARBAGE then
-        local ref = M.bucket_refs[bid]
-        if ref ~= nil then
-            ref.ro_lock = true
-        end
+    local ref = M.bucket_refs[bid]
+    if ref == nil then
+        -- Ref doesn't exist, nothing to do.
         return
     end
+
     if status == consts.BUCKET.RECEIVING then
         -- It shouldn't have a ref, but prepare to anything. Could be, for
         -- example, ACTIVE changed into RECEIVING manually via
         -- _bucket:replace().
-        if M.bucket_refs[bid] ~= nil then
-            M.bucket_refs[bid] = nil
-        end
+        M.bucket_refs[bid] = nil
         return
     end
-    if status == consts.BUCKET.PINNED or status == consts.BUCKET.ACTIVE then
-        local ref = M.bucket_refs[bid]
-        if ref ~= nil then
-            -- Lock shouldn't be ever set here. But could be that an admin
-            -- decided to restore a SENT bucket back into ACTIVE state due to
-            -- any reason.
-            ref.ro_lock = false
-        end
-        return
-    end
-    -- Ignore unknown statuses. Could be set no idea how, but just ignore.
+
+    ref.ro_lock = not bucket_status_is_readable(status)
+    ref.rw_lock = not bucket_status_is_writable(status)
 end
 
 local function bucket_commit_delete(bucket)
@@ -1281,14 +1270,6 @@ local function bucket_refro(bucket_id)
         M.bucket_refs[bucket_id] = ref
     elseif ref.ro_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    elseif ref.ro == 0 and ref.rw == 0 then
-    -- RW is more strict ref than RO so rw != 0 is sufficient to
-    -- take an RO ref.
-        local _, err = bucket_check_state(bucket_id, 'read')
-        if err then
-            return nil, err
-        end
-        ref.ro = 1
     else
         ref.ro = ref.ro + 1
     end
@@ -1339,13 +1320,11 @@ local function bucket_refrw(bucket_id)
         M.bucket_refs[bucket_id] = ref
     elseif ref.rw_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    elseif ref.rw == 0 then
-        local _, err = bucket_check_state(bucket_id, 'write')
+    else
+        local _, err = check_is_master()
         if err then
             return nil, err
         end
-        ref.rw = 1
-    else
         ref.rw = ref.rw + 1
     end
     return true
@@ -1862,9 +1841,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return nil, lerror.make(err)
     end
 
-    -- From this moment the bucket is SENDING. Such a status is
-    -- even stronger than the lock.
-    ref.rw_lock = false
     exception_guard.drop_rw_lock = false
     for _, space in pairs(spaces) do
         local index = space.index[idx]
