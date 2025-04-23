@@ -151,20 +151,20 @@ end)
 vshard.storage.buckets_info(1)
 ---
 - 1:
-    status: sending
-    ref_ro: 1
-    destination: <replicaset_2>
+    rw_lock: true
     id: 1
+    status: sending
+    destination: <replicaset_2>
+    ref_ro: 1
 ...
 vshard.storage.bucket_ref(1, 'write')
 ---
 - null
 - bucket_id: 1
-  code: 7
+  code: 22
   type: ShardingError
-  name: TRANSFER_IS_IN_PROGRESS
-  message: Bucket 1 is transferring to replicaset <replicaset_2>
-  destination: <replicaset_2>
+  message: Bucket 1 is locked
+  name: BUCKET_IS_LOCKED
 ...
 vshard.storage.bucket_unref(1, 'write') -- Error, no refs.
 ---
@@ -188,10 +188,11 @@ vshard.storage.bucket_unref(1, 'read')
 vshard.storage.buckets_info(1)
 ---
 - 1:
-    status: sending
-    ref_ro: 1
-    destination: <replicaset_2>
+    rw_lock: true
     id: 1
+    status: sending
+    destination: <replicaset_2>
+    ref_ro: 1
 ...
 vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
 ---
@@ -211,6 +212,7 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     ro_lock: true
+    rw_lock: true
     id: 1
     status: sent
     destination: <replicaset_2>

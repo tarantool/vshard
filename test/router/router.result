@@ -343,11 +343,10 @@ util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
 ---
 - null
 - bucket_id: 1
-  code: 7
+  code: 22
   type: ShardingError
-  destination: <replicaset_1>
-  name: TRANSFER_IS_IN_PROGRESS
-  message: Bucket 1 is transferring to replicaset <replicaset_1>
+  message: Bucket 1 is locked
+  name: BUCKET_IS_LOCKED
 ...
 _ = test_run:switch('default')
 ---
