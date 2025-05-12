@@ -1084,3 +1084,71 @@ g.test_info_with_named_identification = function()
                               'alert contains valid replicaset id')
     vtest.router_cfg(g.router, global_cfg)
 end
+
+--
+-- gh-548: `TRANSFER_IS_IN_PROGRESS` error should be retryable.
+--
+g.test_retryable_transfer_in_progress = function(g)
+    -- Resolve bucket on router.
+    local bid = g.replica_2_a:exec(function()
+       return _G.get_first_bucket()
+    end)
+    g.router:exec(function(bid, uuid)
+        local rs = ivshard.router.route(bid)
+        ilt.assert_equals(rs.uuid, uuid)
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+
+    -- Block bucket receive.
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
+    end)
+
+    -- Start bucket send.
+    g.replica_2_a:exec(function(bid, uuid)
+        rawset(_G, 'bucket_send_fiber', ifiber.create(function()
+            return ivshard.storage.bucket_send(
+                bid, uuid, {timeout = iwait_timeout})
+        end))
+        _G.bucket_send_fiber:set_joinable(true)
+        -- Drop ref, otherwise BUCKET_IS_LOCKED error will be thrown.
+        ivshard.storage.internal.bucket_refs[bid] = nil
+        return bid
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+
+    -- Make rw request on router.
+    g.router:exec(function(bid)
+        rawset(_G, 'callrw_fiber', ifiber.create(function()
+            return ivshard.router.callrw(
+                bid, 'echo', {123}, {timeout = iwait_timeout})
+        end))
+        _G.callrw_fiber:set_joinable(true)
+    end, {bid})
+
+    -- End bucket send.
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
+    end)
+    g.replica_2_a:exec(function()
+        local ok, res = _G.bucket_send_fiber:join()
+        ilt.assert(ok and res)
+        _G.bucket_send_fiber = nil
+        _G.bucket_gc_wait()
+    end)
+
+    -- Request should end successfully.
+    g.router:exec(function()
+        local ok, res, err = _G.callrw_fiber:join()
+        ilt.assert(ok)
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(res, 123)
+        _G.callrw_fiber = nil
+    end)
+
+    -- Return the bucket back.
+    g.replica_1_a:exec(function(bid, uuid)
+        local _, err = ivshard.storage.bucket_send(
+            bid, uuid, {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+end
