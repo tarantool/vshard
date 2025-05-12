@@ -678,7 +678,8 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
             end
             err = lerror.make(call_status)
             if err.code == lerror.code.WRONG_BUCKET or
-               err.code == lerror.code.BUCKET_IS_LOCKED then
+               err.code == lerror.code.BUCKET_IS_LOCKED or
+               err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
                 bucket_reset(router, bucket_id)
                 if err.destination then
                     replicaset = router.replicasets[err.destination]
@@ -712,13 +713,6 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                     end
                     return nil, err
                 end
-            elseif err.code == lerror.code.TRANSFER_IS_IN_PROGRESS then
-                -- Do not repeat write requests, even if an error
-                -- is not timeout - these requests are repeated in
-                -- any case on client, if error.
-                assert(mode == 'write')
-                bucket_reset(router, bucket_id)
-                return nil, err
             elseif err.code == lerror.code.NON_MASTER then
                 assert(mode == 'write')
                 if not replicaset:update_master(err.replica, err.master) then
