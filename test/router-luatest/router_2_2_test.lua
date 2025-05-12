@@ -1082,4 +1082,5 @@ g.test_info_with_named_identification = function()
     t.assert(alert, 'UNREACHABLE_MASTER alert is constructed')
     t.assert_not_str_contains(alert[2], 'replicaset nil',
                               'alert contains valid replicaset id')
+    vtest.router_cfg(g.router, global_cfg)
 end
