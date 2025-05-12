@@ -127,7 +127,12 @@ _ = test_run:switch('router_1')
 -- Ok to read sending bucket.
 vshard.router.call(1, 'read', 'echo', {123})
 -- Not ok to write sending bucket.
-util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
+_, err = util.check_error(vshard.router.call, 1, 'write', 'echo', {123})
+-- Since the `BUCKET_IS_LOCKED` error is retried, it may happen, that
+-- error will be TimeOut. The bucket is reset in order not to break
+-- all subsequent tests.
+assert(util.is_timeout_error(err) or err.name == 'BUCKET_IS_LOCKED')
+vshard.router._bucket_reset(1)
 
 _ = test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_1}, false)
