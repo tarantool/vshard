@@ -559,7 +559,9 @@ test_group.test_locate_master_when_old_master_hangs = function(g)
     g.replica_1_a:freeze()
 
     -- Replicaset is able to locate a new one.
+    local start_ts = fiber.clock()
     local is_done, is_nop = rs:locate_master()
+    t.assert_lt(fiber.clock() - start_ts, 2 * vconst.MASTER_SEARCH_TIMEOUT)
     t.assert(is_done)
     t.assert_not(is_nop)
     t.assert_equals(rs.master.uuid, g.replica_1_b:instance_uuid())
