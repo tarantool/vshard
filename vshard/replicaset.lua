@@ -1263,6 +1263,24 @@ local function replica_update_health_status(replica, status, reason)
     end
 end
 
+local function replicaset_service_info(replicaset, service_name)
+    local info = {}
+    local rs_service_name = 'replicaset_' .. service_name
+    local service = replicaset.worker.services[rs_service_name]
+    if service ~= nil and service.data.info ~= nil then
+        info = service.data.info:info()
+    end
+    local r_service_name = 'replica_' .. service_name
+    for _, r in pairs(replicaset.replicas) do
+        service = r.worker.services[r_service_name]
+        if service ~= nil and service.data.info ~= nil then
+            info.replicas = info.replicas or {}
+            info.replicas[r.id] = service.data.info:info()
+        end
+    end
+    return info
+end
+
 --
 -- Meta-methods
 --
@@ -1285,6 +1303,7 @@ local replicaset_mt = {
         map_call = replicaset_map_call,
         update_master = replicaset_update_master,
         locate_master = replicaset_locate_master,
+        service_info = replicaset_service_info,
     };
     __tostring = replicaset_tostring;
 }

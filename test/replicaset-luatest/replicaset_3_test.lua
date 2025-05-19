@@ -800,3 +800,60 @@ test_group.test_worker_several_services = function()
     worker_unregister_service(service_name_1)
     worker_unregister_service(service_name_2)
 end
+
+test_group.test_worker_service_info = function()
+    local rss = vreplicaset.buildall(global_cfg)
+    vreplicaset.create_workers(rss)
+    local _, rs = next(rss)
+
+    local service_name = 'worker_info'
+    local function step_func(_, data)
+        if not data.info then
+            data.info = require('vshard.service_info').new(service_name)
+        end
+        return vconst.TIMEOUT_INFINITY
+    end
+
+    local function check_new_info(info)
+        t.assert_equals(info.name, service_name)
+        t.assert_equals(info.status, 'ok')
+        t.assert_equals(info.status_idx, 0)
+        t.assert_equals(info.activity, 'unknown')
+        t.assert_equals(info.error, '')
+    end
+
+    -- Check info of the replicaset only.
+    local rs_service_name = 'replicaset_' .. service_name
+    local r_service_name = 'replica_' .. service_name
+    worker_register_service(rs_service_name, step_func)
+    worker_register_service(r_service_name, step_func)
+    rs.worker:add_service(rs_service_name)
+    fiber.yield()
+    local info = rs:service_info(service_name)
+    check_new_info(info)
+    t.assert_equals(info.replicas, nil)
+
+    -- Check info of the replicaset and replica services.
+    for _, replica in pairs(rs.replicas) do
+        replica.worker:add_service(r_service_name)
+    end
+    fiber.yield()
+    info = rs:service_info(service_name)
+    check_new_info(info)
+    t.assert_not_equals(info.replicas, nil)
+    for _, i in pairs(info.replicas) do
+        check_new_info(i)
+    end
+
+    -- Check info of replicas only.
+    rs.worker:remove_service(rs_service_name)
+    info = rs:service_info(service_name)
+    t.assert_equals(info.name, nil)
+    t.assert_not_equals(info.replicas, nil)
+    for _, i in pairs(info.replicas) do
+        check_new_info(i)
+    end
+
+    worker_register_service('replicaset_' .. service_name)
+    worker_register_service('replica_' .. service_name)
+end
