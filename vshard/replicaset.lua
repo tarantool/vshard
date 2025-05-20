@@ -1163,7 +1163,13 @@ local function replicaset_locate_master(replicaset)
     local deadline = fiber_clock() + timeout
     local async_opts = {is_async = true, timeout = timeout}
     local replicaset_id = replicaset.id
+    local old_master_id = replicaset.master and replicaset.master.id
     for replica_id, replica in pairs(replicaset.replicas) do
+        if replica_id == old_master_id then
+            -- No need to wait for master one more time, we have just tried to
+            -- check it and it didn't respond.
+            goto next_replica
+        end
         replicaset_connect_to_replica(replicaset, replica)
         ok, err = replica:check_is_connected()
         if ok then
@@ -1176,6 +1182,7 @@ local function replicaset_locate_master(replicaset)
         elseif err ~= nil then
             last_err = err
         end
+        ::next_replica::
     end
     local master_id
     for replica_id, f in pairs(futures) do

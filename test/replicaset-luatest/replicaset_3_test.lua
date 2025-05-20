@@ -5,6 +5,7 @@ local vtest = require('test.luatest_helpers.vtest')
 local verror = require('vshard.error')
 local vutil = require('vshard.util')
 local vconst = require('vshard.consts')
+local server = require('test.luatest_helpers.server')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -356,6 +357,12 @@ test_group.test_named_replicaset = function(g)
     t.assert_equals(err_id, g.replica_1_b.alias)
     t.assert_equals(ret, nil)
     vtest.storage_start(g.replica_1_b, global_cfg)
+
+    g.replica_1_a:exec(function(uuid_a)
+        box.cfg{force_recovery = true}
+        box.space._cluster:replace({box.info.id, uuid_a})
+        box.cfg{force_recovery = false}
+    end, {uuid_a})
 end
 
 test_group.test_ipv6_uri = function(g)
@@ -552,7 +559,9 @@ test_group.test_locate_master_when_old_master_hangs = function(g)
     g.replica_1_a:freeze()
 
     -- Replicaset is able to locate a new one.
+    local start_ts = fiber.clock()
     local is_done, is_nop = rs:locate_master()
+    t.assert_lt(fiber.clock() - start_ts, 2 * vconst.MASTER_SEARCH_TIMEOUT)
     t.assert(is_done)
     t.assert_not(is_nop)
     t.assert_equals(rs.master.uuid, g.replica_1_b:instance_uuid())
@@ -594,4 +603,50 @@ test_group.test_locate_master_noop_when_no_master_with_hanged_one = function(g)
     g.replica_1_a:thaw()
     vconst.MASTER_SEARCH_TIMEOUT = old_timeout
     vtest.cluster_cfg(g, global_cfg)
+end
+
+--
+-- gh-513: vshard.storage.info() should not fail due to replica.upstream
+-- being nil.
+--
+test_group.test_storage_info_fail_during_replica_disconnection = function(g)
+    g.replica_1_b:exec(function()
+        local old_replication = box.cfg.replication
+        -- replica_1_b disconnects from the master (replica_1_a)
+        box.cfg{replication = {}}
+        t.assert_equals(ivshard.storage.info().replication, {})
+        t.assert_equals(ivshard.storage.info().alerts[1][1],
+                        'UNREACHABLE_MASTER')
+        box.cfg{replication = old_replication}
+    end)
+end
+
+test_group.test_storage_info_fail_while_replica_has_master_name = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+
+    local replica = server:new({
+        alias = 'non_config_replica_with_master_name',
+        box_cfg = {
+            replication = {
+                g.replica_1_a.net_box_uri,
+                g.replica_1_b.net_box_uri,
+                g.replica_1_c.net_box_uri,
+            },
+            instance_name = 'replica_1_a'
+        }
+    })
+
+    replica:start()
+    replica:wait_for_vclock_of(g.replica_1_a)
+    local id = replica:instance_id()
+
+    g.replica_1_b:exec(function()
+        t.assert_not_equals(ivshard.storage.info().replication, {})
+    end)
+
+    replica:stop()
+    replica:drop()
+    g.replica_1_a:exec(function(id)
+        box.space._cluster:delete(id)
+    end, {id})
 end

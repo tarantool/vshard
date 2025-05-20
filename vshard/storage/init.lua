@@ -40,7 +40,12 @@ local lschema = require('vshard.storage.schema')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
-local BSTATE = consts.BUCKET
+local BACTIVE = consts.BUCKET.ACTIVE
+local BPINNED = consts.BUCKET.PINNED
+local BSENDING = consts.BUCKET.SENDING
+local BSENT = consts.BUCKET.SENT
+local BRECEIVING = consts.BUCKET.RECEIVING
+local BGARBAGE = consts.BUCKET.GARBAGE
 local bucket_ref_new
 
 local M = rawget(_G, MODULE_INTERNALS)
@@ -406,6 +411,28 @@ local function bucket_transfer_end(bid)
 end
 
 --
+-- Check if @a bucket can accept 'write' requests. Writable
+-- buckets can accept 'read' too.
+--
+local function bucket_status_is_writable(status)
+    return status == BACTIVE or status == BPINNED
+end
+
+--
+-- Check if @a bucket can accept 'read' requests.
+--
+local function bucket_status_is_readable(status)
+    return bucket_status_is_writable(status) or status == BSENDING
+end
+
+--
+-- Check if a bucket is sending or receiving.
+--
+local function bucket_status_is_transfer_in_progress(status)
+    return status == BSENDING or status == BRECEIVING
+end
+
+--
 -- Handle a bad update of _bucket space.
 --
 local function bucket_reject_update(bid, message, ...)
@@ -422,33 +449,22 @@ end
 local function bucket_commit_update(bucket)
     local status = bucket.status
     local bid = bucket.id
-    if status == consts.BUCKET.SENT or status == consts.BUCKET.GARBAGE then
-        local ref = M.bucket_refs[bid]
-        if ref ~= nil then
-            ref.ro_lock = true
-        end
+    local ref = M.bucket_refs[bid]
+    if ref == nil then
+        -- Ref doesn't exist, nothing to do.
         return
     end
-    if status == consts.BUCKET.RECEIVING then
+
+    if status == BRECEIVING then
         -- It shouldn't have a ref, but prepare to anything. Could be, for
         -- example, ACTIVE changed into RECEIVING manually via
         -- _bucket:replace().
-        if M.bucket_refs[bid] ~= nil then
-            M.bucket_refs[bid] = nil
-        end
+        M.bucket_refs[bid] = nil
         return
     end
-    if status == consts.BUCKET.PINNED or status == consts.BUCKET.ACTIVE then
-        local ref = M.bucket_refs[bid]
-        if ref ~= nil then
-            -- Lock shouldn't be ever set here. But could be that an admin
-            -- decided to restore a SENT bucket back into ACTIVE state due to
-            -- any reason.
-            ref.ro_lock = false
-        end
-        return
-    end
-    -- Ignore unknown statuses. Could be set no idea how, but just ignore.
+
+    ref.ro_lock = not bucket_status_is_readable(status)
+    ref.rw_lock = not bucket_status_is_writable(status)
 end
 
 local function bucket_commit_delete(bucket)
@@ -457,13 +473,13 @@ end
 
 local bucket_state_edges = {
     -- From nothing. Have to cast nil to box.NULL explicitly then.
-    [box.NULL] = {BSTATE.RECEIVING},
-    [BSTATE.ACTIVE] = {BSTATE.PINNED, BSTATE.SENDING},
-    [BSTATE.PINNED] = {BSTATE.ACTIVE},
-    [BSTATE.SENDING] = {BSTATE.ACTIVE, BSTATE.SENT},
-    [BSTATE.SENT] = {BSTATE.GARBAGE},
-    [BSTATE.RECEIVING] = {BSTATE.GARBAGE, BSTATE.ACTIVE},
-    [BSTATE.GARBAGE] = {box.NULL},
+    [box.NULL] = {BRECEIVING},
+    [BACTIVE] = {BPINNED, BSENDING},
+    [BPINNED] = {BACTIVE},
+    [BSENDING] = {BACTIVE, BSENT},
+    [BSENT] = {BGARBAGE},
+    [BRECEIVING] = {BGARBAGE, BACTIVE},
+    [BGARBAGE] = {box.NULL},
 }
 
 -- Turn the edges into a table where edges[src][dst] would be true if the
@@ -491,12 +507,12 @@ local function bucket_prepare_update(old_bucket, new_bucket)
     if old_bucket == nil and ref ~= nil then
         bucket_reject_update(bid, "new bucket can't have a ref object")
     end
-    if new_status == BSTATE.SENDING or new_status == BSTATE.SENT then
+    if new_status == BSENDING or new_status == BSENT then
         if ref ~= nil and ref.rw > 0 then
             bucket_reject_update(bid, "'%s' bucket can't have rw refs",
                                  new_status)
         end
-    elseif new_status == BSTATE.GARBAGE or new_status == BSTATE.RECEIVING then
+    elseif new_status == BGARBAGE or new_status == BRECEIVING then
         if ref ~= nil and (ref.rw > 0 or ref.ro > 0) then
             bucket_reject_update(bid, "'%s' bucket can't have any refs",
                                  new_status)
@@ -637,30 +653,6 @@ end
 --
 local function is_this_replicaset_locked()
     return M.this_replicaset and M.this_replicaset.lock
-end
-
---
--- Check if @a bucket can accept 'write' requests. Writable
--- buckets can accept 'read' too.
---
-local function bucket_is_writable(bucket)
-    return bucket.status == consts.BUCKET.ACTIVE or
-           bucket.status == consts.BUCKET.PINNED
-end
-
---
--- Check if @a bucket can accept 'read' requests.
---
-local function bucket_is_readable(bucket)
-    return bucket_is_writable(bucket) or bucket.status == consts.BUCKET.SENDING
-end
-
---
--- Check if a bucket is sending or receiving.
---
-local function bucket_is_transfer_in_progress(bucket)
-    return bucket.status == consts.BUCKET.SENDING or
-           bucket.status == consts.BUCKET.RECEIVING
 end
 
 --
@@ -887,13 +879,13 @@ end
 -- and can be made SENT.
 --
 local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
-    if local_bucket.status ~= consts.BUCKET.SENDING then
+    if local_bucket.status ~= BSENDING then
         return false
     end
     if not remote_bucket then
         return false
     end
-    return bucket_is_writable(remote_bucket)
+    return bucket_status_is_writable(remote_bucket.status)
 end
 
 --
@@ -902,16 +894,16 @@ end
 -- can't turn to GARBAGE straight away because might have at least RO refs.
 --
 local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
-    if local_bucket.status ~= consts.BUCKET.RECEIVING then
+    if local_bucket.status ~= BRECEIVING then
         return false
     end
     if not remote_bucket then
         return false
     end
-    if bucket_is_writable(remote_bucket) then
+    if bucket_status_is_writable(remote_bucket.status) then
         return true
     end
-    if remote_bucket.status == consts.BUCKET.SENDING then
+    if remote_bucket.status == BSENDING then
         assert(not remote_bucket.is_transfering)
         assert(not M.rebalancer_transfering_buckets[local_bucket.id])
         return true
@@ -930,7 +922,7 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
         return true
     end
     local status = remote_bucket.status
-    return status == consts.BUCKET.SENT or status == consts.BUCKET.GARBAGE
+    return status == BSENT or status == BGARBAGE
 end
 
 --
@@ -950,7 +942,7 @@ local function recovery_step_by_type(type)
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
         end
-        assert(bucket_is_transfer_in_progress(bucket))
+        assert(bucket_status_is_transfer_in_progress(bucket.status))
         local peer_id = bucket.destination
         local destination = M.replicasets[peer_id]
         if not destination then
@@ -991,7 +983,8 @@ local function recovery_step_by_type(type)
         -- It is possible that during lookup a new request arrived
         -- which finished the transfer.
         bucket = _bucket:get{bucket_id}
-        if not bucket or not bucket_is_transfer_in_progress(bucket) then
+        if not bucket or
+           not bucket_status_is_transfer_in_progress(bucket.status) then
             goto continue
         end
         if is_step_empty then
@@ -999,13 +992,13 @@ local function recovery_step_by_type(type)
         end
         lfiber.testcancel()
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.SENT}})
+            _bucket:update({bucket_id}, {{'=', 2, BSENT}})
             recovered = recovered + 1
         elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.GARBAGE}})
+            _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
             recovered = recovered + 1
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
-            _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+            _bucket:replace({bucket_id, BACTIVE})
             recovered = recovered + 1
         elseif is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
@@ -1052,8 +1045,7 @@ local function recovery_service_f(service)
 
         service:set_activity('recovering sending')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type,
-                                     consts.BUCKET.SENDING)
+        ok, total, recovered = pcall(recovery_step_by_type, BSENDING)
         if not ok then
             is_all_recovered = false
             log.error(service:set_status_error(
@@ -1064,8 +1056,7 @@ local function recovery_service_f(service)
 
         service:set_activity('recovering receiving')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type,
-                                     consts.BUCKET.RECEIVING)
+        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING)
         if not ok then
             is_all_recovered = false
             log.error(service:set_status_error(
@@ -1240,12 +1231,12 @@ local function bucket_check_state(bucket_id, mode)
     if not bucket then
         reason = 'Not found'
     elseif mode == 'read' then
-        if bucket_is_readable(bucket) then
+        if bucket_status_is_readable(bucket.status) then
             return bucket
         end
         reason = 'read is prohibited'
-    elseif not bucket_is_writable(bucket) then
-        if bucket_is_transfer_in_progress(bucket) then
+    elseif not bucket_status_is_writable(bucket.status) then
+        if bucket_status_is_transfer_in_progress(bucket.status) then
             return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
                                          bucket_id, bucket.destination)
         end
@@ -1282,14 +1273,6 @@ local function bucket_refro(bucket_id)
         M.bucket_refs[bucket_id] = ref
     elseif ref.ro_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    elseif ref.ro == 0 and ref.rw == 0 then
-    -- RW is more strict ref than RO so rw != 0 is sufficient to
-    -- take an RO ref.
-        local _, err = bucket_check_state(bucket_id, 'read')
-        if err then
-            return nil, err
-        end
-        ref.ro = 1
     else
         ref.ro = ref.ro + 1
     end
@@ -1340,13 +1323,11 @@ local function bucket_refrw(bucket_id)
         M.bucket_refs[bucket_id] = ref
     elseif ref.rw_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    elseif ref.rw == 0 then
-        local _, err = bucket_check_state(bucket_id, 'write')
+    else
+        local _, err = check_is_master()
         if err then
             return nil, err
         end
-        ref.rw = 1
-    else
         ref.rw = ref.rw + 1
     end
     return true
@@ -1442,8 +1423,8 @@ local function bucket_force_create_impl(first_bucket_id, count)
         -- work of vshard. So, as we don't want to disable the protection
         -- of the buckets for the whole replicaset for bootstrap, a bucket's
         -- status must go the following way: none -> RECEIVING -> ACTIVE.
-        _bucket:insert({i, consts.BUCKET.RECEIVING})
-        _bucket:replace({i, consts.BUCKET.ACTIVE})
+        _bucket:insert({i, BRECEIVING})
+        _bucket:replace({i, BACTIVE})
         limit = limit - 1
         if limit == 0 then
             box.commit()
@@ -1502,7 +1483,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     end
     local _bucket = box.space._bucket
     local b = _bucket:get{bucket_id}
-    local recvg = consts.BUCKET.RECEIVING
+    local recvg = BRECEIVING
     local is_last = opts and opts.is_last
     if not b then
         if is_last then
@@ -1586,7 +1567,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
     if is_last then
-        _bucket:replace({bucket_id, consts.BUCKET.ACTIVE})
+        _bucket:replace({bucket_id, BACTIVE})
         bucket_receiving_quota_add(1)
         if M.errinj.ERRINJ_LONG_RECEIVE then
             box.error(box.error.TIMEOUT)
@@ -1675,8 +1656,8 @@ local function bucket_test_gc(bids)
             goto not_ok_bid
         end
         bucket = _bucket:get(bid)
-        status = bucket ~= nil and bucket.status or consts.BUCKET.GARBAGE
-        if status ~= consts.BUCKET.GARBAGE and status ~= consts.BUCKET.SENT then
+        status = bucket ~= nil and bucket.status or BGARBAGE
+        if status ~= BGARBAGE and status ~= BSENT then
             goto not_ok_bid
         end
         ref = refs[bid]
@@ -1737,8 +1718,8 @@ end
 local function buckets_discovery_extended(opts)
     local limit = consts.BUCKET_CHUNK_SIZE
     local buckets = table.new(limit, 0)
-    local active = consts.BUCKET.ACTIVE
-    local pinned = consts.BUCKET.PINNED
+    local active = BACTIVE
+    local pinned = BPINNED
     local next_from
     local errcnt = M.errinj.ERRINJ_DISCOVERY
     if errcnt then
@@ -1786,10 +1767,10 @@ local function buckets_discovery(opts)
     end
     local ret = {}
     local status = box.space._bucket.index.status
-    for _, bucket in status:pairs({consts.BUCKET.ACTIVE}) do
+    for _, bucket in status:pairs({BACTIVE}) do
         table.insert(ret, bucket.id)
     end
-    for _, bucket in status:pairs({consts.BUCKET.PINNED}) do
+    for _, bucket in status:pairs({BPINNED}) do
         table.insert(ret, bucket.id)
     end
     return ret
@@ -1828,7 +1809,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
-    if bucket.status == consts.BUCKET.PINNED then
+    if bucket.status == BPINNED then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
     end
     local replicaset = M.replicasets[destination]
@@ -1843,7 +1824,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local limit = consts.BUCKET_CHUNK_SIZE
     local idx = lschema.shard_index
     local bucket_generation = M.bucket_generation
-    local sendg = consts.BUCKET.SENDING
+    local sendg = BSENDING
 
     ok, err = lsched.move_start(timeout)
     if not ok then
@@ -1863,9 +1844,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return nil, lerror.make(err)
     end
 
-    -- From this moment the bucket is SENDING. Such a status is
-    -- even stronger than the lock.
-    ref.rw_lock = false
     exception_guard.drop_rw_lock = false
     for _, space in pairs(spaces) do
         local index = space.index[idx]
@@ -1915,7 +1893,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     -- doesn't have the bucket. Recovery will then assume that S2 already
     -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
     -- S3 {B: active}, doubled buckets situation (gh-414)
-    _bucket:replace({bucket_id, consts.BUCKET.SENT, destination})
+    _bucket:replace({bucket_id, BSENT, destination})
     -- Always send at least two messages to prevent the case, when
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
@@ -1979,9 +1957,9 @@ local function bucket_pin(bucket_id)
         return nil, err
     end
     assert(bucket)
-    if bucket.status ~= consts.BUCKET.PINNED then
-        assert(bucket.status == consts.BUCKET.ACTIVE)
-        box.space._bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.PINNED}})
+    if bucket.status ~= BPINNED then
+        assert(bucket.status == BACTIVE)
+        box.space._bucket:update({bucket_id}, {{'=', 2, BPINNED}})
     end
     return true
 end
@@ -2002,10 +1980,10 @@ local function bucket_unpin(bucket_id)
         return nil, err
     end
     assert(bucket)
-    if bucket.status == consts.BUCKET.PINNED then
-        box.space._bucket:update({bucket_id}, {{'=', 2, consts.BUCKET.ACTIVE}})
+    if bucket.status == BPINNED then
+        box.space._bucket:update({bucket_id}, {{'=', 2, BACTIVE}})
     else
-        assert(bucket.status == consts.BUCKET.ACTIVE)
+        assert(bucket.status == BACTIVE)
     end
     return true
 end
@@ -2155,7 +2133,7 @@ local function gc_bucket_process_sent_one_batch_xc(batch)
     for bid, _ in pairs(bids_ok_map) do
         local bucket = _bucket:get(bid)
         local ref = M.bucket_refs[bid]
-        if bucket == nil or bucket.status ~= consts.BUCKET.SENT or
+        if bucket == nil or bucket.status ~= BSENT or
            ref ~= nil and ref.ro ~= 0 then
             box.rollback()
             local msg = ('Failed to delete a sent bucket %s - it was changed '..
@@ -2163,7 +2141,7 @@ local function gc_bucket_process_sent_one_batch_xc(batch)
             error(lerror.vshard(lerror.code.BUCKET_GC_ERROR, msg))
         end
         assert(ref == nil or ref.rw == 0)
-        _bucket:update({bid}, {{'=', 2, consts.BUCKET.GARBAGE}})
+        _bucket:update({bid}, {{'=', 2, BGARBAGE}})
     end
     box.commit()
     return is_done
@@ -2182,7 +2160,7 @@ local function gc_bucket_process_sent_xc()
     local i = 0
     local is_done = true
     local ref
-    for _, b in _bucket.index.status:pairs(consts.BUCKET.SENT) do
+    for _, b in _bucket.index.status:pairs(BSENT) do
         i = i + 1
         local bid = b.id
         if M.rebalancer_transfering_buckets[bid] then
@@ -2258,7 +2236,7 @@ local function gc_bucket_service_f(service)
     -- remembered routes from the global route map.
     local route_map = M.route_map
     local route_map_old = {}
-    local route_map_deadline = 0
+    local route_map_clear_time = fiber_clock()
     local status, err, is_done
     while M.module_version == module_version do
         service:next_iter()
@@ -2271,7 +2249,7 @@ local function gc_bucket_service_f(service)
         if bucket_generation_collected ~= bucket_generation_current then
             service:set_activity('gc garbage')
             lfiber.testcancel()
-            status, err = gc_bucket_drop(consts.BUCKET.GARBAGE, route_map)
+            status, err = gc_bucket_drop(BGARBAGE, route_map)
             if status then
                 service:set_activity('gc sent')
                 lfiber.testcancel()
@@ -2300,20 +2278,22 @@ local function gc_bucket_service_f(service)
             service:set_status_ok()
         end
 
-        local sleep_time = route_map_deadline - fiber_clock()
-        if sleep_time <= 0 then
+        local sleep_time = route_map_clear_time +
+            consts.BUCKET_SENT_GARBAGE_DELAY - fiber_clock()
+        if sleep_time < 0 then
             local chunk = consts.LUA_CHUNK_SIZE
             util.table_minus_yield(route_map, route_map_old, chunk)
             route_map_old = util.table_copy_yield(route_map, chunk)
+            route_map_clear_time = fiber_clock()
             if next(route_map_old) then
                 sleep_time = consts.BUCKET_SENT_GARBAGE_DELAY
             else
                 sleep_time = consts.TIMEOUT_INFINITY
             end
-            route_map_deadline = fiber_clock() + sleep_time
         end
         bucket_generation_current = M.bucket_generation
 
+        -- By default the fiber sleeps, until bucket generation is bumped.
         local sleep_activity = 'idling'
         if bucket_generation_current ~= bucket_generation_collected then
             -- Generation was changed during collection. Or *by* collection.
@@ -2379,7 +2359,7 @@ local function bucket_delete_garbage(bucket_id, opts)
     opts = opts or {}
     local bucket = box.space._bucket:get({bucket_id})
     local bucket_status = bucket and bucket.status
-    if bucket ~= nil and bucket_status ~= consts.BUCKET.GARBAGE and
+    if bucket ~= nil and bucket_status ~= BGARBAGE and
        not opts.force then
         error('Can not delete not garbage bucket. Use "{force=true}" to '..
               'ignore this attention')
@@ -2647,7 +2627,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
     local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
-    local active_key = {consts.BUCKET.ACTIVE}
+    local active_key = {BACTIVE}
     local id = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
     local bucket_id, is_found
@@ -2720,8 +2700,8 @@ local function rebalancer_service_apply_routes_f(service, routes)
              yaml_encode(routes))
     local dispenser = route_dispenser_create(routes)
     local _status = box.space._bucket.index.status
-    assert(_status:count({consts.BUCKET.SENDING}) == 0)
-    assert(_status:count({consts.BUCKET.RECEIVING}) == 0)
+    assert(_status:count({BSENDING}) == 0)
+    assert(_status:count({BRECEIVING}) == 0)
     -- Can not assign it on fiber.create() like
     -- var = fiber.create(), because when it yields, we have no
     -- guarantee that an event loop does not contain events
@@ -2958,18 +2938,18 @@ local function rebalancer_request_state()
     end
     local _bucket = box.space._bucket
     local status_index = _bucket.index.status
-    if #status_index:select({consts.BUCKET.SENDING}, {limit = 1}) > 0 then
+    if #status_index:select({BSENDING}, {limit = 1}) > 0 then
         return
     end
-    if #status_index:select({consts.BUCKET.RECEIVING}, {limit = 1}) > 0 then
+    if #status_index:select({BRECEIVING}, {limit = 1}) > 0 then
         return
     end
-    if #status_index:select({consts.BUCKET.GARBAGE}, {limit = 1}) > 0 then
+    if #status_index:select({BGARBAGE}, {limit = 1}) > 0 then
         return
     end
     return {
-        bucket_active_count = status_index:count({consts.BUCKET.ACTIVE}),
-        bucket_pinned_count = status_index:count({consts.BUCKET.PINNED}),
+        bucket_active_count = status_index:count({BACTIVE}),
+        bucket_pinned_count = status_index:count({BPINNED}),
     }
 end
 
@@ -3959,10 +3939,19 @@ local function storage_info(opts)
     local is_named = M.this_replica.id == M.this_replica.name
     if this_master and this_master ~= M.this_replica then
         for _, replica in pairs(box.info.replication) do
-            if (not is_named and replica.uuid ~= this_master.uuid)
-                or (is_named and replica.name ~= this_master.name) then
+            if replica.uuid ~= this_master.id and
+                replica.name ~= this_master.id then
                 goto cont
             end
+
+            if replica.upstream == nil then
+                local alert_msg = 'The replica is not connected to the master'
+                table.insert(state.alerts, alert(code.UNREACHABLE_MASTER,
+                                                 this_id,
+                                                 alert_msg))
+                goto cont
+            end
+
             state.replication.status = replica.upstream.status
             if replica.upstream.status ~= 'follow' then
                 state.replication.idle = replica.upstream.idle
@@ -3998,15 +3987,24 @@ local function storage_info(opts)
         state.replication.status = 'master'
         local replica_count = 0
         local not_available_replicas = 0
+        local id = box.info.id
         for _, replica in pairs(box.info.replication) do
-            if (not is_named and replica.uuid ~= M.this_replica.uuid)
-                or (is_named and replica.name ~= M.this_replica.name) then
+            -- Alerts for other replicas.
+            if id ~= replica.id and (
+                M.this_replicaset.replicas[replica.name] ~= nil or
+                M.this_replicaset.replicas[replica.uuid] ~= nil
+            ) then
                 replica_count = replica_count + 1
                 if replica.downstream == nil or
                    replica.downstream.vclock == nil then
+                    local instance_id = is_named and replica.name or
+                                        replica.uuid
+                    -- May be box.NULL, when names have not been set yet.
+                    if instance_id == nil then
+                        instance_id = replica.id
+                    end
                     table.insert(state.alerts, alert(code.UNREACHABLE_REPLICA,
-                                                     is_named and replica.name
-                                                     or replica.uuid))
+                                                     instance_id))
                     state.status = math.max(state.status, consts.STATUS.YELLOW)
                     not_available_replicas = not_available_replicas + 1
                 end
@@ -4029,12 +4027,12 @@ local function storage_info(opts)
         state.bucket.lock = true
     end
     local status = box.space._bucket.index.status
-    local pinned = status:count({consts.BUCKET.PINNED})
+    local pinned = status:count({BPINNED})
     state.bucket.total = box.space._bucket:count()
-    state.bucket.active = status:count({consts.BUCKET.ACTIVE}) + pinned
-    state.bucket.garbage = status:count({consts.BUCKET.SENT})
-    state.bucket.receiving = status:count({consts.BUCKET.RECEIVING})
-    state.bucket.sending = status:count({consts.BUCKET.SENDING})
+    state.bucket.active = status:count({BACTIVE}) + pinned
+    state.bucket.garbage = status:count({BSENT})
+    state.bucket.receiving = status:count({BRECEIVING})
+    state.bucket.sending = status:count({BSENDING})
     state.bucket.pinned = pinned
     if state.bucket.receiving ~= 0 and state.bucket.sending ~= 0 then
         --
