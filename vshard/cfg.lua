@@ -452,6 +452,10 @@ local cfg_template = {
         is_optional = true, default = math.min(consts.FAILOVER_UP_TIMEOUT,
                                                consts.FAILOVER_DOWN_TIMEOUT),
     },
+    failover_replica_lag_limit = {
+        name = 'Failover replica lag limit', type = 'positive number',
+        is_optional = true, default = consts.REPLICA_LAG_LIMIT,
+    },
     discovery_mode = {
         type = 'enum', name = 'Discovery mode',
         is_optional = true, default = 'on', enum = {'on', 'off', 'once'},

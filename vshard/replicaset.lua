@@ -1607,6 +1607,7 @@ local function buildall(sharding_cfg)
             local replica_uuid, replica_name = lcfg.extract_identifiers(
                 replica_id, replica, is_named)
             local count_name = 'failover_sequential_fail_count'
+            local lag_name = 'failover_replica_lag_limit'
             -- The old replica is saved in the new object to
             -- rebind its connection at the end of a
             -- router/storage reconfiguration.
@@ -1621,6 +1622,7 @@ local function buildall(sharding_cfg)
                 errinj = table.deepcopy(replica_errinj),
                 failover_sequential_fail_count = sharding_cfg[count_name],
                 failover_interval = sharding_cfg.failover_interval,
+                failover_replica_lag_limit = sharding_cfg[lag_name],
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
@@ -1701,7 +1703,7 @@ end
 -- Check, whether the instance has properly working connection to the master.
 -- Returns the status of the replica and the reason, if it's STATUS.RED.
 --
-local function failover_check_upstream(upstream)
+local function failover_check_upstream(upstream, lag_limit)
     if not upstream then
         return consts.STATUS.RED, 'Missing upstream from the master'
     end
@@ -1714,9 +1716,9 @@ local function failover_check_upstream(upstream)
         if not upstream.lag then
             return consts.STATUS.YELLOW, 'Missing upstream lag from the master'
         end
-        if upstream.lag > consts.REPLICA_LAG_LIMIT then
-            local msg = string.format('Upstream to master has lag %.15f > %d',
-                                       upstream.lag, consts.REPLICA_LAG_LIMIT)
+        if upstream.lag > lag_limit then
+            local msg = string.format('Upstream to master has lag %.5f > %.5f',
+                                       upstream.lag, lag_limit)
             return consts.STATUS.RED, msg
         end
         return consts.STATUS.GREEN
@@ -1724,9 +1726,9 @@ local function failover_check_upstream(upstream)
     if not upstream.idle then
         return consts.STATUS.YELLOW, 'Missing upstream idle from the master'
     end
-    if upstream.idle > consts.REPLICA_LAG_LIMIT then
-        local msg = string.format('Upstream to master has idle %.15f > %d',
-                                  upstream.idle, consts.REPLICA_LAG_LIMIT)
+    if upstream.idle > lag_limit then
+        local msg = string.format('Upstream to master has idle %.5f > %.5f',
+                                  upstream.idle, lag_limit)
         return consts.STATUS.RED, msg
     end
     return consts.STATUS.GREEN
@@ -1747,7 +1749,8 @@ local function replica_failover_ping(replica, opts)
 
     assert(type(info.health) == 'table')
     local health_status, reason =
-        failover_check_upstream(info.health.master_upstream)
+        failover_check_upstream(info.health.master_upstream,
+                                replica.failover_replica_lag_limit)
     replica:update_health_status(health_status, reason)
     return net_status, info, err
 end
