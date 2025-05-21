@@ -35,6 +35,9 @@
 --                                      considered to be unacknowledged.
 --                                      Used by failover service to detect
 --                                      if a node is down>,
+--             failover_sequential_fail_count = <number of network request
+--                                               fails, after which the node
+--                                               is considered unhealthy>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -377,7 +380,8 @@ end
 --
 -- Check if replica can be considered healthy. It's connection wasn't down
 -- for FAILOVER_FOWN_TIMEOUT, the requests didn't fail sequentially for
--- FAILOVER_DOWN_SEQUENTIAL_FAIL, it has alive replication from master.
+-- failover_sequential_fail_count (cfg option), it has alive replication
+-- from master.
 --
 local function replicaset_check_replica_health(replicaset, replica, now)
     if not replica_check_backoff(replica, now) then
@@ -393,7 +397,8 @@ local function replicaset_check_replica_health(replicaset, replica, now)
     end
     -- If we failed several sequential requests to replica, then something
     -- is wrong with it. Temporary lower its priority.
-    if replica.net_sequential_fail >= consts.FAILOVER_DOWN_SEQUENTIAL_FAIL then
+    if replica.net_sequential_fail >=
+       replica.failover_sequential_fail_count then
         return false
     end
     -- The replication health check must be applied if and only if there's
@@ -550,7 +555,7 @@ local function replicaset_down_replica_priority(replicaset)
     assert(old_replica and ((old_replica.down_ts and
            not old_replica:is_connected()) or
            old_replica.net_sequential_fail >=
-           consts.FAILOVER_DOWN_SEQUENTIAL_FAIL or
+           old_replica.failover_sequential_fail_count or
            old_replica.health_status == consts.STATUS.RED))
     local new_replica = old_replica.next_by_priority
     if new_replica then
@@ -1597,6 +1602,7 @@ local function buildall(sharding_cfg)
         for replica_id, replica in pairs(replicaset.replicas) do
             local replica_uuid, replica_name = lcfg.extract_identifiers(
                 replica_id, replica, is_named)
+            local count_name = 'failover_sequential_fail_count'
             -- The old replica is saved in the new object to
             -- rebind its connection at the end of a
             -- router/storage reconfiguration.
@@ -1609,6 +1615,7 @@ local function buildall(sharding_cfg)
                 fetch_schema = sharding_cfg.connection_fetch_schema,
                 failover_ping_timeout = sharding_cfg.failover_ping_timeout,
                 errinj = table.deepcopy(replica_errinj),
+                failover_sequential_fail_count = sharding_cfg[count_name],
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then

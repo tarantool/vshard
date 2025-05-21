@@ -412,6 +412,7 @@ local function prepare_stateless_balancing_rs()
     }
 
     local new_global_cfg = vtest.config_new(new_cfg_template)
+    new_global_cfg = vcfg.check(new_global_cfg)
     local _, rs = next(vreplicaset.buildall(new_global_cfg))
     rs:wait_connected_all(timeout_opts)
     return rs
