@@ -1706,21 +1706,27 @@ local function failover_check_upstream(upstream)
         return consts.STATUS.RED, 'Missing upstream from the master'
     end
     local status = upstream.status
-    if not status or status == 'stopped' or status == 'disconnected' then
-        -- All other states mean either that everything is ok ('follow')
-        -- or that replica is connecting. In all these cases replica
-        -- is considered healthy.
-        local msg = string.format('Upstream to master has status "%s"', status)
-        return consts.STATUS.RED, msg
+    -- 'loading' status is required for 1.10 to work, since applier there
+    -- goes into that state, when it's broken, the idle is updated, but the
+    -- lag is growing.
+    if status and
+       (status == 'follow' or status == 'sync' or status == 'loading') then
+        if not upstream.lag then
+            return consts.STATUS.YELLOW, 'Missing upstream lag from the master'
+        end
+        if upstream.lag > consts.REPLICA_LAG_LIMIT then
+            local msg = string.format('Upstream to master has lag %.15f > %d',
+                                       upstream.lag, consts.REPLICA_LAG_LIMIT)
+            return consts.STATUS.RED, msg
+        end
+        return consts.STATUS.GREEN
     end
-    if upstream.idle and upstream.idle > consts.REPLICA_MAX_IDLE then
+    if not upstream.idle then
+        return consts.STATUS.YELLOW, 'Missing upstream idle from the master'
+    end
+    if upstream.idle > consts.REPLICA_LAG_LIMIT then
         local msg = string.format('Upstream to master has idle %.15f > %d',
-                                  upstream.idle, consts.REPLICA_MAX_IDLE)
-        return consts.STATUS.RED, msg
-    end
-    if upstream.lag and upstream.lag > consts.REPLICA_MAX_LAG then
-        local msg = string.format('Upstream to master has lag %.15f > %d',
-                                  upstream.lag, consts.REPLICA_MAX_LAG)
+                                  upstream.idle, consts.REPLICA_LAG_LIMIT)
         return consts.STATUS.RED, msg
     end
     return consts.STATUS.GREEN
