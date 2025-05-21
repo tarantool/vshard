@@ -409,4 +409,10 @@ function Server:thaw()
     end)
 end
 
+function Server:assert_no_alerts(server)
+    server:exec(function()
+        ilt.assert_equals(ivshard.storage.info().alerts, {})
+    end)
+end
+
 return Server

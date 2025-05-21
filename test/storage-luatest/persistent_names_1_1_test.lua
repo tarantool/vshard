@@ -2,7 +2,6 @@ local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local server = require('test.luatest_helpers.server')
 local vutil = require('vshard.util')
-local asserts = require('test.luatest_helpers.asserts')
 
 local test_group = t.group('storage')
 
@@ -132,8 +131,8 @@ end
 --
 test_group.test_no_unreachable_replica_alert = function(g)
     local names = persistent_names_remove(g)
-    asserts:assert_server_no_alerts(g.replica_1_a)
-    asserts:assert_server_no_alerts(g.replica_2_a)
+    server:assert_no_alerts(g.replica_1_a)
+    server:assert_no_alerts(g.replica_2_a)
     persistent_names_restore(g, names)
 end
 
@@ -154,11 +153,11 @@ test_group.test_alerts_for_named_replica = function(g)
 
     named_replica:start()
     named_replica:wait_for_vclock_of(g.replica_1_a)
-    asserts:assert_server_no_alerts(g.replica_1_a)
+    server:assert_no_alerts(g.replica_1_a)
     local instance_id = named_replica:instance_id()
 
     named_replica:stop()
-    asserts:assert_server_no_alerts(g.replica_1_a)
+    server:assert_no_alerts(g.replica_1_a)
 
     named_replica:drop()
     g.replica_1_a:exec(function(id)

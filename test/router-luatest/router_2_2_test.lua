@@ -3,7 +3,6 @@ local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 local vconsts = require('vshard.consts')
 local vserver = require('test.luatest_helpers.server')
-local asserts = require('test.luatest_helpers.asserts')
 
 local g = t.group('router')
 local cfg_template = {
@@ -1062,7 +1061,7 @@ g.test_info_with_named_identification = function()
         ilt.assert(ok, 'no error')
         return result.alerts
     end)
-    t.assert(asserts:info_assert_alert(alerts, 'MISSING_MASTER'),
+    t.assert(vtest.info_assert_alert(alerts, 'MISSING_MASTER'),
              'MISSING_MASTER alert is constructed')
 
     --
@@ -1078,7 +1077,7 @@ g.test_info_with_named_identification = function()
         ilt.assert(ok, 'no error')
         return result.alerts
     end)
-    local alert = asserts:info_assert_alert(alerts, 'UNREACHABLE_MASTER')
+    local alert = vtest.info_assert_alert(alerts, 'UNREACHABLE_MASTER')
     t.assert(alert, 'UNREACHABLE_MASTER alert is constructed')
     t.assert_not_str_contains(alert[2], 'replicaset nil',
                               'alert contains valid replicaset id')
