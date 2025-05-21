@@ -848,3 +848,43 @@ test_group.test_worker_service_info = function()
     worker_register_service('replicaset_' .. service_name)
     worker_register_service('replica_' .. service_name)
 end
+
+test_group.test_failover_interval = function(g)
+    -- Set huge timeout.
+    local new_global_cfg = table.deepcopy(global_cfg)
+    new_global_cfg = vcfg.check(new_global_cfg)
+    new_global_cfg.failover_interval = vconst.TIMEOUT_INFINITY
+    new_global_cfg.failover_ping_timeout = 0.5
+    local replicasets = vreplicaset.buildall(new_global_cfg)
+    vreplicaset.create_workers(replicasets)
+    local _, rs = next(replicasets)
+    rs:wait_connected_all(timeout_opts)
+
+    local uuid_a = g.replica_1_a:instance_uuid()
+    vtest.storage_stop(g.replica_1_a)
+    t.helpers.retrying(timeout_opts, function()
+        t.assert_equals(rs.replicas[uuid_a].health_status, vconst.STATUS.YELLOW)
+        rs.replicas[uuid_a].worker:wakeup_service('replica_failover')
+    end)
+
+    vtest.storage_start(g.replica_1_a, global_cfg)
+    -- The value can be reconfigured. Simulate reconfiguration.
+    new_global_cfg.failover_interval = 0.1
+    local new_replicasets = vreplicaset.buildall(new_global_cfg)
+    vreplicaset.rebind_replicasets(new_replicasets, replicasets)
+    -- Skip connections, this test is not about them.
+    vreplicaset.outdate_replicasets(replicasets)
+    vreplicaset.create_workers(new_replicasets)
+    for _, replicaset in pairs(new_replicasets) do
+        replicaset.worker:add_service('replicaset_failover')
+        for _, replica in pairs(replicaset.replicas) do
+            replica.worker:add_service('replica_failover')
+        end
+    end
+
+    local _, new_rs = next(new_replicasets)
+    t.helpers.retrying(timeout_opts, function()
+        t.assert_equals(new_rs.replicas[uuid_a].health_status,
+                        vconst.STATUS.GREEN)
+    end)
+end
