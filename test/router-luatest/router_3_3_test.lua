@@ -158,6 +158,10 @@ end
 
 local function failover_health_check_broken_upstream(g)
     router_wait_prioritized(g, g.replica_1_c)
+    g.router:exec(function()
+        rawset(_G, 'old_idle', ivconst.REPLICA_LAG_LIMIT)
+        ivconst.REPLICA_LAG_LIMIT = 0.1
+    end)
     -- Break replication. Replica changes.
     g.replica_1_c:exec(function()
         rawset(_G, 'on_replace', function()
@@ -170,9 +174,7 @@ local function failover_health_check_broken_upstream(g)
         box.space.test:replace{1, bid}
     end)
     g.replica_1_c:exec(function(id)
-        rawset(_G, 'old_idle', ivconst.REPLICA_MAX_IDLE)
-        ivconst.REPLICA_MAX_IDLE = 0.1
-        -- On 1.10 and 2.8 upstreaim goes into never ending
+        -- On 1.10 and 2.8 upstream goes into never ending
         -- retry of connecting and applying the failing row.
         -- The status of upstream is 'loading' in such case.
         -- It should consider itself non-healthy according to
@@ -192,9 +194,11 @@ local function failover_health_check_broken_upstream(g)
     msg = string.format(msg, g.replica_1_c:instance_uuid())
     t.assert(g.router:grep_log(msg), msg)
 
+    g.router:exec(function()
+        ivconst.REPLICA_LAG_LIMIT = _G.old_idle
+    end)
     -- Drop on_replace trigger. Replica returns.
     g.replica_1_c:exec(function()
-        ivconst.REPLICA_MAX_IDLE = _G.old_idle
         box.space.test:on_replace(nil, _G.on_replace)
         local replication = box.cfg.replication
         box.cfg{replication = {}}
@@ -204,6 +208,53 @@ local function failover_health_check_broken_upstream(g)
     msg = 'Replica %s is healthy'
     msg = string.format(msg, g.replica_1_c:instance_uuid())
     t.assert(g.router:grep_log(msg), msg)
+    g.replica_1_a:exec(function()
+        box.space.test:truncate()
+    end)
+end
+
+local function failover_health_check_broken_upstream_not_switch(g)
+    router_wait_prioritized(g, g.replica_1_c)
+    g.router:exec(function()
+        rawset(_G, 'old_idle', ivconst.REPLICA_LAG_LIMIT)
+        ivconst.REPLICA_LAG_LIMIT = ivconst.TIMEOUT_INFINITY
+    end)
+    -- Break replication. Replica doesn't change, since timeout is huge.
+    g.replica_1_c:exec(function()
+        rawset(_G, 'on_replace', function()
+            box.error(box.error.READONLY)
+        end)
+        box.space.test:on_replace(_G.on_replace)
+    end)
+    g.replica_1_a:exec(function()
+        local bid = _G.get_first_bucket()
+        box.space.test:replace{1, bid}
+    end)
+    g.replica_1_c:exec(function(id)
+        -- On 1.10 and 2.8 upstream goes into never ending
+        -- retry of connecting and applying the failing row.
+        -- The status of upstream is 'loading' in such case.
+        -- It should consider itself non-healthy according to
+        -- it's idle time.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            local upstream = box.info.replication[id].upstream
+            ilt.assert_not_equals(upstream, nil)
+            ilt.assert(upstream.status == 'stopped' or
+                       upstream.status == 'loading')
+        end)
+    end, {g.replica_1_a:instance_id()})
+    router_assert_prioritized(g, g.replica_1_c)
+    g.router:exec(function()
+        ivconst.REPLICA_LAG_LIMIT = _G.old_idle
+    end)
+    -- Drop on_replace trigger. Replica returns.
+    g.replica_1_c:exec(function()
+        box.space.test:on_replace(nil, _G.on_replace)
+        local replication = box.cfg.replication
+        box.cfg{replication = {}}
+        box.cfg{replication = replication}
+    end)
+    router_assert_prioritized(g, g.replica_1_c)
     g.replica_1_a:exec(function()
         box.space.test:truncate()
     end)
@@ -438,6 +489,7 @@ local function failover_health_check(g, auto_master)
 
     failover_health_check_missing_upstream(g)
     failover_health_check_broken_upstream(g)
+    failover_health_check_broken_upstream_not_switch(g)
     failover_health_check_big_lag(g)
     failover_health_check_small_failover_timeout(g)
     failover_health_check_missing_health(g)
