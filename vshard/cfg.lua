@@ -443,6 +443,10 @@ local cfg_template = {
         type = 'positive number', name = 'Failover ping timeout',
         is_optional = true, default = consts.DEFAULT_FAILOVER_PING_TIMEOUT
     },
+    failover_sequential_fail_count = {
+        name = 'Failover sequential fail count', type = 'positive integer',
+        is_optional = true, default = consts.FAILOVER_DOWN_SEQUENTIAL_FAIL,
+    },
     discovery_mode = {
         type = 'enum', name = 'Discovery mode',
         is_optional = true, default = 'on', enum = {'on', 'off', 'once'},
@@ -472,7 +476,7 @@ local cfg_template = {
     connection_fetch_schema = {
         name = 'Fetch schema', type = 'boolean',
         is_optional = true, default = true,
-    }
+    },
 }
 
 --

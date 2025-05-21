@@ -800,8 +800,9 @@ g.test_request_timeout = function(g)
     end)
 end
 
-local function prepare_affect_priority_rs(g)
+local function prepare_affect_priority_rs(g, count)
     local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.failover_sequential_fail_count = count
     new_cfg_template.sharding[1].replicas.replica_1_a.zone = 3
     new_cfg_template.sharding[1].replicas.replica_1_b.zone = 2
     new_cfg_template.zone = 1
@@ -923,12 +924,8 @@ g.test_failover_ping_affects_priority = function()
     end)
 end
 
---
--- gh-483: user calls also affects priority. If several sequential requests
--- fail, then the same logic as in the previous test happens.
---
-g.test_failed_calls_affect_priority = function()
-    prepare_affect_priority_rs(g)
+local function failed_calls_affect_priority_template(count)
+    prepare_affect_priority_rs(g, count)
     local timeout = vconsts.CALL_TIMEOUT_MIN * 4
 
     -- Find prioritized replica and disable failover for now.
@@ -972,27 +969,26 @@ g.test_failed_calls_affect_priority = function()
 
     affect_priority_clear_net_timeout(g)
     local bid = vtest.storage_first_bucket(g.replica_1_a)
-    g.router:exec(function(bid, timeout, rs_uuid, replica_uuid)
+    g.router:exec(function(bid, timeout, rs_uuid, replica_uuid, count)
         local router = ivshard.router.internal.static_router
         local replica = router.replicasets[rs_uuid].replica
         t.assert_equals(replica.uuid, replica_uuid)
 
         local fails = replica.net_sequential_fail
-        for _ = 1, ivconst.FAILOVER_DOWN_SEQUENTIAL_FAIL do
+        for _ = 1, count do
             local ok, err = ivshard.router.callro(bid, 'vshard.storage._call',
                                                   {'info'}, {timeout = timeout})
             t.assert_not(ok)
             t.assert(iverror.is_timeout(err))
         end
 
-        t.assert_equals(replica.net_sequential_fail,
-                        fails + ivconst.FAILOVER_DOWN_SEQUENTIAL_FAIL)
+        t.assert_equals(replica.net_sequential_fail, fails + count)
 
         -- Priority is changed only by failover. So, the prioritized replica
         -- is still the failing one.
         t.assert_equals(router.replicasets[rs_uuid].replica.uuid, replica_uuid)
     end, {bid, timeout, g.replica_1_b:replicaset_uuid(),
-          g.replica_1_b:instance_uuid()})
+          g.replica_1_b:instance_uuid(), count})
 
     -- Enable failover, which changes priority of the replica.
     g.router:exec(function(rs_uuid, master_uuid)
@@ -1029,6 +1025,14 @@ g.test_failed_calls_affect_priority = function()
     vtest.router_cfg(g.router, global_cfg)
 end
 
+--
+-- gh-483: user calls also affects priority. If several sequential requests
+-- fail, then the same logic as in the previous test happens.
+--
+g.test_failed_calls_affect_priority = function()
+    failed_calls_affect_priority_template(vconsts.FAILOVER_DOWN_SEQUENTIAL_FAIL)
+    failed_calls_affect_priority_template(1)
+end
 --
 -- gh-474: error during alert construction
 --
