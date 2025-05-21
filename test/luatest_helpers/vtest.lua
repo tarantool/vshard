@@ -837,6 +837,15 @@ local function service_wait_for_activity(service, activity, opts)
     end)
 end
 
+local function info_assert_alert(alerts, alert_name)
+    for _, alert in pairs(alerts) do
+        if alert[1] == alert_name then
+            return alert
+        end
+    end
+    t.fail(('There is no %s in alerts').format(alert_name))
+end
+
 -- Git directory of the project and data directory of the test.
 -- Used in evolution tests to fetch old versions of vshard.
 local sourcedir = fio.abspath(os.getenv('PACKPACK_GIT_SOURCEDIR') or
@@ -886,4 +895,5 @@ return {
     sourcedir = sourcedir,
     vardir = vardir,
     clear_test_cfg_options = clear_test_cfg_options,
+    info_assert_alert = info_assert_alert,
 }

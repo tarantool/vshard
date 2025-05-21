@@ -1,7 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
-local asserts = require('test.luatest_helpers.asserts')
 
 local test_group = t.group('storage')
 
@@ -41,7 +40,7 @@ test_group.test_named_replicaset_alerts_when_replica_disconnects = function(g)
     local alerts = g.replica_1_a:exec(function()
         return ivshard.storage.info().alerts
     end)
-    asserts:info_assert_alert(alerts, 'UNREACHABLE_REPLICA')
-    asserts:info_assert_alert(alerts, 'UNREACHABLE_REPLICASET')
+    vtest.info_assert_alert(alerts, 'UNREACHABLE_REPLICA')
+    vtest.info_assert_alert(alerts, 'UNREACHABLE_REPLICASET')
     g.replica_1_b:start()
 end

@@ -2,7 +2,6 @@ local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 local server = require('test.luatest_helpers.server')
-local asserts = require('test.luatest_helpers.asserts')
 
 local group_config = {{engine = 'memtx'}, {engine = 'vinyl'}}
 
@@ -598,11 +597,11 @@ end
 local function test_alerts_for_non_vshard_config_template(replicaset, replica)
     replica:start()
     replica:wait_for_vclock_of(replicaset.replica_1_a)
-    asserts:assert_server_no_alerts(replicaset.replica_1_a)
+    server:assert_no_alerts(replicaset.replica_1_a)
     local id = replica:instance_id()
 
     replica:stop()
-    asserts:assert_server_no_alerts(replicaset.replica_1_a)
+    server:assert_no_alerts(replicaset.replica_1_a)
 
     replica:drop()
     replicaset.replica_1_a:exec(function(id)
