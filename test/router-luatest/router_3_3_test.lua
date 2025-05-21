@@ -157,11 +157,12 @@ local function failover_health_check_missing_upstream(g)
 end
 
 local function failover_health_check_broken_upstream(g)
-    router_wait_prioritized(g, g.replica_1_c)
     g.router:exec(function()
-        rawset(_G, 'old_idle', ivconst.REPLICA_LAG_LIMIT)
-        ivconst.REPLICA_LAG_LIMIT = 0.1
+        local current = ivshard.router.internal.static_router.current_cfg
+        current.failover_replica_lag_limit = 0.1
+        ivshard.router.cfg(current)
     end)
+    router_wait_prioritized(g, g.replica_1_c)
     -- Break replication. Replica changes.
     g.replica_1_c:exec(function()
         rawset(_G, 'on_replace', function()
@@ -195,7 +196,9 @@ local function failover_health_check_broken_upstream(g)
     t.assert(g.router:grep_log(msg), msg)
 
     g.router:exec(function()
-        ivconst.REPLICA_LAG_LIMIT = _G.old_idle
+        local current = ivshard.router.internal.static_router.current_cfg
+        current.failover_replica_lag_limit = ivconst.REPLICA_LAG_LIMIT
+        ivshard.router.cfg(current)
     end)
     -- Drop on_replace trigger. Replica returns.
     g.replica_1_c:exec(function()
@@ -214,11 +217,12 @@ local function failover_health_check_broken_upstream(g)
 end
 
 local function failover_health_check_broken_upstream_not_switch(g)
-    router_wait_prioritized(g, g.replica_1_c)
     g.router:exec(function()
-        rawset(_G, 'old_idle', ivconst.REPLICA_LAG_LIMIT)
-        ivconst.REPLICA_LAG_LIMIT = ivconst.TIMEOUT_INFINITY
+        local current = ivshard.router.internal.static_router.current_cfg
+        current.failover_replica_lag_limit = ivconst.TIMEOUT_INFINITY
+        ivshard.router.cfg(current)
     end)
+    router_wait_prioritized(g, g.replica_1_c)
     -- Break replication. Replica doesn't change, since timeout is huge.
     g.replica_1_c:exec(function()
         rawset(_G, 'on_replace', function()
@@ -245,7 +249,9 @@ local function failover_health_check_broken_upstream_not_switch(g)
     end, {g.replica_1_a:instance_id()})
     router_assert_prioritized(g, g.replica_1_c)
     g.router:exec(function()
-        ivconst.REPLICA_LAG_LIMIT = _G.old_idle
+        local current = ivshard.router.internal.static_router.current_cfg
+        current.failover_replica_lag_limit = ivconst.REPLICA_LAG_LIMIT
+        ivshard.router.cfg(current)
     end)
     -- Drop on_replace trigger. Replica returns.
     g.replica_1_c:exec(function()
