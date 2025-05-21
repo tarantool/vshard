@@ -447,6 +447,11 @@ local cfg_template = {
         name = 'Failover sequential fail count', type = 'positive integer',
         is_optional = true, default = consts.FAILOVER_DOWN_SEQUENTIAL_FAIL,
     },
+    failover_interval = {
+        name = 'Failover interval', type = 'positive number',
+        is_optional = true, default = math.min(consts.FAILOVER_UP_TIMEOUT,
+                                               consts.FAILOVER_DOWN_TIMEOUT),
+    },
     discovery_mode = {
         type = 'enum', name = 'Discovery mode',
         is_optional = true, default = 'on', enum = {'on', 'off', 'once'},

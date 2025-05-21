@@ -38,6 +38,7 @@
 --             failover_sequential_fail_count = <number of network request
 --                                               fails, after which the node
 --                                               is considered unhealthy>,
+--             failover_interval = <interval in seconds between pings>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -71,6 +72,8 @@
 --              }
 --          },
 --      }
+--      failover_interval = <interval in seconds between changing the
+--                           priority of the replica for callro>,
 --  }
 --
 -- replicasets = {
@@ -1597,6 +1600,7 @@ local function buildall(sharding_cfg)
             master_cond = fiber.cond(),
             master_wait_count = 0,
             errinj = table.deepcopy(replicaset_errinj),
+            failover_interval = sharding_cfg.failover_interval,
         }, replicaset_mt)
         local priority_list = {}
         for replica_id, replica in pairs(replicaset.replicas) do
@@ -1616,6 +1620,7 @@ local function buildall(sharding_cfg)
                 failover_ping_timeout = sharding_cfg.failover_ping_timeout,
                 errinj = table.deepcopy(replica_errinj),
                 failover_sequential_fail_count = sharding_cfg[count_name],
+                failover_interval = sharding_cfg.failover_interval,
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
@@ -1753,12 +1758,10 @@ local function replica_failover_service_step(replica, data)
         until not replica.errinj.ERRINJ_REPLICA_FAILOVER_DELAY
     end
     data.info:next_iter()
-    local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
-                                 consts.FAILOVER_DOWN_TIMEOUT)
     if not replica.conn or replica.down_ts ~= nil then
         -- Nothing to ping. Connection is either dead or missing.
         data.info:set_activity('idling')
-        return min_timeout
+        return replica.failover_interval
     end
     local opts = {timeout = replica.failover_ping_timeout}
     data.info:set_activity('pinging')
@@ -1779,7 +1782,7 @@ local function replica_failover_service_step(replica, data)
         data.info:set_status_ok()
     end
     data.info:set_activity('idling')
-    return min_timeout
+    return replica.failover_interval
 end
 
 --------------------------------------------------------------------------------
@@ -1855,12 +1858,10 @@ local function replicaset_failover_service_step(replicaset, data)
         data.info = lservice_info.new('replicaset_failover')
         -- This flag is used to avoid logging like:
         -- 'All is ok ... All is ok ... All is ok ...'
-        -- each min_timeout seconds.
+        -- each replicaset.failover_interval seconds.
         data.prev_was_ok = false
     end
 
-    local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
-                                 consts.FAILOVER_DOWN_TIMEOUT)
     if replicaset.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY then
         replicaset.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY = 'in'
         repeat
@@ -1889,9 +1890,9 @@ local function replicaset_failover_service_step(replicaset, data)
         logf = log.verbose
     end
     logf('Failovering step is finished. Schedule next after %f seconds',
-         min_timeout)
+         replicaset.failover_interval)
     data.info:set_activity('idling')
-    return min_timeout
+    return replicaset.failover_interval
 end
 
 --------------------------------------------------------------------------------
