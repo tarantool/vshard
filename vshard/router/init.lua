@@ -839,10 +839,13 @@ local function router_ref_storage_all(router, timeout)
                             router.total_bucket_count - bucket_count)
         goto fail
     end
-    do return timeout, nil, nil, rid, futures, replicasets end
+    do return timeout, nil, nil, rid, replicasets end
 
     ::fail::
-    return nil, err, err_id, rid, futures
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, err, err_id, rid, replicasets
 end
 
 --
@@ -949,10 +952,13 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
             timeout = deadline - fiber_clock()
         end
     end
-    do return timeout, nil, nil, rid, futures, replicasets_to_map end
+    do return timeout, nil, nil, rid, replicasets_to_map end
 
     ::fail::
-    return nil, err, err_id, rid, futures
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, err, err_id, rid, replicasets_to_map
 end
 
 --
@@ -1028,14 +1034,13 @@ end
 -- map-reduce breaks in the middle. Makes sense to let the refs go to unblock
 -- the rebalancer.
 --
-local function replicasets_map_cancel_refs(replicasets, futures, rid)
+local function replicasets_map_cancel_refs(replicasets, rid)
     local opts_async = {is_async = true}
-    for id, f in pairs(futures) do
-        f:discard()
+    for _, rs in pairs(replicasets) do
         -- Best effort to remove the created refs before exiting. Can help if
         -- the timeout was big and the error happened early.
-        f = replicasets[id]:callrw('vshard.storage._call',
-                                     {'storage_unref', rid}, opts_async)
+        local f = rs:callrw('vshard.storage._call',
+                            {'storage_unref', rid}, opts_async)
         if f ~= nil then
             -- Don't care waiting for a result - no time for this. But it won't
             -- affect the request sending if the connection is still alive.
@@ -1096,7 +1101,7 @@ end
 --     found even though all replicasets were scanned.
 --
 local function router_map_callrw(router, func, args, opts)
-    local replicasets_to_map, err, err_id, map, futures, rid
+    local replicasets_to_map, err, err_id, map, rid
     local timeout, do_return_raw, bucket_ids
     if opts then
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
@@ -1106,10 +1111,10 @@ local function router_map_callrw(router, func, args, opts)
         timeout = consts.CALL_TIMEOUT_MIN
     end
     if bucket_ids then
-        timeout, err, err_id, rid, futures, replicasets_to_map =
+        timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_by_buckets(router, bucket_ids, timeout)
     else
-        timeout, err, err_id, rid, futures, replicasets_to_map =
+        timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_all(router, timeout)
     end
     if timeout then
@@ -1121,7 +1126,7 @@ local function router_map_callrw(router, func, args, opts)
             return map
         end
     end
-    replicasets_map_cancel_refs(router.replicasets, futures, rid)
+    replicasets_map_cancel_refs(replicasets_to_map, rid)
     err = lerror.make(err)
     return nil, err, err_id
 end

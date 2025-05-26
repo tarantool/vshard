@@ -243,9 +243,17 @@ g.test_map_part_double_ref = function(cg)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()
     end, {bid1, cg.rs1_uuid})
-    cg.router:exec(function()
+    cg.router:exec(function(bid, uuid)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false
-    end)
+        -- Restore correct cache.
+        ivshard.router._bucket_reset(bid)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.router.discovery_wakeup()
+            local rs, err = ivshard.router.route(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert_equals(rs.uuid, uuid)
+        end)
+    end, {bid1, cg.rs1_uuid})
 end
 
 g.test_map_part_ref_timeout = function(cg)
@@ -258,14 +266,17 @@ g.test_map_part_ref_timeout = function(cg)
     local bid4 = bids[2]
 
     -- First, disable discovery on the router to disable route cache update.
-    cg.router:exec(function(bids)
+    cg.router:exec(function(bucket_ids)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true
         -- Make sure the location of the bucket is known.
-        for _, bid in pairs(bids) do
-            local _, err = ivshard.router.route(bid)
-            ilt.assert_equals(err, nil)
+        for uuid, bids in pairs(bucket_ids) do
+            for _, bid in ipairs(bids) do
+                local rs, err = ivshard.router.route(bid)
+                ilt.assert_equals(err, nil)
+                ilt.assert_equals(rs.uuid, uuid)
+            end
         end
-    end, {{bid1, bid2, bid3, bid4}})
+    end, {{[cg.rs1_uuid] = {bid1, bid2}, [cg.rs2_uuid] = {bid3, bid4}}})
 
     -- Count the map calls. The loss of ref must be detected before the
     -- map-stage.
@@ -337,7 +348,12 @@ g.test_map_part_ref_timeout = function(cg)
 
     -- Make sure there are no references left.
     _, err = vtest.cluster_exec_each(cg, function()
-        ilt.assert_equals(require('vshard.storage.ref').count, 0)
+        -- Do not use iwait_timeout, since this is the timeout for ref life and
+        -- we want to be sure, that map_callrw deletes the ref on error
+        -- and it's not deleted by timeout.
+        ilt.helpers.retrying({timeout = iwait_timeout / 2}, function()
+            ilt.assert_equals(require('vshard.storage.ref').count, 0)
+        end)
     end)
     t.assert_equals(err, nil)
 
@@ -355,9 +371,17 @@ g.test_map_part_ref_timeout = function(cg)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()
     end, {bid2, cg.rs1_uuid})
-    cg.router:exec(function()
+    cg.router:exec(function(bid, uuid)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false
-    end)
+        -- Restore correct cache.
+        ivshard.router._bucket_reset(bid)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.router.discovery_wakeup()
+            local rs, err = ivshard.router.route(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert_equals(rs.uuid, uuid)
+        end)
+    end, {bid2, cg.rs1_uuid})
 end
 
 g.test_map_part_map = function(cg)
