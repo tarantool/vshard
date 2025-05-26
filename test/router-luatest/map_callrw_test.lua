@@ -549,3 +549,79 @@ g.test_map_all_callrw_raw = function(cg)
         _G.old_do_map = nil
     end)
 end
+
+local function test_map_callrw_split_args_template(cg, do_map, args, buckets)
+    local _, err = vtest.cluster_exec_each_master(cg, do_map)
+    t.assert_equals(err, nil)
+
+    local res = router_do_map(cg.router, args, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = buckets,
+    })
+    t.assert_equals(res.err, nil)
+    t.assert_equals(res.val, {})
+    t.assert_equals(res.err_uuid, nil)
+
+    _, err = vtest.cluster_exec_each_master(cg, function()
+        _G.do_map = _G.old_do_map
+        _G.old_do_map = nil
+    end)
+    t.assert_equals(err, nil)
+end
+
+g.test_map_callrw_split_args_table = function(cg)
+    local data = {'some data'}
+    local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(cg.replica_2_a)
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(arg1, arg2, data)
+            t.assert_equals(arg1, 'arg1')
+            t.assert_equals(arg2, 'arg2')
+            local bid = _G.get_first_bucket()
+            t.assert_equals(data, {
+                [bid] = {'some data'}
+            })
+        end
+    end, {'arg1', 'arg2'}, {
+        [bid1] = data,
+        [bid2] = data,
+    })
+end
+
+g.test_map_callrw_split_args_plain = function(cg)
+    local data = 'some data'
+    local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(arg1, data)
+            t.assert_equals(arg1, 'arg1')
+            local bid = _G.get_first_bucket()
+            t.assert_equals(data, {
+                [bid] = 'some data'
+            })
+        end
+    end, {'arg1'}, {
+        [bid1] = data,
+    })
+end
+
+g.test_map_callrw_split_args_nil = function(cg)
+    local data = 'some data'
+    local bid1, bid2 = unpack(vtest.storage_get_n_buckets(cg.replica_1_a, 2))
+    local bid3, bid4 = unpack(vtest.storage_get_n_buckets(cg.replica_2_a, 2))
+    local bid5, bid6 = unpack(vtest.storage_get_n_buckets(cg.replica_3_a, 2))
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(data)
+            local bid1, bid2 = unpack(_G.get_n_buckets(2))
+            t.assert_equals(data, {
+                [bid1] = 'some data',
+                [bid2] = 'some data'
+            })
+        end
+    end, nil, {
+        [bid1] = data, [bid2] = data, [bid3] = data,
+        [bid4] = data, [bid5] = data, [bid6] = data,
+    })
+end

@@ -247,6 +247,32 @@ local function table_extend(dst, src)
     return table.move(src, 1, #src, #dst + 1, dst)
 end
 
+--
+-- Returns true, if table consists of numeric values, false otherwise. Note,
+-- that the function doesn't check all values to be fast, just the first one.
+--
+local function table_is_numeric(src)
+    if type(src) ~= 'table' then
+        return false
+    end
+    local _, v = next(src)
+    return type(v) == 'number'
+end
+
+--
+-- Returns the array of keys from the table.
+--
+local function table_keys(src)
+    if type(src) ~= 'table' then
+        return nil
+    end
+    local keys = {}
+    for k, _ in pairs(src) do
+        table.insert(keys, k)
+    end
+    return keys
+end
+
 local function fiber_cond_wait_xc(cond, timeout)
     -- Handle negative timeout specifically - otherwise wait() will throw an
     -- ugly usage error.
@@ -448,6 +474,8 @@ return {
     table_minus_yield = table_minus_yield,
     table_extend = table_extend,
     table_equals = table_equals,
+    table_is_numeric = table_is_numeric,
+    table_keys = table_keys,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
     index_min = index_min,
