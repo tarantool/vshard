@@ -965,20 +965,31 @@ end
 -- Perform map-reduce stages on the given set of replicasets. The map expects a
 -- valid ref ID which must be done beforehand.
 --
-local function replicasets_map_reduce(replicasets, rid, func, args, opts)
+local function replicasets_map_reduce(replicasets, rid, func, args,
+                                      grouped_args, opts)
     assert(opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local do_return_raw = opts.return_raw
     local deadline = fiber_clock() + timeout
     local opts_map = {is_async = true, return_raw = do_return_raw}
+    -- Workaround for box.NULL in `args`.
+    args = args == nil and {} or args
     local futures = {}
     local map = {}
     --
     -- Map stage: send.
     --
-    args = {'storage_map', rid, func, args}
-    for _, rs in pairs(replicasets) do
-        local res, err = rs:callrw('vshard.storage._call', args, opts_map)
+    local func_args = {'storage_map', rid, func, args}
+    for id, rs in pairs(replicasets) do
+        if grouped_args ~= nil then
+            -- It's cheaper to push and then pop, rather then deepcopy
+            -- arguments table for every call.
+            table.insert(args, grouped_args[id])
+        end
+        local res, err = rs:callrw('vshard.storage._call', func_args, opts_map)
+        if grouped_args ~= nil then
+            table.remove(args)
+        end
         if res == nil then
             return nil, err, rs.id
         end
@@ -1050,6 +1061,30 @@ local function replicasets_map_cancel_refs(replicasets, rid)
 end
 
 --
+-- Build table of form {<rs_id> = {<bid> = {<arguments}} from map_callrw's
+-- split arguments `bucket_ids` option.
+--
+local function router_group_map_callrw_args(router, bucket_ids, bucket_args)
+    if util.table_is_numeric(bucket_args) then
+        return nil
+    end
+
+    local grouped_args = {}
+    -- No need to worry about timeout here, since all buckets have already been
+    -- resolved during ref stage and now the table is built only from the cache.
+    local grouped_bids = buckets_group(router, bucket_ids, 0)
+    assert(grouped_bids ~= nil)
+    for id, bids in pairs(grouped_bids) do
+        local rs_args = grouped_args[id] or {}
+        for _, bid in ipairs(bids) do
+            rs_args[bid] = bucket_args[bid]
+        end
+        grouped_args[id] = rs_args
+    end
+    return grouped_args
+end
+
+--
 -- Consistent Map-Reduce. The given function is called on masters in the cluster
 -- with a guarantee that in case of success it was executed with all buckets
 -- being accessible for reads and writes.
@@ -1102,24 +1137,29 @@ end
 --
 local function router_map_callrw(router, func, args, opts)
     local replicasets_to_map, err, err_id, map, rid
-    local timeout, do_return_raw, bucket_ids
+    local timeout, do_return_raw, bucket_ids, plain_bucket_ids, grouped_args
     if opts then
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
         do_return_raw = opts.return_raw
         bucket_ids = opts.bucket_ids
+        plain_bucket_ids = util.table_is_numeric(bucket_ids) and bucket_ids or
+            util.table_keys(bucket_ids)
     else
         timeout = consts.CALL_TIMEOUT_MIN
     end
-    if bucket_ids then
+    if plain_bucket_ids then
         timeout, err, err_id, rid, replicasets_to_map =
-            router_ref_storage_by_buckets(router, bucket_ids, timeout)
+            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout)
+        -- Grouped arguments are only possible with partial Map-Reduce.
+        grouped_args =
+            router_group_map_callrw_args(router, plain_bucket_ids, bucket_ids)
     else
         timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_all(router, timeout)
     end
     if timeout then
         map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
-            args, {
+            args, grouped_args, {
                 timeout = timeout, return_raw = do_return_raw
             })
         if map then
