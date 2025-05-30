@@ -2162,10 +2162,6 @@ end
 --------------------------------------------------------------------------------
 -- Module definition
 --------------------------------------------------------------------------------
-M.discovery_f = discovery_f
-M.failover_f = failover_f
-M.master_search_f = master_search_f
-M.router_mt = router_mt
 --
 -- About functions, saved in M, and reloading see comment in
 -- storage/init.lua.
@@ -2192,7 +2188,13 @@ else
         export_static_router_attributes()
     end
     M.module_version = M.module_version + 1
+    util.module_unload_functions(M)
 end
+
+M.discovery_f = discovery_f
+M.failover_f = failover_f
+M.master_search_f = master_search_f
+M.router_mt = router_mt
 
 module.cfg = legacy_cfg
 module.new = router_new

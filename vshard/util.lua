@@ -7,6 +7,18 @@ local lmsgpack = require('msgpack')
 local luri = require('uri')
 local ltarantool = require('tarantool')
 
+--
+-- Drop all functions from the table. See comment
+-- about hot-reload in storage/init.lua for details.
+--
+local function module_unload_functions(module)
+    for k, v in pairs(module) do
+        if type(v) == 'function' then
+            module[k] = nil
+        end
+    end
+end
+
 local MODULE_INTERNALS = '__module_vshard_util'
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
@@ -18,6 +30,8 @@ if not M then
         reloadable_fiber_main_loop = nil,
     }
     rawset(_G, MODULE_INTERNALS, M)
+else
+    module_unload_functions(M)
 end
 
 local tnt_version = lversion.parse(_TARANTOOL)
@@ -91,8 +105,13 @@ end
 -- See description of parameters in `reloadable_fiber_create`.
 --
 local function reloadable_fiber_main_loop(module, func_name, data)
-    log.info('%s has been started', func_name)
     local func = module[func_name]
+    if not func then
+        log.info('%s has been stopped, it is not compatible ' ..
+                 'with the curent version', func_name)
+        return
+    end
+    log.info('%s has been started', func_name)
 ::restart_loop::
     local ok, err = pcall(func, data)
     -- yield serves two purposes:
@@ -484,4 +503,5 @@ return {
     schema_version = schema_version,
     replicaset_uuid = replicaset_uuid,
     uri_format = uri_format,
+    module_unload_functions = module_unload_functions,
 }
