@@ -1624,6 +1624,7 @@ local function router_cfg(router, cfg, is_reload)
     lreplicaset.wait_masters_connect(new_replicasets, consts.RECONNECT_TIMEOUT)
     lreplicaset.outdate_replicasets(router.replicasets,
                                     vshard_cfg.connection_outdate_delay)
+    lreplicaset.create_workers(new_replicasets)
     router.connection_outdate_delay = vshard_cfg.connection_outdate_delay
     router.total_bucket_count = vshard_cfg.bucket_count
     router.current_cfg = cfg

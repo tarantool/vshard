@@ -3829,6 +3829,7 @@ local function storage_cfg_xc(cfgctx)
     lschema.cfg(new_cfg)
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
+    lreplicaset.create_workers(new_replicasets)
     M.replicasets = new_replicasets
     M.this_replicaset = new_replicasets[replicaset_id]
     M.this_replica = M.this_replicaset.replicas[instance_id]

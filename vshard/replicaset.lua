@@ -30,6 +30,7 @@
 --                              STATUS.YELLOW - health of replica is unknown,
 --                              STATUS.RED    - replica is unhealthy>,
 --             fetch_schema = <whether the connection should fetch schema>,
+--             worker = { <same as replicaset.worker but for replica> }
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -56,6 +57,16 @@
 --                             on this replicaset to reach the
 --                             balance in a cluster>,
 --      is_outdated = nil/true,
+--      worker = {
+--          fiber = <fiber to run registered services for replicaset>,
+--          services =
+--              [service_name] = {
+--                  func = <service func pointer>,
+--                  data = <used to pass data between service steps>,
+--                  deadline = <timestamp, when the next step will be launched>,
+--              }
+--          },
+--      }
 --  }
 --
 -- replicasets = {
@@ -1365,10 +1376,19 @@ for fname, _ in pairs(replica_mt.__index) do
     outdated_replica_mt.__index[fname] = outdated_warning
 end
 
+local function worker_cancel(module)
+    local worker = module.worker
+    if worker ~= nil and worker.fiber ~= nil then
+        pcall(worker.fiber.cancel, worker.fiber)
+    end
+end
+
 local function outdate_replicasets_f(replicasets)
     for _, replicaset in pairs(replicasets) do
+        worker_cancel(replicaset)
         setmetatable(replicaset, outdated_replicaset_mt)
         for _, replica in pairs(replicaset.replicas) do
+            worker_cancel(replica)
             setmetatable(replica, outdated_replica_mt)
             replica.conn = nil
         end
@@ -1595,11 +1615,132 @@ local function wait_masters_connect(replicasets, timeout)
     return nil, err, err_id
 end
 
+--------------------------------------------------------------------------------
+-- Worker
+--------------------------------------------------------------------------------
+
+--
+-- Worker fiber, which runs background services.
+--
+local function worker_f(owner)
+    local worker = owner.worker
+    assert(worker and worker.services)
+    -- The fiber is not reloadable and can be only stopped on outdating of
+    -- the owner (either replica or replicaset), which cancel the worker fiber.
+    while true do
+        fiber.testcancel()
+        local min_deadline = fiber.clock() + consts.TIMEOUT_INFINITY
+        for _, service in pairs(worker.services) do
+            if fiber_clock() >= service.deadline then
+                -- The service cannot notice reconfiguration during step.
+                -- If reconfiguration happens and the module changes, when
+                -- the step is in the middle of yield, then service will end
+                -- step on the old module object, but the next step will be
+                -- done on the new module. Step sees the module atomically.
+                fiber.testcancel()
+                local ok, ret = pcall(service.func, owner, service.data)
+                fiber.testcancel()
+                if not ok then
+                    log.error('%s failed: %s', service.func_name, ret)
+                    -- Immediately retry after yield. Works as reloadable fiber.
+                    service.deadline = 0
+                    goto next_service
+                end
+                assert(type(ret) == 'number')
+                service.deadline = fiber_clock() + ret
+            end
+            ::next_service::
+            if service.deadline < min_deadline then
+                min_deadline = service.deadline
+            end
+        end
+        -- The fiber sleeps indefinitely, when there're no services registered.
+        -- Worker must be woken up on every service add.
+        local timeout = min_deadline - fiber_clock()
+        timeout = timeout > 0 and timeout or 0
+        fiber.testcancel()
+        fiber.sleep(timeout)
+    end
+end
+
+--
+-- This table maps service name to the step functions. It's are needed to
+-- simplify the API of `worker_add_service` and allow to add a service only
+-- by its name, without knowing the function name.
+--
+local worker_service_to_func = {
+}
+
+local function worker_add_service(worker, service_name, args)
+    local func = worker_service_to_func[service_name]
+    assert(func ~= nil)
+    local service = {
+        data = {args = args},
+        func = func,
+        deadline = 0,
+    }
+    worker.services[service_name] = service
+    assert(worker.fiber ~= nil)
+    worker.fiber:wakeup()
+end
+
+local function worker_wakeup_service(worker, service_name)
+    if worker.services[service_name] then
+        worker.services[service_name].deadline = 0
+    end
+    pcall(worker.fiber.wakeup, worker.fiber)
+end
+
+local function worker_remove_service(worker, service_name)
+    -- On the next iteration of worker service won't run.
+    worker.services[service_name] = nil
+end
+
+local worker_mt = {
+    __index = {
+        add_service = worker_add_service,
+        wakeup_service = worker_wakeup_service,
+        remove_service = worker_remove_service,
+    }
+}
+
+local function worker_create(worker_name, owner)
+    local worker = setmetatable({services = {}}, worker_mt)
+    worker.fiber = fiber.new(worker_f, owner)
+    worker.fiber:name(worker_name, {truncate = true})
+    return worker
+end
+
+--
+-- Create and start worker fibers. It's done as a separate step in order to
+-- allow connections to be done before starting the services. Note, that
+-- workers are recreated on every reconfiguration.
+--
+local function create_workers(replicasets)
+    for _, rs in pairs(replicasets) do
+        assert(rs.worker == nil)
+        local name = 'vshard.replicaset.' .. (rs.name or rs.uuid)
+        rs.worker = worker_create(name, rs)
+        for _, replica in pairs(rs.replicas) do
+            assert(replica.worker == nil)
+            name = 'vshard.replica.' .. (replica.name or replica.uuid)
+            replica.worker = worker_create(name, replica)
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Module definition
+--------------------------------------------------------------------------------
+
 return {
     buildall = buildall,
     calculate_etalon_balance = cluster_calculate_etalon_balance,
     wait_masters_connect = wait_masters_connect,
     rebind_replicasets = rebind_replicasets,
     outdate_replicasets = outdate_replicasets,
+    create_workers = create_workers,
     locate_masters = locate_masters,
+    -- Functions, exported for testing.
+    _worker_service_to_func = worker_service_to_func
 }
