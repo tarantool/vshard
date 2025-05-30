@@ -4128,8 +4128,6 @@ local function storage_api_call_unsafe(func, arg1, arg2, arg3, arg4)
     return func(arg1, arg2, arg3, arg4)
 end
 
-M.api_call_cache = storage_api_call_unsafe
-
 local function storage_make_api(func)
     return function(arg1, arg2, arg3, arg4)
         return M.api_call_cache(func, arg1, arg2, arg3, arg4)
@@ -4211,6 +4209,15 @@ end
 -- restarted (or is restarted from M.background_f, which is not
 -- changed) and continues use old func1 and func2.
 --
+-- However, note, that if reload happens from the version, where
+-- background fiber exists to the one, where it doesn't, the
+-- function of type 3 will still be loaded in a module attributes,
+-- which means, that there's no way for the fiber to know, that
+-- it's working on the incompatible version. For that, all
+-- fiber functions (_f) and services (_step, see replicaset module
+-- for details on worker services) must be removed from a module
+-- attributes.
+--
 
 if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
@@ -4224,6 +4231,7 @@ else
     -- Background fibers could sleep waiting for bucket changes.
     -- Let them know it is time to reload.
     bucket_generation_increment()
+    util.module_unload_functions(M)
 end
 
 M.recovery_f = recovery_f
@@ -4231,6 +4239,8 @@ M.rebalancer_f = rebalancer_f
 M.gc_bucket_f = gc_bucket_f
 M.instance_watch_f = instance_watch_f
 M.conn_manager_f = conn_manager_f
+
+M.api_call_cache = storage_api_call_unsafe
 
 --
 -- These functions are saved in M not for atomic reload, but for
