@@ -3,6 +3,7 @@ local t = require('luatest')
 local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
 local verror = require('vshard.error')
+local vconsts = require('vshard.consts')
 local vutil = require('vshard.util')
 local vconst = require('vshard.consts')
 local server = require('test.luatest_helpers.server')
@@ -697,4 +698,105 @@ test_group.test_rebinding_fetch_schema = function()
         end
     end
 
+end
+
+local function worker_register_service(service_name, func)
+    vreplicaset._worker_service_to_func[service_name] = func
+end
+
+local function worker_unregister_service(service_name)
+    vreplicaset._worker_service_to_func[service_name] = nil
+end
+
+test_group.test_worker_basic = function()
+    local replicasets = vreplicaset.buildall(global_cfg)
+    local _, rs = next(replicasets)
+
+    -- Workers are created manually.
+    t.assert_equals(rs.worker, nil)
+    for _, replica in pairs(rs.replicas) do
+        t.assert_equals(replica.worker, nil)
+    end
+    vreplicaset.create_workers(replicasets)
+    t.assert_not_equals(rs.worker, nil)
+    t.assert_not_equals(rs.worker.fiber:status(), 'dead')
+    for _, replica in pairs(rs.replicas) do
+        t.assert_not_equals(replica, nil)
+        t.assert_not_equals(replica.worker.fiber:status(), 'dead')
+    end
+
+    local function step_func(_, data)
+        data.test = 'world'
+        -- Step function returns timeout for worker until the next step.
+        return vconsts.TIMEOUT_INFINITY
+    end
+
+    -- Test basic service work.
+    local service_name = 'basic_step'
+    worker_register_service(service_name, step_func)
+    rs.worker:add_service(service_name)
+    for _, r in pairs(rs.replicas) do
+        r.worker:add_service(service_name)
+    end
+
+    local function assert_service_data_equals(rs, service, expected)
+        t.assert_not_equals(rs.worker.services[service], nil)
+        t.assert_equals(rs.worker.services[service].data, expected)
+        for _, r in pairs(rs.replicas) do
+            t.assert_equals(r.worker.services[service].data, expected)
+        end
+    end
+    assert_service_data_equals(rs, service_name, {})
+    fiber.yield()
+    assert_service_data_equals(rs, service_name, {test = 'world'})
+
+    -- On outdate the fiber is killed.
+    vreplicaset.outdate_replicasets(replicasets)
+    fiber.yield()
+    t.assert_equals(rs.worker.fiber:status(), 'dead')
+    for _, replica in pairs(rs.replicas) do
+        t.assert_equals(replica.worker.fiber:status(), 'dead')
+    end
+
+    -- Cleanup.
+    worker_unregister_service(service_name)
+end
+
+test_group.test_worker_several_services = function()
+    local replicasets = vreplicaset.buildall(global_cfg)
+    vreplicaset.create_workers(replicasets)
+    local _, rs = next(replicasets)
+
+    local function step_template(timeout)
+        return function(_, data)
+            if not data.counter then
+                data.counter = 1
+                return timeout
+            end
+            data.counter = data.counter + 1
+            return timeout
+        end
+    end
+
+    local service_name_1, service_name_2 = 'one', 'two'
+    -- Runs on every fiber.yield
+    worker_register_service(service_name_1, step_template(0))
+    -- Runs once, the next execution is after 500 years.
+    worker_register_service(service_name_2,
+                            step_template(vconsts.TIMEOUT_INFINITY))
+    rs.worker:add_service(service_name_1)
+    rs.worker:add_service(service_name_2)
+    t.assert_equals(rs.worker.services[service_name_1].data, {})
+    t.assert_equals(rs.worker.services[service_name_2].data, {})
+    fiber.yield()
+    t.assert_equals(rs.worker.services[service_name_1].data, {counter = 1})
+    t.assert_equals(rs.worker.services[service_name_2].data, {counter = 1})
+    fiber.yield()
+    t.assert_equals(rs.worker.services[service_name_1].data, {counter = 2})
+    t.assert_equals(rs.worker.services[service_name_2].data, {counter = 1})
+
+    -- Cleanup.
+    vreplicaset.outdate_replicasets(replicasets)
+    worker_unregister_service(service_name_1)
+    worker_unregister_service(service_name_2)
 end
