@@ -21,15 +21,37 @@ end
 -- Start the database with sharding
 vshard = require('vshard')
 
-if arg[2] == 'failover_disable' then
-    vshard.router.internal.errinj.ERRINJ_FAILOVER_DELAY = true
-end
-
 vshard.router.cfg(cfg)
 
-if arg[2] == 'failover_disable' then
-    while vshard.router.internal.errinj.ERRINJ_FAILOVER_DELAY ~= 'in' do
-        router.failover_fiber:wakeup()
-        fiber.sleep(0.01)
+function failover_wakeup(router)
+    local router = router or vshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.worker:wakeup_service('failover')
+        for _, r in pairs(rs.replicas) do
+            r.worker:wakeup_service('failover')
+        end
     end
+end
+
+if arg[2] == 'failover_disable' then
+    local replicasets = vshard.router.internal.static_router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY = true
+        for _, r in pairs(rs.replicas) do
+            r.errinj.ERRINJ_REPLICA_FAILOVER_DELAY = true
+        end
+    end
+    -- Wait for stop.
+    local all_stopped
+    repeat
+        all_stopped = true
+        failover_wakeup()
+        for _, rs in pairs(replicasets) do
+            all_stopped = rs.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY == 'in'
+            for _, r in pairs(rs.replicas) do
+                all_stopped = r.errinj.ERRINJ_REPLICA_FAILOVER_DELAY == 'in'
+            end
+        end
+    until not all_stopped
 end

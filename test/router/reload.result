@@ -94,6 +94,23 @@ function copy_functions(t)
 end;
 ---
 ...
+function check_rs_info_service(info, name)
+    for id, rs in pairs(info.replicasets) do
+        if not rs.services[name] then
+            return false
+        end
+    end
+    return true
+end
+function check_r_info_service(info, name)
+    local count = 0
+    for _, rs in pairs(info.replicasets) do
+        for id, r in pairs(rs.services[name].replicas) do
+            count = count + 1
+        end
+    end
+    return count == 4
+end
 _ = test_run:cmd("setopt delimiter ''");
 ---
 ...
@@ -117,7 +134,15 @@ vshard.router.module_version()
 check_reloaded()
 ---
 ...
-while test_run:grep_log('router_1', 'failover_f has been started') == nil do fiber.sleep(0.1) end
+-- Check, that failover service has been started.
+info = vshard.router.info({with_services = true})
+---
+...
+while check_rs_info_service(info, 'failover') ~= true and                       \
+      check_r_info_service(info, 'failover') ~= true do                         \
+    failover_wakeup()                                                           \
+    fiber.sleep(0.1)                                                            \
+end
 ---
 ...
 while test_run:grep_log('router_1', 'discovery_f has been started') == nil do fiber.sleep(0.1) vshard.router.discovery_wakeup() end

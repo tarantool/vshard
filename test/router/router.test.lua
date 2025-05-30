@@ -155,7 +155,7 @@ _ = vshard.router.route(2)
 _ = vshard.router.route(3)
 vshard.router.buckets_info(0, 3)
 _ = test_run:cmd('stop server storage_2_a')
-vshard.router.static.failover_fiber:wakeup()
+failover_wakeup()
 _ = test_run:wait_cond(function()                                               \
     return test_run:grep_log('router_1', 'New replica storage_2_b') ~= nil      \
 end)

@@ -14,7 +14,10 @@ vshard.router.cfg({sharding = {}})
 fiber = require('fiber')
 sharding = { ['cbf06940-0790-498b-948d-042b62cf3d29'] = { replicas = {} } }
 vshard.router.cfg({sharding = sharding})
-for i = 1, 10 do vshard.router.static.failover_fiber:wakeup() fiber.sleep(0.001) end
+for i = 1, 10 do                                                               \
+    failover_wakeup()                                                          \
+    fiber.sleep(0.001)                                                         \
+end
 
 test_run:switch('default')
 test_run:cmd("stop server router_1")

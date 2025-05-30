@@ -51,7 +51,11 @@ for i = 3, 10 do routers[i] = vshard.router.new('router_' .. i, configs.cfg_2) e
 routers[3]:call(1, 'read', 'do_select', {2})
 -- Check that they have their own background fibers.
 fiber_names = {}
-for i = 2, 10 do fiber_names['vshard.failover.router_' .. i] = true; fiber_names['vshard.discovery.router_' .. i] = true; end
+for i = 3, 10 do                                                               \
+    for _, rs in pairs(routers[i].replicasets) do                              \
+        fiber_names[rs.worker.fiber:name()] = true                             \
+    end                                                                        \
+end
 next(fiber_names) ~= nil
 fiber = require('fiber')
 for _, xfiber in pairs(fiber.info()) do fiber_names[xfiber.name] = nil end

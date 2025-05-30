@@ -31,4 +31,53 @@ end
 box.cfg(helpers.box_cfg())
 box.schema.user.grant('guest', 'super', nil, nil, {if_not_exists = true})
 
+local function failover_wakeup(router)
+    router = router or _G.ivshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.worker:wakeup_service('replicaset_failover')
+        for _, r in pairs(rs.replicas) do
+            r.worker:wakeup_service('replica_failover')
+        end
+    end
+end
+
+local function failover_pause(router)
+    router = router or _G.ivshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY = true
+        for _, r in pairs(rs.replicas) do
+            r.errinj.ERRINJ_REPLICA_FAILOVER_DELAY = true
+        end
+    end
+    -- Wait for stop.
+    _G.ilt.helpers.retrying({timeout = _G.iwait_timeout}, function()
+        failover_wakeup(router)
+        for _, rs in pairs(replicasets) do
+            _G.ilt.assert_equals(
+                rs.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY, 'in')
+            for _, r in pairs(rs.replicas) do
+                _G.ilt.assert_equals(
+                    r.errinj.ERRINJ_REPLICA_FAILOVER_DELAY, 'in')
+            end
+        end
+    end)
+end
+
+local function failover_continue(router)
+    router = router or _G.ivshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY = false
+        for _, r in pairs(rs.replicas) do
+            r.errinj.ERRINJ_REPLICA_FAILOVER_DELAY = false
+        end
+    end
+end
+
+_G.failover_wakeup = failover_wakeup
+_G.failover_pause = failover_pause
+_G.failover_continue = failover_continue
+
 _G.ready = true
