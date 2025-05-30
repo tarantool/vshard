@@ -70,58 +70,6 @@ reverse_weights()
 vshard.router.cfg(cfg)
 ---
 ...
-vshard.router.info()
----
-- replicasets:
-    971279ef-5c38-4d14-86ee-0e4a56567955:
-      replica:
-        status: missing
-      bucket:
-        available_rw: 0
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3309
-        uuid: 7171703a-fec2-45c9-beac-9a8aa40dcf85
-      uuid: 971279ef-5c38-4d14-86ee-0e4a56567955
-    739fe4fb-2850-4cde-9637-10150724c5eb:
-      replica:
-        status: missing
-      bucket:
-        available_rw: 0
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3301
-        uuid: 3e01062d-5c1b-4382-b14e-f80a517cb462
-      uuid: 739fe4fb-2850-4cde-9637-10150724c5eb
-    832bbba0-9699-4aa1-907d-c7c7af61f5c9:
-      replica:
-        status: missing
-      bucket:
-        available_rw: 0
-      master:
-        network_timeout: 0.5
-        status: available
-        uri: storage@127.0.0.1:3305
-        uuid: 27ef9a48-86f3-4759-89be-17aeaf4bd6ba
-      uuid: 832bbba0-9699-4aa1-907d-c7c7af61f5c9
-  bucket:
-    unreachable: 0
-    available_ro: 0
-    unknown: 3000
-    available_rw: 0
-  identification_mode: uuid_as_key
-  status: 1
-  alerts:
-  - ['SUBOPTIMAL_REPLICA', 'A current read replica in replicaset 739fe4fb-2850-4cde-9637-10150724c5eb
-      is not optimal']
-  - ['SUBOPTIMAL_REPLICA', 'A current read replica in replicaset 832bbba0-9699-4aa1-907d-c7c7af61f5c9
-      is not optimal']
-  - ['SUBOPTIMAL_REPLICA', 'A current read replica in replicaset 971279ef-5c38-4d14-86ee-0e4a56567955
-      is not optimal']
-  - ['UNKNOWN_BUCKETS', '3000 buckets are not discovered']
-...
 wait_state('All replicas are ok')
 ---
 ...
@@ -375,10 +323,6 @@ add_some_replicas()
 ...
 vshard.router.cfg(cfg)
 ---
-...
-#vshard.router.info().alerts > 1
----
-- true
 ...
 wait_state('All replicas are ok')
 ---

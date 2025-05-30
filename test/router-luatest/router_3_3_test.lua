@@ -100,7 +100,7 @@ end
 
 local function router_wakeup_failover(g)
     g.router:exec(function()
-        ivshard.router.internal.static_router.failover_fiber:wakeup()
+        _G.failover_wakeup()
     end)
 end
 
@@ -224,11 +224,18 @@ local function failover_health_check_small_failover_timeout(g)
     local new_global_cfg = table.deepcopy(old_cfg)
     new_global_cfg.failover_ping_timeout = 0.0000001
     vtest.router_cfg(g.router, new_global_cfg)
-    g.router:exec(function()
-        local r = ivshard.router.internal.static_router
-        ivtest.service_wait_for_new_ok(r.failover_service,
-            {on_yield = function() r.failover_f:wakeup() end})
-    end)
+    local uuid = g.replica_1_a:replicaset_uuid()
+    g.router:exec(function(uuid)
+        local router = ivshard.router.internal.static_router
+        for _, r in pairs(router.replicasets[uuid].replicas) do
+            local s = r.worker.services['replica_failover']
+            local opts = {on_yield = function()
+                r.worker:wakeup_service('replica_failover')
+            end}
+            ivtest.wait_for_not_nil(s.data, 'info', opts)
+            ivtest.service_wait_for_error(s.data.info, 'Ping error', opts)
+        end
+    end, {uuid})
     -- Since all nodes are broken, prioritized replica is not changed.
     router_assert_prioritized(g, g.replica_1_c)
     vtest.router_cfg(g.router, old_cfg)

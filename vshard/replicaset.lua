@@ -31,6 +31,10 @@
 --                              STATUS.RED    - replica is unhealthy>,
 --             fetch_schema = <whether the connection should fetch schema>,
 --             worker = { <same as replicaset.worker but for replica> }
+--             failover_ping_timeout = <timeout after which a ping is
+--                                      considered to be unacknowledged.
+--                                      Used by failover service to detect
+--                                      if a node is down>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -83,11 +87,20 @@ local luuid = require('uuid')
 local ffi = require('ffi')
 local lcfg = require('vshard.cfg')
 local util = require('vshard.util')
+local lservice_info = require('vshard.service_info')
 local fiber_clock = fiber.clock
 local fiber_yield = fiber.yield
 local fiber_cond_wait = util.fiber_cond_wait
 local future_wait = util.future_wait
 local gsc = util.generate_self_checker
+
+local replicaset_errinj = {
+    ERRINJ_REPLICA_FAILOVER_DELAY = false,
+}
+
+local replica_errinj = {
+    ERRINJ_REPLICASET_FAILOVER_DELAY = false,
+}
 
 --
 -- vconnect is asynchronous vshard greeting, saved inside netbox connection.
@@ -1535,6 +1548,7 @@ local function buildall(sharding_cfg)
             is_master_auto = replicaset.master == 'auto',
             master_cond = fiber.cond(),
             master_wait_count = 0,
+            errinj = table.deepcopy(replicaset_errinj),
         }, replicaset_mt)
         local priority_list = {}
         for replica_id, replica in pairs(replicaset.replicas) do
@@ -1550,6 +1564,8 @@ local function buildall(sharding_cfg)
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
                 id = replica_id, health_status = consts.STATUS.YELLOW,
                 fetch_schema = sharding_cfg.connection_fetch_schema,
+                failover_ping_timeout = sharding_cfg.failover_ping_timeout,
+                errinj = table.deepcopy(replica_errinj),
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
@@ -1623,6 +1639,226 @@ local function wait_masters_connect(replicasets, timeout)
 end
 
 --------------------------------------------------------------------------------
+-- Replica failover
+--------------------------------------------------------------------------------
+
+--
+-- Check, whether the instance has properly working connection to the master.
+-- Returns the status of the replica and the reason, if it's STATUS.RED.
+--
+local function failover_check_upstream(upstream)
+    if not upstream then
+        return consts.STATUS.RED, 'Missing upstream from the master'
+    end
+    local status = upstream.status
+    if not status or status == 'stopped' or status == 'disconnected' then
+        -- All other states mean either that everything is ok ('follow')
+        -- or that replica is connecting. In all these cases replica
+        -- is considered healthy.
+        local msg = string.format('Upstream to master has status "%s"', status)
+        return consts.STATUS.RED, msg
+    end
+    if upstream.idle and upstream.idle > consts.REPLICA_MAX_IDLE then
+        local msg = string.format('Upstream to master has idle %.15f > %d',
+                                  upstream.idle, consts.REPLICA_MAX_IDLE)
+        return consts.STATUS.RED, msg
+    end
+    if upstream.lag and upstream.lag > consts.REPLICA_MAX_LAG then
+        local msg = string.format('Upstream to master has lag %.15f > %d',
+                                  upstream.lag, consts.REPLICA_MAX_LAG)
+        return consts.STATUS.RED, msg
+    end
+    return consts.STATUS.GREEN
+end
+
+local function replica_failover_ping(replica, opts)
+    local info_opts = {timeout = opts.timeout, with_health = true}
+    local net_status, info, err =
+        replica:call('vshard.storage._call', {'info', info_opts}, opts)
+    if not info then
+        replica:update_health_status(consts.STATUS.YELLOW, err)
+        return net_status, info, err
+    elseif not info.health then
+        local msg = 'Health state in ping is missing - please upgrade storage'
+        replica:update_health_status(consts.STATUS.YELLOW, msg)
+        return net_status, info, msg
+    end
+
+    assert(type(info.health) == 'table')
+    local health_status, reason =
+        failover_check_upstream(info.health.master_upstream)
+    replica:update_health_status(health_status, reason)
+    return net_status, info, err
+end
+
+local function replica_failover_service_step(replica, data)
+    if not data.info then
+        -- Service info is recreated on every reload.
+        data.info = lservice_info.new('replica_failover')
+    end
+    if replica.errinj.ERRINJ_REPLICA_FAILOVER_DELAY then
+        replica.errinj.ERRINJ_REPLICA_FAILOVER_DELAY = 'in'
+        repeat
+            fiber.sleep(0.001)
+        until not replica.errinj.ERRINJ_REPLICA_FAILOVER_DELAY
+    end
+    data.info:next_iter()
+    local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
+                                 consts.FAILOVER_DOWN_TIMEOUT)
+    if not replica.conn or replica.down_ts ~= nil then
+        -- Nothing to ping. Connection is either dead or missing.
+        data.info:set_activity('idling')
+        return min_timeout
+    end
+    local opts = {timeout = replica.failover_ping_timeout}
+    data.info:set_activity('pinging')
+    local net_status, _, err = replica_failover_ping(replica, opts)
+    if not net_status then
+        log.error(data.info:set_status_error(
+            'Ping error from %s: perhaps a connection is down: %s',
+            replica, err))
+        -- Connection hangs. Recreate it to be able to
+        -- fail over to a replica next by priority. The
+        -- old connection is not closed in case if it just
+        -- processes too big response at this moment. Any
+        -- way it will be eventually garbage collected
+        -- and closed.
+        replica:detach_conn()
+        replica:connect()
+    else
+        data.info:set_status_ok()
+    end
+    data.info:set_activity('idling')
+    return min_timeout
+end
+
+--------------------------------------------------------------------------------
+-- Replicaset failover
+--------------------------------------------------------------------------------
+
+--
+-- Replicaset must fall its replica connection to lower priority,
+-- if the current one is down too long.
+--
+local function replicaset_failover_need_down_priority(replicaset, curr_ts)
+    local r = replicaset.replica
+    if not r or not r.next_by_priority then
+        return false
+    end
+    -- down_ts not nil does not mean that the replica is not
+    -- connected. Probably it is connected and now fetches schema,
+    -- or does authorization. Either case, it is healthy, no need
+    -- to down the prio.
+    local is_down_ts = r.down_ts and not r:is_connected() and
+                       curr_ts - r.down_ts >= consts.FAILOVER_DOWN_TIMEOUT
+    -- If we failed several sequential requests to replica, then something
+    -- is wrong with it. Temporary lower its priority.
+    local is_sequential_fails =
+        r.net_sequential_fail >= consts.FAILOVER_DOWN_SEQUENTIAL_FAIL
+    -- If replica doesn't have proper connection with its master: connection
+    -- is dead, lag or idle time is too big - then replica has outdated data
+    -- and shouldn't be used as prioritized.
+    local is_unhealthy = r.health_status == consts.STATUS.RED
+    return is_down_ts or is_sequential_fails or is_unhealthy
+end
+
+--
+-- Once per FAILOVER_UP_TIMEOUT a replicaset must try to connect
+-- to a replica with a higher priority.
+--
+local function replicaset_failover_need_up_priority(replicaset, curr_ts)
+    local up_ts = replicaset.replica_up_ts
+    return not up_ts or curr_ts - up_ts >= consts.FAILOVER_UP_TIMEOUT
+end
+
+--
+-- Detect not optimal or disconnected replicas. For not optimal
+-- try to update them to optimal, and down priority of
+-- disconnected replicas.
+-- @retval true A replica of an replicaset has been changed.
+--
+local function replicaset_failover_step(replicaset)
+    if not replicaset.replicas or not next(replicaset.replicas) then
+        return false
+    end
+    local curr_ts = fiber_clock()
+    local old_replica = replicaset.replica
+    if replicaset_failover_need_up_priority(replicaset, curr_ts) then
+        replicaset:up_replica_priority()
+    end
+    if replicaset_failover_need_down_priority(replicaset, curr_ts) then
+        replicaset:down_replica_priority()
+    end
+    if old_replica ~= replicaset.replica then
+        log.info('New replica %s for %s', replicaset.replica, replicaset)
+        return true
+    end
+    return false
+end
+
+--
+-- Failover service step. Replica connection is the
+-- connection to the nearest available server. Replica connection
+-- is hold for each replicaset. This function periodically scans
+-- replicasets and their replica connections. And some of them
+-- appear to be disconnected or connected not to optimal replica.
+--
+-- If a connection is disconnected too long (more than
+-- FAILOVER_DOWN_TIMEOUT), this function tries to connect to the
+-- server with the lower priority. Priorities are specified in
+-- weight matrix in config.
+--
+-- If a current replica connection has no the highest priority,
+-- then this function periodically (once per FAILOVER_UP_TIMEOUT)
+-- tries to reconnect to the best replica. When the connection is
+-- established, it replaces the original replica.
+--
+local function replicaset_failover_service_step(replicaset, data)
+    if not data.info then
+        -- Service info is recreated on every reload.
+        data.info = lservice_info.new('replicaset_failover')
+        -- This flag is used to avoid logging like:
+        -- 'All is ok ... All is ok ... All is ok ...'
+        -- each min_timeout seconds.
+        data.prev_was_ok = false
+    end
+
+    local min_timeout = math.min(consts.FAILOVER_UP_TIMEOUT,
+                                 consts.FAILOVER_DOWN_TIMEOUT)
+    if replicaset.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY then
+        replicaset.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY = 'in'
+        repeat
+            fiber.sleep(0.001)
+        until not replicaset.errinj.ERRINJ_REPLICASET_FAILOVER_DELAY
+    end
+    data.info:next_iter()
+    data.info:set_activity('updating replicas')
+    local ok, replica_is_changed = pcall(replicaset_failover_step, replicaset)
+    if not ok then
+        log.error(data.info:set_status_error(
+            'Error during failovering: %s',
+            lerror.make(replica_is_changed)))
+        replica_is_changed = true
+    elseif not data.prev_was_ok then
+        log.info('All replicas are ok')
+        data.info:set_status_ok()
+    end
+    data.prev_was_ok = not replica_is_changed
+    local logf
+    if replica_is_changed then
+        logf = log.info
+    else
+        -- In any case it is necessary to periodically log
+        -- failover heartbeat.
+        logf = log.verbose
+    end
+    logf('Failovering step is finished. Schedule next after %f seconds',
+         min_timeout)
+    data.info:set_activity('idling')
+    return min_timeout
+end
+
+--------------------------------------------------------------------------------
 -- Worker
 --------------------------------------------------------------------------------
 
@@ -1676,6 +1912,8 @@ end
 -- by its name, without knowing the function name.
 --
 local worker_service_to_func = {
+    replica_failover = replica_failover_service_step,
+    replicaset_failover = replicaset_failover_service_step,
 }
 
 local function worker_add_service(worker, service_name, args)

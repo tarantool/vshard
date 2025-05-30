@@ -185,7 +185,7 @@ future = nil
 -- connection. Waiting for tarantool/tarantool#9629 to be fixed.
 conn = rs.master.conn
 while not future do fiber.sleep(0.01) future = vshard.router.callrw(31, 'echo', {t}, {is_async = true}) end
-vshard.router.static.failover_fiber:wakeup()
+failover_wakeup()
 res, err = future:wait_result(5)
 err
 #res[1]

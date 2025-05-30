@@ -53,4 +53,15 @@ function priority_order()
 	return ret
 end
 
+function failover_wakeup(router)
+    local router = router or vshard.router.internal.static_router
+    local replicasets = router.replicasets
+    for _, rs in pairs(replicasets) do
+        rs.worker:wakeup_service('replicaset_failover')
+        for _, r in pairs(rs.replicas) do
+            r.worker:wakeup_service('replica_failover')
+        end
+    end
+end
+
 require('console').listen(os.getenv('ADMIN'))

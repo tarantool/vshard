@@ -548,8 +548,11 @@ g.test_router_service_info = function(g)
     g.router:exec(function()
         ivshard.router.discovery_wakeup()
         local info = ivshard.router.info({with_services = true})
+        for _, rs in pairs(info.replicasets) do
+            ilt.assert_not_equals(rs.services, nil)
+            ilt.assert_not_equals(rs.services.failover, nil)
+        end
         ilt.assert_not_equals(info.services, nil)
-        ilt.assert_not_equals(info.services.failover, nil)
         ilt.assert_not_equals(info.services.discovery, nil)
         ilt.assert_not_equals(info.services.master_search, nil)
     end)
@@ -860,20 +863,12 @@ g.test_failover_ping_affects_priority = function()
         local rs = router.replicasets[rs_uuid]
         local opts = {timeout = iwait_timeout}
         rs:wait_connected_all(opts)
-
         t.helpers.retrying(opts, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(rs.replica.uuid, replica_uuid,
                             'Prioritized replica have not been set yet')
         end)
-
-        local errinj = ivshard.router.internal.errinj
-        errinj.ERRINJ_FAILOVER_DELAY = true
-        t.helpers.retrying(opts, function()
-            router.failover_fiber:wakeup()
-            t.assert_equals(errinj.ERRINJ_FAILOVER_DELAY, 'in',
-                'Failover have not been stopped yet')
-        end)
+        _G.failover_pause()
     end, {g.replica_1_b:replicaset_uuid(), g.replica_1_b:instance_uuid()})
 
     -- Break 'info' request on replica so that it fails with TimedOut error.
@@ -893,17 +888,18 @@ g.test_failover_ping_affects_priority = function()
         local rs = router.replicasets[rs_uuid]
 
         -- And we change the prioritized replica.
-        ivshard.router.internal.errinj.ERRINJ_FAILOVER_DELAY = false
+        _G.failover_continue()
         t.helpers.retrying({timeout = iwait_timeout}, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(rs.replica.uuid, master_uuid)
         end)
 
         -- Check, that prioritized replica is not changed, as it's still broken.
         rawset(_G, 'old_up_timeout', ivconst.FAILOVER_UP_TIMEOUT)
         ivconst.FAILOVER_UP_TIMEOUT = 0.01
-        ivtest.service_wait_for_new_ok(router.failover_service,
-            {on_yield = router.failover_fiber:wakeup()})
+        local worker = router.replicasets[rs_uuid].worker
+        local info = worker.services['replicaset_failover'].data.info
+        ivtest.service_wait_for_new_ok(info, {on_yield = _G.failover_wakeup()})
         t.assert_equals(rs.replica.uuid, master_uuid)
     end, {g.replica_1_b:replicaset_uuid(), g.replica_1_a:instance_uuid()})
 
@@ -919,7 +915,7 @@ g.test_failover_ping_affects_priority = function()
         local rs = router.replicasets[rs_uuid]
         t.assert_equals(rs.priority_list[1].uuid, replica_uuid)
         t.helpers.retrying({timeout = iwait_timeout}, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(rs.replica.uuid, replica_uuid,
                             'Prioritized replica is not up yet')
         end)
@@ -948,21 +944,15 @@ g.test_failed_calls_affect_priority = function()
         rs:wait_connected_all(opts)
 
         t.helpers.retrying(opts, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(rs.replica.uuid, replica_uuid,
                             'Prioritized replica have not been set yet')
         end)
 
-        local errinj = ivshard.router.internal.errinj
-        errinj.ERRINJ_FAILOVER_DELAY = true
-        t.helpers.retrying(opts, function()
-            router.failover_fiber:wakeup()
-            t.assert_equals(errinj.ERRINJ_FAILOVER_DELAY, 'in',
-                'Failover have not been stopped yet')
-        end)
-
+        _G.failover_pause()
         -- Discovery is disabled, as it may affect `net_sequential_fail`
         -- and leads to flakiness of the test.
+        local errinj = ivshard.router.internal.errinj
         errinj.ERRINJ_LONG_DISCOVERY = true
         t.helpers.retrying(opts, function()
             router.discovery_fiber:wakeup()
@@ -1012,9 +1002,9 @@ g.test_failed_calls_affect_priority = function()
     -- Enable failover, which changes priority of the replica.
     g.router:exec(function(rs_uuid, master_uuid)
         local router = ivshard.router.internal.static_router
-        ivshard.router.internal.errinj.ERRINJ_FAILOVER_DELAY = false
+        _G.failover_continue()
         t.helpers.retrying({timeout = iwait_timeout}, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(router.replicasets[rs_uuid].replica.uuid,
                             master_uuid, 'Master is not prioritized yet')
         end)
@@ -1034,7 +1024,7 @@ g.test_failed_calls_affect_priority = function()
         local rs = router.replicasets[rs_uuid]
         t.assert_equals(rs.priority_list[1].uuid, replica_uuid)
         t.helpers.retrying({timeout = iwait_timeout}, function()
-            router.failover_fiber:wakeup()
+            _G.failover_wakeup()
             t.assert_equals(rs.replica.uuid, replica_uuid,
                             'Prioritized replica is not up yet')
         end)

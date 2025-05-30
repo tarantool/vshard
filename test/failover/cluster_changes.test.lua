@@ -34,7 +34,6 @@ vshard.router.info().alerts
 
 reverse_weights()
 vshard.router.cfg(cfg)
-vshard.router.info()
 wait_state('All replicas are ok')
 vshard.router.info()
 
@@ -91,7 +90,6 @@ vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 test_run:switch('router_1')
 add_some_replicas()
 vshard.router.cfg(cfg)
-#vshard.router.info().alerts > 1
 wait_state('All replicas are ok')
 vshard.router.info()
 
