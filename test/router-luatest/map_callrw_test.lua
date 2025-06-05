@@ -243,9 +243,17 @@ g.test_map_part_double_ref = function(cg)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()
     end, {bid1, cg.rs1_uuid})
-    cg.router:exec(function()
+    cg.router:exec(function(bid, uuid)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false
-    end)
+        -- Restore correct cache.
+        ivshard.router._bucket_reset(bid)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.router.discovery_wakeup()
+            local rs, err = ivshard.router.route(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert_equals(rs.uuid, uuid)
+        end)
+    end, {bid1, cg.rs1_uuid})
 end
 
 g.test_map_part_ref_timeout = function(cg)
@@ -258,14 +266,17 @@ g.test_map_part_ref_timeout = function(cg)
     local bid4 = bids[2]
 
     -- First, disable discovery on the router to disable route cache update.
-    cg.router:exec(function(bids)
+    cg.router:exec(function(bucket_ids)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true
         -- Make sure the location of the bucket is known.
-        for _, bid in pairs(bids) do
-            local _, err = ivshard.router.route(bid)
-            ilt.assert_equals(err, nil)
+        for uuid, bids in pairs(bucket_ids) do
+            for _, bid in ipairs(bids) do
+                local rs, err = ivshard.router.route(bid)
+                ilt.assert_equals(err, nil)
+                ilt.assert_equals(rs.uuid, uuid)
+            end
         end
-    end, {{bid1, bid2, bid3, bid4}})
+    end, {{[cg.rs1_uuid] = {bid1, bid2}, [cg.rs2_uuid] = {bid3, bid4}}})
 
     -- Count the map calls. The loss of ref must be detected before the
     -- map-stage.
@@ -337,7 +348,12 @@ g.test_map_part_ref_timeout = function(cg)
 
     -- Make sure there are no references left.
     _, err = vtest.cluster_exec_each(cg, function()
-        ilt.assert_equals(require('vshard.storage.ref').count, 0)
+        -- Do not use iwait_timeout, since this is the timeout for ref life and
+        -- we want to be sure, that map_callrw deletes the ref on error
+        -- and it's not deleted by timeout.
+        ilt.helpers.retrying({timeout = iwait_timeout / 2}, function()
+            ilt.assert_equals(require('vshard.storage.ref').count, 0)
+        end)
     end)
     t.assert_equals(err, nil)
 
@@ -355,9 +371,17 @@ g.test_map_part_ref_timeout = function(cg)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()
     end, {bid2, cg.rs1_uuid})
-    cg.router:exec(function()
+    cg.router:exec(function(bid, uuid)
         ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false
-    end)
+        -- Restore correct cache.
+        ivshard.router._bucket_reset(bid)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.router.discovery_wakeup()
+            local rs, err = ivshard.router.route(bid)
+            ilt.assert_equals(err, nil)
+            ilt.assert_equals(rs.uuid, uuid)
+        end)
+    end, {bid2, cg.rs1_uuid})
 end
 
 g.test_map_part_map = function(cg)
@@ -524,4 +548,80 @@ g.test_map_all_callrw_raw = function(cg)
         _G.do_map = _G.old_do_map
         _G.old_do_map = nil
     end)
+end
+
+local function test_map_callrw_split_args_template(cg, do_map, args, buckets)
+    local _, err = vtest.cluster_exec_each_master(cg, do_map)
+    t.assert_equals(err, nil)
+
+    local res = router_do_map(cg.router, args, {
+        timeout = vtest.wait_timeout,
+        bucket_ids = buckets,
+    })
+    t.assert_equals(res.err, nil)
+    t.assert_equals(res.val, {})
+    t.assert_equals(res.err_uuid, nil)
+
+    _, err = vtest.cluster_exec_each_master(cg, function()
+        _G.do_map = _G.old_do_map
+        _G.old_do_map = nil
+    end)
+    t.assert_equals(err, nil)
+end
+
+g.test_map_callrw_split_args_table = function(cg)
+    local data = {'some data'}
+    local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(cg.replica_2_a)
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(arg1, arg2, data)
+            t.assert_equals(arg1, 'arg1')
+            t.assert_equals(arg2, 'arg2')
+            local bid = _G.get_first_bucket()
+            t.assert_equals(data, {
+                [bid] = {'some data'}
+            })
+        end
+    end, {'arg1', 'arg2'}, {
+        [bid1] = data,
+        [bid2] = data,
+    })
+end
+
+g.test_map_callrw_split_args_plain = function(cg)
+    local data = 'some data'
+    local bid1 = vtest.storage_first_bucket(cg.replica_1_a)
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(arg1, data)
+            t.assert_equals(arg1, 'arg1')
+            local bid = _G.get_first_bucket()
+            t.assert_equals(data, {
+                [bid] = 'some data'
+            })
+        end
+    end, {'arg1'}, {
+        [bid1] = data,
+    })
+end
+
+g.test_map_callrw_split_args_nil = function(cg)
+    local data = 'some data'
+    local bid1, bid2 = unpack(vtest.storage_get_n_buckets(cg.replica_1_a, 2))
+    local bid3, bid4 = unpack(vtest.storage_get_n_buckets(cg.replica_2_a, 2))
+    local bid5, bid6 = unpack(vtest.storage_get_n_buckets(cg.replica_3_a, 2))
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(data)
+            local bid1, bid2 = unpack(_G.get_n_buckets(2))
+            t.assert_equals(data, {
+                [bid1] = 'some data',
+                [bid2] = 'some data'
+            })
+        end
+    end, nil, {
+        [bid1] = data, [bid2] = data, [bid3] = data,
+        [bid4] = data, [bid5] = data, [bid6] = data,
+    })
 end

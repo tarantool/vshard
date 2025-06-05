@@ -271,3 +271,31 @@ test_group.test_replicaset_uuid = function(g)
         ilt.assert_equals(ivutil.replicaset_uuid(), t[2])
     end)
 end
+
+test_group.test_table_is_numeric = function()
+    local table_is_numeric = vutil.table_is_numeric
+
+    -- Table doesn't consist of numeric values.
+    t.assert_not(table_is_numeric('a'))
+    t.assert_not(table_is_numeric({}))
+    t.assert_not(table_is_numeric({'a'}))
+    t.assert_not(table_is_numeric({[1] = {}}))
+
+    -- Table consists of numeric values.
+    t.assert(table_is_numeric({1, 2}))
+    t.assert(table_is_numeric({['a'] = 1}))
+    t.assert(table_is_numeric({[1] = 5}))
+
+    -- The function should not be used for mixed tables.
+    t.assert(table_is_numeric({1, 'a'}))
+    t.assert_not(table_is_numeric({'a', 1}))
+end
+
+test_group.test_table_keys = function()
+    local table_keys = vutil.table_keys
+    t.assert_equals(table_keys('a'), nil)
+    t.assert_equals(table_keys({}), {})
+    t.assert_equals(table_keys({'a', 'b'}), {1, 2})
+    t.assert_equals(table_keys({['a'] = 1, ['b'] = 2}), {'a', 'b'})
+    t.assert_equals(table_keys({[1] = 'a', [3] = 'b'}), {3, 1})
+end

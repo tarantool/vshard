@@ -839,10 +839,13 @@ local function router_ref_storage_all(router, timeout)
                             router.total_bucket_count - bucket_count)
         goto fail
     end
-    do return timeout, nil, nil, rid, futures, replicasets end
+    do return timeout, nil, nil, rid, replicasets end
 
     ::fail::
-    return nil, err, err_id, rid, futures
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, err, err_id, rid, replicasets
 end
 
 --
@@ -949,30 +952,44 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
             timeout = deadline - fiber_clock()
         end
     end
-    do return timeout, nil, nil, rid, futures, replicasets_to_map end
+    do return timeout, nil, nil, rid, replicasets_to_map end
 
     ::fail::
-    return nil, err, err_id, rid, futures
+    for _, f in pairs(futures) do
+        f:discard()
+    end
+    return nil, err, err_id, rid, replicasets_to_map
 end
 
 --
 -- Perform map-reduce stages on the given set of replicasets. The map expects a
 -- valid ref ID which must be done beforehand.
 --
-local function replicasets_map_reduce(replicasets, rid, func, args, opts)
+local function replicasets_map_reduce(replicasets, rid, func, args,
+                                      grouped_args, opts)
     assert(opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local do_return_raw = opts.return_raw
     local deadline = fiber_clock() + timeout
     local opts_map = {is_async = true, return_raw = do_return_raw}
+    -- Workaround for box.NULL in `args`.
+    args = args == nil and {} or args
     local futures = {}
     local map = {}
     --
     -- Map stage: send.
     --
-    args = {'storage_map', rid, func, args}
-    for _, rs in pairs(replicasets) do
-        local res, err = rs:callrw('vshard.storage._call', args, opts_map)
+    local func_args = {'storage_map', rid, func, args}
+    for id, rs in pairs(replicasets) do
+        if grouped_args ~= nil then
+            -- It's cheaper to push and then pop, rather then deepcopy
+            -- arguments table for every call.
+            table.insert(args, grouped_args[id])
+        end
+        local res, err = rs:callrw('vshard.storage._call', func_args, opts_map)
+        if grouped_args ~= nil then
+            table.remove(args)
+        end
         if res == nil then
             return nil, err, rs.id
         end
@@ -1028,20 +1045,43 @@ end
 -- map-reduce breaks in the middle. Makes sense to let the refs go to unblock
 -- the rebalancer.
 --
-local function replicasets_map_cancel_refs(replicasets, futures, rid)
+local function replicasets_map_cancel_refs(replicasets, rid)
     local opts_async = {is_async = true}
-    for id, f in pairs(futures) do
-        f:discard()
+    for _, rs in pairs(replicasets) do
         -- Best effort to remove the created refs before exiting. Can help if
         -- the timeout was big and the error happened early.
-        f = replicasets[id]:callrw('vshard.storage._call',
-                                     {'storage_unref', rid}, opts_async)
+        local f = rs:callrw('vshard.storage._call',
+                            {'storage_unref', rid}, opts_async)
         if f ~= nil then
             -- Don't care waiting for a result - no time for this. But it won't
             -- affect the request sending if the connection is still alive.
             f:discard()
         end
     end
+end
+
+--
+-- Build table of form {<rs_id> = {<bid> = {<arguments}} from map_callrw's
+-- split arguments `bucket_ids` option.
+--
+local function router_group_map_callrw_args(router, bucket_ids, bucket_args)
+    if util.table_is_numeric(bucket_args) then
+        return nil
+    end
+
+    local grouped_args = {}
+    -- No need to worry about timeout here, since all buckets have already been
+    -- resolved during ref stage and now the table is built only from the cache.
+    local grouped_bids = buckets_group(router, bucket_ids, 0)
+    assert(grouped_bids ~= nil)
+    for id, bids in pairs(grouped_bids) do
+        local rs_args = grouped_args[id] or {}
+        for _, bid in ipairs(bids) do
+            rs_args[bid] = bucket_args[bid]
+        end
+        grouped_args[id] = rs_args
+    end
+    return grouped_args
 end
 
 --
@@ -1096,32 +1136,37 @@ end
 --     found even though all replicasets were scanned.
 --
 local function router_map_callrw(router, func, args, opts)
-    local replicasets_to_map, err, err_id, map, futures, rid
-    local timeout, do_return_raw, bucket_ids
+    local replicasets_to_map, err, err_id, map, rid
+    local timeout, do_return_raw, bucket_ids, plain_bucket_ids, grouped_args
     if opts then
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
         do_return_raw = opts.return_raw
         bucket_ids = opts.bucket_ids
+        plain_bucket_ids = util.table_is_numeric(bucket_ids) and bucket_ids or
+            util.table_keys(bucket_ids)
     else
         timeout = consts.CALL_TIMEOUT_MIN
     end
-    if bucket_ids then
-        timeout, err, err_id, rid, futures, replicasets_to_map =
-            router_ref_storage_by_buckets(router, bucket_ids, timeout)
+    if plain_bucket_ids then
+        timeout, err, err_id, rid, replicasets_to_map =
+            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout)
+        -- Grouped arguments are only possible with partial Map-Reduce.
+        grouped_args =
+            router_group_map_callrw_args(router, plain_bucket_ids, bucket_ids)
     else
-        timeout, err, err_id, rid, futures, replicasets_to_map =
+        timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_all(router, timeout)
     end
     if timeout then
         map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
-            args, {
+            args, grouped_args, {
                 timeout = timeout, return_raw = do_return_raw
             })
         if map then
             return map
         end
     end
-    replicasets_map_cancel_refs(router.replicasets, futures, rid)
+    replicasets_map_cancel_refs(replicasets_to_map, rid)
     err = lerror.make(err)
     return nil, err, err_id
 end
