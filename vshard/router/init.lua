@@ -24,6 +24,7 @@ local lreplicaset = require('vshard.replicaset')
 local lservice_info = require('vshard.service_info')
 local util = require('vshard.util')
 local seq_serializer = { __serialize = 'seq' }
+local map_serializer = { __serialize = 'map' }
 local future_wait = util.future_wait
 
 local msgpack_is_object = lmsgpack.is_object
@@ -1075,7 +1076,8 @@ local function router_group_map_callrw_args(router, bucket_ids, bucket_args)
     local grouped_bids = buckets_group(router, bucket_ids, 0)
     assert(grouped_bids ~= nil)
     for id, bids in pairs(grouped_bids) do
-        local rs_args = grouped_args[id] or {}
+        -- The arguments should be encoded as map in msgpack, not array.
+        local rs_args = grouped_args[id] or setmetatable({}, map_serializer)
         for _, bid in ipairs(bids) do
             rs_args[bid] = bucket_args[bid]
         end

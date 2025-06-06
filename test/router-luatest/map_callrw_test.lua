@@ -625,3 +625,25 @@ g.test_map_callrw_split_args_nil = function(cg)
         [bid4] = data, [bid5] = data, [bid6] = data,
     })
 end
+
+--
+-- gh-ee-42: split args are not encoded correctly, when array of buckets
+-- is dense.
+--
+g.test_map_callrw_array_encoded_as_map = function(cg)
+    -- Note, that since the table will be passed through one more msgpack
+    -- encoding/decoding (router:exec) it must be serialized as map here too.
+    -- Otherwise, the router will already get broken map.
+    local bids = setmetatable({
+        [2] = 'some data',
+        [3] = 'some data',
+    }, {__serialize = 'map'})
+    test_map_callrw_split_args_template(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        _G.do_map = function(data)
+            for _, v in pairs(data) do
+                t.assert_equals(v, 'some data')
+            end
+        end
+    end, nil, bids)
+end
