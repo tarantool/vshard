@@ -1191,6 +1191,7 @@ local function replicaset_locate_master(replicaset)
     local const_timeout = consts.MASTER_SEARCH_TIMEOUT
     local ok, res, err
     local master = replicaset.master
+    local old_master_id = master and master.id
     -- Only be optimistic about visiting just the current master when it is
     -- actually alive. Otherwise when it is not connected due to a real failure,
     -- the request would simply hang for a bit and fail. Try to find a new
@@ -1231,7 +1232,6 @@ local function replicaset_locate_master(replicaset)
     local deadline = fiber_clock() + timeout
     local async_opts = {is_async = true, timeout = timeout}
     local replicaset_id = replicaset.id
-    local old_master_id = replicaset.master and replicaset.master.id
     for replica_id, replica in pairs(replicaset.replicas) do
         if replica_id == old_master_id then
             -- No need to wait for master one more time, we have just tried to
