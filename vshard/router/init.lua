@@ -1284,6 +1284,10 @@ local function failover_ping(replica, opts)
     if not info then
         replica:update_health_status(consts.STATUS.YELLOW, err)
         return net_status, info, err
+    elseif not info.health then
+        local msg = 'Health state in ping is missing - please upgrade storage'
+        replica:update_health_status(consts.STATUS.YELLOW, msg)
+        return net_status, info, msg
     end
 
     assert(type(info.health) == 'table')

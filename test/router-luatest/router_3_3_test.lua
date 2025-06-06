@@ -306,6 +306,34 @@ local function failover_health_check_master_switch(g)
 end
 
 --
+-- gh-556: assertion in failover service is raised, if router is upgraded
+-- earlier than storages.
+--
+local function failover_health_check_missing_health(g)
+    router_wait_prioritized(g, g.replica_1_c)
+    g.replica_1_c:exec(function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(...)
+            local info = _G.old_call(...)
+            info.health = nil
+            return info
+        end
+    end)
+
+    router_assert_prioritized(g, g.replica_1_c)
+    local msg = 'The healthiness of the replica %s is unknown: ' ..
+                'Health state in ping is missing'
+    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    t.helpers.retrying({timeout = wait_timeout}, function()
+        t.assert(g.router:grep_log(msg))
+    end)
+
+    g.replica_1_c:exec(function()
+        ivshard.storage._call = _G.old_call
+    end)
+end
+
+--
 -- gh-453: router should not route requests to replicas, which
 -- are not up to date. This requires properly working connection
 -- with the master.
@@ -338,6 +366,7 @@ local function failover_health_check(g, auto_master)
     failover_health_check_broken_upstream(g)
     failover_health_check_big_lag(g)
     failover_health_check_small_failover_timeout(g)
+    failover_health_check_missing_health(g)
     if not auto_master then
         failover_health_check_missing_master(g)
     else
