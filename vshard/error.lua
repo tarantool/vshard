@@ -154,11 +154,6 @@ local error_message_template = {
         msg = 'Can not receive the bucket %s data in space "%s" at tuple %s: %s',
         args = {'bucket_id', 'space', 'tuple', 'reason'},
     },
-    [31] = {
-        name = 'MULTIPLE_MASTERS_FOUND',
-        msg = 'Found more than one master in replicaset %s on nodes %s and %s',
-        args = {'replicaset', 'master1', 'master2'},
-    },
     [32] = {
         name = 'REPLICASET_IN_BACKOFF',
         msg = 'Replicaset %s is in backoff, can\'t take requests right now. '..

@@ -1253,35 +1253,34 @@ local function replicaset_locate_master(replicaset)
         ::next_replica::
     end
     local master_id
-    for replica_id, f in pairs(futures) do
-        if timeout < 0 then
-            -- Netbox uses cond var inside, whose wait throws an error when gets
-            -- a negative timeout. Avoid that.
-            -- Even if the timeout has expired, still walk though the futures
-            -- hoping for a chance that some of them managed to finish and bring
-            -- a sign of a master.
-            timeout = 0
-        end
-        res, err = future_wait(f, timeout)
-        timeout = deadline - fiber_clock()
-        if not res then
-            f:discard()
-            last_err = err
-            goto next_wait
-        end
-        res = res[1]
-        if not res.is_master then
-            goto next_wait
-        end
-        if not master_id then
+    while timeout >= 0 and next(futures) and master_id == nil do
+        local ready_futures = {}
+        for replica_id, f in pairs(futures) do
+            if not f:is_ready() then
+                goto next_future
+            end
+            table.insert(ready_futures, replica_id)
+            res, err = f:result()
+            if not res then
+                last_err = err
+                goto next_future
+            end
+            res = res[1]
+            if not res.is_master then
+                goto next_future
+            end
             master_id = replica_id
-            goto next_wait
+            do break end
+            ::next_future::
         end
-        is_done = false
-        last_err = lerror.vshard(lerror.code.MULTIPLE_MASTERS_FOUND,
-                                 replicaset_id, master_id, replica_id)
-        do return is_done, is_nop, last_err end
-        ::next_wait::
+        for _, replica_id in ipairs(ready_futures) do
+            futures[replica_id] = nil
+        end
+        timeout = deadline - fiber_clock()
+        fiber.sleep(0.001)
+    end
+    for _, f in pairs(futures) do
+        f:discard()
     end
     master = replicaset.replicas[master_id]
     if master then

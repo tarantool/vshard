@@ -888,3 +888,37 @@ test_group.test_failover_interval = function(g)
                         vconst.STATUS.GREEN)
     end)
 end
+
+test_group.test_locate_master_not_hangs_on_futures = function(g)
+    -- freeze() and thaw() are available only since Tarantool 2.4.1.
+    t.run_only_if(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+
+    local new_global_cfg = get_auto_master_global_cfg()
+    local _, rs = next(vreplicaset.buildall(new_global_cfg))
+    rs:wait_connected_all(timeout_opts)
+
+    -- Find the master.
+    t.assert(rs:locate_master())
+    t.assert_equals(rs.master.uuid, g.replica_1_a:instance_uuid())
+
+    -- Change the master to replica_1_c.
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs_cfg = new_cfg_template.sharding[1]
+    rs_cfg.replicas.replica_1_a.master = nil
+    rs_cfg.replicas.replica_1_c.master = true
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    -- Freeze the node, so that one of the futures hangs.
+    g.replica_1_b:freeze()
+
+    local start_time = fiber.clock()
+    local is_done, is_nop = rs:locate_master()
+    t.assert_lt(fiber.clock() - start_time, vconst.MASTER_SEARCH_TIMEOUT)
+    t.assert(is_done)
+    t.assert_not(is_nop)
+    t.assert_equals(rs.master.uuid, g.replica_1_c:instance_uuid())
+
+    g.replica_1_b:thaw()
+    vtest.cluster_cfg(g, global_cfg)
+end
