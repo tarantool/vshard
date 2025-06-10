@@ -1043,6 +1043,7 @@ test_group.test_unit_bucket_test_gc = function(g)
 end
 
 test_group.test_route_map_is_cleared = function(g)
+    g.replica_1_b:exec(bucket_set_protection, {false})
     g.replica_1_a:exec(function()
         local destination = 'some destination'
         local bid = _G.get_first_bucket()
@@ -1070,4 +1071,6 @@ test_group.test_route_map_is_cleared = function(g)
         ivshard.storage.internal.is_bucket_protected = true
         ivconst.BUCKET_SENT_GARBAGE_DELAY = old_timeout
     end)
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
 end
