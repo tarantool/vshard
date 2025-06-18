@@ -1769,6 +1769,7 @@ local function replica_failover_service_step(replica, data)
     if not replica.conn or replica.down_ts ~= nil then
         -- Nothing to ping. Connection is either dead or missing.
         data.info:set_activity('idling')
+        data.info:set_status_error('Connection is down or missing')
         return replica.failover_interval
     end
     local opts = {timeout = replica.failover_ping_timeout}
@@ -1884,9 +1885,11 @@ local function replicaset_failover_service_step(replicaset, data)
             'Error during failovering: %s',
             lerror.make(replica_is_changed)))
         replica_is_changed = true
-    elseif not data.prev_was_ok then
-        log.info('All replicas are ok')
+    else
         data.info:set_status_ok()
+        if not data.prev_was_ok then
+            log.info('All replicas are ok')
+        end
     end
     data.prev_was_ok = not replica_is_changed
     local logf

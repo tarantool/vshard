@@ -112,6 +112,32 @@ local function router_wait_prioritized(g, replica)
     end)
 end
 
+local function router_wait_failover_new_ok(g, rs_uuid)
+    g.router:exec(function(rs_uuid)
+        local router = ivshard.router.internal.static_router
+        local rs = router.replicasets[rs_uuid]
+
+        -- Wait for successful pings. No need to wait for new ones,
+        -- any good ping is enough.
+        for _, r in pairs(rs.replicas) do
+            local s = r.worker.services['replica_failover']
+            local opts = {on_yield = function()
+                r.worker:wakeup_service('replica_failover')
+            end}
+            ivtest.wait_for_not_nil(s.data, 'info', opts)
+            ivtest.service_wait_for_new_ok(s.data.info, opts)
+        end
+
+        -- Wait for prioritized replica change if needed.
+        local s = rs.worker.services['replicaset_failover']
+        local opts = {on_yield = function()
+            rs.worker:wakeup_service('replicaset_failover')
+        end}
+        ivtest.wait_for_not_nil(s.data, 'info', opts)
+        ivtest.service_wait_for_new_ok(s.data.info, opts)
+    end, {rs_uuid})
+end
+
 local function router_test_callbro(g, bid, skip_uuids)
     g.router:exec(function(bid, skip)
         local uuid = ivshard.router.callbro(bid, 'get_uuid')
@@ -214,6 +240,7 @@ local function failover_health_check_broken_upstream(g)
     g.replica_1_a:exec(function()
         box.space.test:truncate()
     end)
+    router_wait_failover_new_ok(g, g.replica_1_c:replicaset_uuid())
 end
 
 local function failover_health_check_broken_upstream_not_switch(g)
@@ -264,6 +291,7 @@ local function failover_health_check_broken_upstream_not_switch(g)
     g.replica_1_a:exec(function()
         box.space.test:truncate()
     end)
+    router_wait_failover_new_ok(g, g.replica_1_c:replicaset_uuid())
 end
 
 local function failover_health_check_big_lag(g)
@@ -325,6 +353,7 @@ local function failover_health_check_small_failover_timeout(g)
     -- Since all nodes are broken, prioritized replica is not changed.
     router_assert_prioritized(g, g.replica_1_c)
     vtest.router_cfg(g.router, old_cfg)
+    router_wait_failover_new_ok(g, g.replica_1_c:replicaset_uuid())
 end
 
 local function failover_health_check_master_down(g)
@@ -335,21 +364,6 @@ local function failover_health_check_master_down(g)
     g.replica_1_a:stop()
 
     local rs_uuid = g.replica_1_c:replicaset_uuid()
-    local instance_uuid = g.replica_1_c:instance_uuid()
-    g.router:exec(function(rs_uuid, uuid)
-        rawset(_G, 'wait_for_failover', function(rs_uuid, uuid)
-            local router = ivshard.router.internal.static_router
-            local rs = router.replicasets[rs_uuid]
-            local r = rs.replicas[uuid]
-            local s = r.worker.services['replica_failover']
-            local opts = {on_yield = function()
-                r.worker:wakeup_service('replica_failover')
-            end}
-            ivtest.wait_for_not_nil(s.data, 'info', opts)
-            ivtest.service_wait_for_new_ok(s.data.info, opts)
-        end)
-        _G.wait_for_failover(rs_uuid, uuid)
-    end, {rs_uuid, instance_uuid})
     -- Since all nodes are broken, prioritized replica is not changed.
     router_assert_prioritized(g, g.replica_1_c)
     g.replica_1_a:start()
@@ -358,10 +372,7 @@ local function failover_health_check_master_down(g)
     end, {old_cfg})
     router_wait_prioritized(g, g.replica_1_c)
     -- Restore connection
-    g.router:exec(function(rs_uuid, uuid)
-        _G.wait_for_failover(rs_uuid, uuid)
-        _G.wait_for_failover = nil
-    end, {rs_uuid, g.replica_1_a:instance_uuid()})
+    router_wait_failover_new_ok(g, rs_uuid)
 end
 
 local function failover_health_check_missing_master(g)
@@ -386,6 +397,7 @@ local function failover_health_check_missing_master(g)
     end)
 
     -- Not changed. Not enough info.
+    router_wait_failover_new_ok(g, g.replica_1_c:replicaset_uuid())
     router_assert_prioritized(g, g.replica_1_c)
     router_test_callbro(g, vtest.storage_first_bucket(g.replica_1_b), {})
     g.replica_1_c:exec(function(cfg)
@@ -441,7 +453,7 @@ end
 -- earlier than storages.
 --
 local function failover_health_check_missing_health(g)
-    router_wait_prioritized(g, g.replica_1_c)
+    router_assert_prioritized(g, g.replica_1_c)
     g.replica_1_c:exec(function()
         rawset(_G, 'old_call', ivshard.storage._call)
         ivshard.storage._call = function(...)
