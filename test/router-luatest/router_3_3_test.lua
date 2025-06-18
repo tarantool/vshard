@@ -1,5 +1,6 @@
 local t = require('luatest')
 local vtest = require('test.luatest_helpers.vtest')
+local vutil = require('vshard.util')
 local wait_timeout = vtest.wait_timeout
 
 local g = t.group()
@@ -59,6 +60,14 @@ g.before_all(function(g)
         })
     end)
     vtest.cluster_wait_fullsync(g)
+    g.router:exec(function()
+        -- Wait for buckets to be resolved and for a rs.replica to be assigned.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.router.discovery_wakeup()
+            _G.failover_wakeup()
+            ilt.assert_equals(#ivshard.router.info().alerts, 0)
+        end)
+    end)
 end)
 
 g.after_all(function(g)
@@ -531,4 +540,107 @@ end
 
 g.test_failover_health_check_auto_master = function(g)
     failover_health_check(g, true)
+end
+
+--
+-- gh-505: test, that freezed replica is skipped automatically, if
+-- ping managed to fail before user request.
+--
+local function test_callbro_with_freezed_replica_after_ping(g, replica)
+    -- freeze() and thaw() are available only since Tarantool 2.4.1.
+    t.run_only_if(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+
+    -- Freeze the replica.
+    local uuid = replica:instance_uuid()
+    local rs_uuid = replica:replicaset_uuid()
+    local bid = vtest.storage_first_bucket(replica)
+    replica:freeze()
+
+    -- Wait for failed ping request. It will recreate the connection, which
+    -- won't be shown as `connected` and replica will be skipped even without
+    -- going into `replicaset_check_replica_health()`.
+    g.router:exec(function(uuid, rs_uuid)
+        local rs = ivshard.router.internal.static_router.replicasets[rs_uuid]
+        local r = rs.replicas[uuid]
+        local s = r.worker.services['replica_failover']
+        local opts = {on_yield = function()
+            r.worker:wakeup_service('replica_failover')
+        end}
+        ivtest.wait_for_not_nil(s.data, 'info', opts)
+        ivtest.service_wait_for_error(s.data.info, 'Ping error', opts)
+        ilt.assert_not(r:is_connected())
+    end, {uuid, rs_uuid})
+
+    -- Replica is skipped during request.
+    router_test_callbro(g, bid, {uuid})
+
+    -- Restore.
+    replica:thaw()
+    -- Wait for fullsync is needed, because replica may have too big lag,
+    -- it may be master, which was dead for some time. Failover just checks,
+    -- that replica can be pinged.
+    vtest.cluster_wait_fullsync(g)
+    router_wait_failover_new_ok(g, rs_uuid)
+    router_test_callbro(g, bid, {})
+end
+
+g.test_callbro_with_freezed_replica_after_ping = function(g)
+    test_callbro_with_freezed_replica_after_ping(g, g.replica_1_b)
+end
+
+g.test_callbro_with_freezed_master_after_ping = function(g)
+    test_callbro_with_freezed_replica_after_ping(g, g.replica_1_a)
+end
+
+--
+-- gh-505: test, that freezed replica is skipped after
+-- failover_sequential_fail_count failed requests.
+--
+local function test_callbro_with_freezed_replica_without_ping(g, replica)
+    -- freeze() and thaw() are available only since Tarantool 2.4.1.
+    t.run_only_if(vutil.version_is_at_least(2, 4, 1, nil, 0, 0))
+
+    -- Block failover, so that pings are not sent at all.
+    g.router:eval('_G.failover_pause()')
+    -- Set the maximum number of failed request to 1.
+    local new_global_cfg = table.deepcopy(global_cfg)
+    new_global_cfg.failover_sequential_fail_count = 1
+    vtest.router_cfg(g.router, new_global_cfg)
+
+    -- Freeze the replica.
+    local uuid = replica:instance_uuid()
+    local rs_uuid = replica:replicaset_uuid()
+    local bid = vtest.storage_first_bucket(replica)
+    replica:freeze()
+
+    -- Make one failed request.
+    g.router:exec(function(bid)
+        local errors = 0
+        for _ = 1, 3 do
+            local res = ivshard.router.callbro(bid, 'get_uuid', {timeout = 0.5})
+            if not res then
+                errors = errors + 1
+            end
+        end
+        ilt.assert_equals(errors, 1)
+    end, {bid})
+
+    -- From now on requests don't fail.
+    router_test_callbro(g, bid, {uuid})
+
+    -- Restore.
+    replica:thaw()
+    vtest.cluster_wait_fullsync(g)
+    router_wait_failover_new_ok(g, rs_uuid)
+    router_test_callbro(g, bid, {})
+    g.router:eval('_G.failover_continue()')
+    vtest.router_cfg(g.router, global_cfg)
+end
+
+g.test_callbro_with_freezed_replica_without_ping = function(g)
+    test_callbro_with_freezed_replica_without_ping(g, g.replica_1_c)
+end
+
+g.test_callbro_with_freezed_master_without_ping = function(g)
+    test_callbro_with_freezed_replica_without_ping(g, g.replica_1_a)
 end
