@@ -27,13 +27,6 @@ cfg.zone = zone
 
 box.cfg{}
 
-function wait_state(state)
-	log.info(string.rep('a', 1000))
-	while test_run:grep_log(name, state, 1000) == nil do
-		fiber.sleep(0.1)
-	end
-end
-
 function priority_order()
 	local ret = {}
 	for _, uuid in pairs(rs_uuid) do

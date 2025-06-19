@@ -57,10 +57,13 @@ test_run:switch('router_1')
 vshard.router.cfg(cfg)
 ---
 ...
-wait_state('All replicas are ok')
+info = vshard.router.info()
 ---
 ...
-vshard.router.info().alerts
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+---
+...
+info.alerts
 ---
 - - ['UNKNOWN_BUCKETS', '3000 buckets are not discovered']
 ...
@@ -70,10 +73,13 @@ reverse_weights()
 vshard.router.cfg(cfg)
 ---
 ...
-wait_state('All replicas are ok')
+info = vshard.router.info()
 ---
 ...
-vshard.router.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+---
+...
+info
 ---
 - replicasets:
     971279ef-5c38-4d14-86ee-0e4a56567955:
@@ -324,10 +330,13 @@ add_some_replicas()
 vshard.router.cfg(cfg)
 ---
 ...
-wait_state('All replicas are ok')
+info = vshard.router.info()
 ---
 ...
-vshard.router.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+---
+...
+info
 ---
 - replicasets:
     971279ef-5c38-4d14-86ee-0e4a56567955:
