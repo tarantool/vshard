@@ -29,13 +29,15 @@ test_run:switch('router_1')
 -- and no replica candidate.
 --
 vshard.router.cfg(cfg)
-wait_state('All replicas are ok')
-vshard.router.info().alerts
+info = vshard.router.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+info.alerts
 
 reverse_weights()
 vshard.router.cfg(cfg)
-wait_state('All replicas are ok')
-vshard.router.info()
+info = vshard.router.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+info
 
 test_run:switch('box_1_a')
 reverse_weights()
@@ -90,8 +92,9 @@ vshard.storage.cfg(cfg, names.replica_uuid[NAME])
 test_run:switch('router_1')
 add_some_replicas()
 vshard.router.cfg(cfg)
-wait_state('All replicas are ok')
-vshard.router.info()
+info = vshard.router.info()
+while #info.alerts ~= 1 do fiber.sleep(0.1) info = vshard.router.info() end
+info
 
 test_run:switch('default')
 test_run:cmd('stop server router_1')
