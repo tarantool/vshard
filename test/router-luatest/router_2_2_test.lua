@@ -1140,3 +1140,28 @@ g.test_retryable_transfer_in_progress = function(g)
         _G.bucket_gc_wait()
     end, {bid, g.replica_2_a:replicaset_uuid()})
 end
+
+--
+-- gh-ee-9: service objects are nullified too late.
+--
+g.test_discovery_can_be_restarted_fast = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.discovery_mode = 'once'
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.clear_test_cfg_options(new_global_cfg)
+
+    g.router:exec(function(cfg)
+        local internal = ivshard.router.internal
+        internal.errinj.ERRINJ_LONG_DISCOVERY = true
+        ilt.helpers.retrying({timeout = 20}, function()
+            ivshard.router.discovery_wakeup()
+            ilt.assert_equals(internal.errinj.ERRINJ_LONG_DISCOVERY, 'waiting')
+        end)
+        ivshard.router._bucket_reset(1)
+        ivshard.router.cfg(cfg)
+        internal.errinj.ERRINJ_LONG_DISCOVERY = false
+    end, {new_global_cfg})
+
+    t.assert_not(g.router:grep_log('assertion failed'))
+    vtest.router_cfg(g.router, global_cfg)
+end

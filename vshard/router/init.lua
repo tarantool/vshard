@@ -403,19 +403,20 @@ local function discovery_service_f(router, service)
             end
             while M.errinj.ERRINJ_LONG_DISCOVERY do
                 M.errinj.ERRINJ_LONG_DISCOVERY = 'waiting'
-                lfiber.sleep(0.01)
+                -- Note, that the errinj won't throw FiberIsCancelled error.
+                pcall(lfiber.sleep, 0.01)
             end
         until next(router.replicasets)
     end
 end
 
 local function discovery_f(router)
-    assert(not router.discovery_service)
     local service = lservice_info.new('discovery')
     router.discovery_service = service
     local ok, err = pcall(discovery_service_f, router, service)
-    assert(router.discovery_service == service)
-    router.discovery_service = nil
+    if router.discovery_service == service then
+        router.discovery_service = nil
+    end
     if not ok then
         error(err)
     end
