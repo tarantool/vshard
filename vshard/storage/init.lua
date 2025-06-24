@@ -1099,12 +1099,12 @@ local function recovery_service_f(service)
 end
 
 local function recovery_f()
-    assert(not M.recovery_service)
     local service = lservice_info.new('recovery')
     M.recovery_service = service
     local ok, err = pcall(recovery_service_f, service)
-    assert(M.recovery_service == service)
-    M.recovery_service = nil
+    if M.recovery_service == service then
+        M.recovery_service = nil
+    end
     if not ok then
         error(err)
     end
@@ -2320,12 +2320,12 @@ local function gc_bucket_service_f(service)
 end
 
 local function gc_bucket_f()
-    assert(not M.gc_service)
     local service = lservice_info.new('gc')
     M.gc_service = service
     local ok, err = pcall(gc_bucket_service_f, service)
-    assert(M.gc_service == service)
-    M.gc_service = nil
+    if M.gc_service == service then
+        M.gc_service = nil
+    end
     if not ok then
         error(err)
     end
@@ -2907,12 +2907,12 @@ local function rebalancer_service_f(service)
 end
 
 local function rebalancer_f()
-    assert(not M.rebalancer_service)
     local service = lservice_info.new('rebalancer')
     M.rebalancer_service = service
     local ok, err = pcall(rebalancer_service_f, service)
-    assert(M.rebalancer_service == service)
-    M.rebalancer_service = nil
+    if M.rebalancer_service == service then
+        M.rebalancer_service = nil
+    end
     if not ok then
         error(err)
     end
@@ -3463,12 +3463,12 @@ local function instance_watch_service_f(service)
 end
 
 local function instance_watch_f()
-    assert(not M.instance_watch_service)
     local service = lservice_info.new('instance_watch')
     M.instance_watch_service = service
     local ok, err = pcall(instance_watch_service_f, service)
-    assert(M.instance_watch_service == service)
-    M.instance_watch_service = nil
+    if M.instance_watch_service == service then
+        M.instance_watch_service = nil
+    end
     if not ok then
         error(err)
     end
