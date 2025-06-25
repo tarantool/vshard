@@ -1,4 +1,5 @@
 local t = require('luatest')
+local vutil = require('vshard.util')
 local vtest = require('test.luatest_helpers.vtest')
 local git_util = require('test.lua_libs.git_util')
 local fio = require('fio')
@@ -27,11 +28,31 @@ local cfg_template = {
 local global_cfg
 
 g.before_all(function()
+    -- Override of the built in modules is available only since 2.11.0.
+    t.run_only_if(vutil.version_is_at_least(2, 11, 0, nil, 0, 0))
     global_cfg = vtest.config_new(cfg_template)
 
     -- The test works in the following directory
     local vardir = vtest.vardir or fio.tempdir()
-    g.vshard_copy_path =  vardir .. '/vshard_copy'
+    g.vshard_copy_path_load =  vardir .. '/vshard_copy'
+    t.assert_equals(fio.mkdir(g.vshard_copy_path_load), true)
+    --
+    -- Tarantool searches for compilation units in the following order:
+    --   1. preload --> override --> builtin
+    --   2. path.cwd.dot
+    --   3. cpath.cwd.dot
+    --   4. path.cwd.rocks
+    --   5. cpath.cwd.rocks
+    --   6. package.path
+    --   7. package.cpath
+    --   8. croot
+    --
+    -- Since the test is launched from the repository directory, newest
+    -- vshard will be always loaded, disregarding package.path or `LUA_PATH`.
+    -- So we can use package.setsearchroot() to change cwd, luatest's `chdir`
+    -- or override. The last one is used here, since it's the easiest.
+    --
+    g.vshard_copy_path =  vardir .. '/vshard_copy/override'
     t.assert_equals(fio.mkdir(g.vshard_copy_path), true)
     -- Copy source to the temporary directory
     t.assert_equals(fio.mkdir(g.vshard_copy_path .. '/.git'), true)
@@ -72,6 +93,16 @@ g.after_all(function()
 end)
 
 --
+-- `vtest.router_cfg` cannot be used in this test, since
+-- `ivtest.clear_test_cfg_options` may be nil on old versions.
+--
+local function router_cfg(router, cfg)
+    router:exec(function(cfg)
+        ivshard.router.cfg(cfg)
+    end, {cfg})
+end
+
+--
 -- Reload test template:
 --     1. Invoke create_router_at:
 --         * Checkout to old version;
@@ -83,21 +114,17 @@ end)
 --     5. Test smth on the new version
 --     6. Drop a router with vtest.drop_instance
 --
-
 local function create_router_at(hash)
     git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
-    local router = vtest.router_new(g, 'router')
-    router:exec(function(vshard_path)
-        -- Force 'require' to use new directory
-        package.path = string.format('%s/?.lua;%s/?/init.lua;',
-                                     vshard_path, vshard_path)
-        for package_name in pairs(package.loaded) do
-            if package_name:startswith('vshard') then
-                package.loaded[package_name] = nil
-            end
-        end
-    end, {g.vshard_copy_path})
-    vtest.router_cfg(router, global_cfg)
+    local path = g.vshard_copy_path_load
+    local lua_path = string.format("%s/?.lua;%s/?/init.lua;", path, path)
+    local router = vtest.router_new(g, 'router', nil, {
+        env = {
+            -- Force 'require' to use new directory
+            ['LUA_PATH'] = lua_path .. os.getenv('LUA_PATH')
+        },
+    })
+    router_cfg(router, global_cfg)
     return router
 end
 
@@ -196,7 +223,7 @@ g.test_discovery = function(g)
 end
 
 local function test_master_search_template(g, router, auto_master_cfg)
-    vtest.router_cfg(router, auto_master_cfg)
+    router_cfg(router, auto_master_cfg)
 
     -- Working with first replicaset (2 instances)
     local rs_uuid = g.replica_1_a:replicaset_uuid()
@@ -288,6 +315,17 @@ g.test_master_search = function(g)
 
     test_master_search_template(g, router, auto_master_cfg)
     reload_router(router)
+    -- Wait for old master_search service to be stopped.
+    router:exec(function()
+        local router = ivshard.router.internal.static_router
+        ilt.helpers.retrying({}, function()
+            local fiber = router.master_search_fiber
+            if fiber then
+                pcall(fiber.wakeup, fiber)
+            end
+            ilt.assert_equals(router.master_search_service, nil)
+        end)
+    end)
     test_master_search_template(g, router, auto_master_cfg)
     vtest.drop_instance(g, router)
 end

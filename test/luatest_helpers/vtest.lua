@@ -656,13 +656,13 @@ end
 -- Create a new router in the cluster.
 -- If no cfg was passed configuration should be done manually with server:exec
 --
-local function router_new(g, name, cfg)
+local function router_new(g, name, cfg, server_config)
     if not g.cluster then
         g.cluster = cluster:new({})
     end
-    local server = g.cluster:build_server({
-        alias = name,
-    }, 'router.lua')
+    server_config = server_config or {}
+    server_config.alias = name
+    local server = g.cluster:build_server(server_config, 'router.lua')
     g[name] = server
     g.cluster:add_server(server)
     server:start()
