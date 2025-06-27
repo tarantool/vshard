@@ -1,6 +1,7 @@
 local t = require('luatest')
 local vutil = require('vshard.util')
 local vtest = require('test.luatest_helpers.vtest')
+local vconsts = require('vshard.consts')
 local git_util = require('test.lua_libs.git_util')
 local fio = require('fio')
 
@@ -102,6 +103,12 @@ local function router_cfg(router, cfg)
     end, {cfg})
 end
 
+local function router_assert_version_equals(router, version)
+    router:exec(function(version)
+        ilt.assert_equals(ivconst.VERSION, version)
+    end, {version})
+end
+
 --
 -- Reload test template:
 --     1. Invoke create_router_at:
@@ -145,6 +152,7 @@ local function reload_router(router, service_name)
         ilt.assert_equals(ivshard.router.module_version(), 0)
         package.loaded['vshard.router'] = nil
         ivshard.router = require('vshard.router')
+        _G.ivconst = require('vshard.consts')
         ilt.assert_equals(ivshard.router.module_version(), 1)
 
         if service ~= nil then
@@ -175,8 +183,10 @@ g.test_basic = function(g)
     --     "router: fix reload problem with global function refs".
     local hash = '139223269cddefe2ba4b8e9f6e44712f099f4b35'
     local router = create_router_at(hash)
+    router_assert_version_equals(router, nil)
     test_basic_template(router)
     reload_router(router)
+    router_assert_version_equals(router, vconsts.VERSION)
     test_basic_template(router)
     vtest.drop_instance(g, router)
 end
@@ -216,8 +226,10 @@ g.test_discovery = function(g)
     --     "router: add saving of background service statuses".
     local hash = 'f5f386a5a35e6e5efd8f4f2ed1b3d208fdae9095'
     local router = create_router_at(hash)
+    router_assert_version_equals(router, nil)
     test_discovery_template(g, router)
     reload_router(router, 'discovery_service')
+    router_assert_version_equals(router, vconsts.VERSION)
     test_discovery_template(g, router)
     vtest.drop_instance(g, router)
 end
@@ -302,6 +314,7 @@ g.test_master_search = function(g)
     --     "router: add saving of background service statuses".
     local hash = 'f5f386a5a35e6e5efd8f4f2ed1b3d208fdae9095'
     local router = create_router_at(hash)
+    router_assert_version_equals(router, nil)
 
     -- Enable auto master search
     local auto_master_cfg_template = table.deepcopy(cfg_template)
@@ -315,6 +328,7 @@ g.test_master_search = function(g)
 
     test_master_search_template(g, router, auto_master_cfg)
     reload_router(router)
+    router_assert_version_equals(router, vconsts.VERSION)
     -- Wait for old master_search service to be stopped.
     router:exec(function()
         local router = ivshard.router.internal.static_router
