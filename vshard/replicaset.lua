@@ -926,7 +926,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         end
         local now = fiber_clock()
         local end_time = now + timeout
-        while not net_status and timeout > 0 do
+        while timeout > 0 do
             replica = pick_next_replica(replicaset, state)
             if not replica then
                 replica, timeout = replicaset_wait_master(replicaset, timeout)
@@ -943,6 +943,10 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             opts.timeout = request_timeout
             net_status, storage_status, retval, err =
                 replica_call(replica, func, args, opts)
+            if net_status then
+                -- Fast path, in most cases everything is all right.
+                return storage_status, retval, err
+            end
             now = fiber_clock()
             timeout = end_time - now
             if now + request_timeout > end_time then
