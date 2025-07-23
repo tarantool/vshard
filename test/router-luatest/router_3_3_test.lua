@@ -179,15 +179,13 @@ local function failover_health_check_missing_upstream(g)
     local bid = vtest.storage_first_bucket(g.replica_1_b)
     router_wait_prioritized(g, g.replica_1_b)
     router_test_callbro(g, bid, {g.replica_1_c:instance_uuid()})
-    local msg = 'Replica %s is unhealthy: Missing upstream'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    local msg = 'replica_1_c.*replication_status .* unhealthy: Missing upstream'
     t.assert(g.router:grep_log(msg), msg)
     -- Restore replication. Replica returns.
     g.replica_1_c:update_box_cfg({replication = box_cfg.replication})
     router_wait_prioritized(g, g.replica_1_c)
     router_test_callbro(g, bid, {})
-    msg = 'Replica %s is healthy'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    msg = 'replica_1_c.*replication_status .* healthy'
     t.assert(g.router:grep_log(msg), msg)
 end
 
@@ -226,8 +224,7 @@ local function failover_health_check_broken_upstream(g)
     router_wait_prioritized(g, g.replica_1_b)
     router_test_callbro(g, bid, {g.replica_1_c:instance_uuid()})
     -- Either status or idle, depending on version.
-    local msg = 'Replica %s is unhealthy'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    local msg = 'replica_1_c.*replication_status .* unhealthy'
     t.assert(g.router:grep_log(msg), msg)
 
     g.router:exec(function()
@@ -243,8 +240,7 @@ local function failover_health_check_broken_upstream(g)
         box.cfg{replication = replication}
     end)
     router_wait_prioritized(g, g.replica_1_c)
-    msg = 'Replica %s is healthy'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    msg = 'replica_1_c.*replication_status .* healthy'
     t.assert(g.router:grep_log(msg), msg)
     g.replica_1_a:exec(function()
         box.space.test:truncate()
@@ -326,8 +322,7 @@ local function failover_health_check_big_lag(g)
     local bid = vtest.storage_first_bucket(g.replica_1_b)
     router_wait_prioritized(g, g.replica_1_b)
     router_test_callbro(g, bid, {g.replica_1_c:instance_uuid()})
-    local msg = 'Replica %s is unhealthy: Upstream to master has lag'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    local msg = 'replica_1_c.*replication_status .* unhealthy: .* has lag'
     t.assert(g.router:grep_log(msg), msg)
 
     g.replica_1_c:exec(function()
@@ -335,7 +330,7 @@ local function failover_health_check_big_lag(g)
     end)
     router_wait_prioritized(g, g.replica_1_c)
     router_test_callbro(g, bid, {})
-    msg = 'Replica %s is healthy'
+    msg = 'replica_1_c.*replication_status .* healthy'
     msg = string.format(msg, g.replica_1_c:instance_uuid())
     t.assert(g.router:grep_log(msg), msg)
 end
@@ -399,8 +394,7 @@ local function failover_health_check_missing_master(g)
         ivshard.storage.cfg(cfg, box.info.uuid)
     end, {new_cfg})
 
-    local msg = 'The healthiness of the replica %s is unknown:'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
+    local msg = 'replica_1_c.*replication_status .* unknown'
     t.helpers.retrying({timeout = wait_timeout}, function()
         t.assert(g.router:grep_log(msg))
     end)
@@ -473,9 +467,8 @@ local function failover_health_check_missing_health(g)
     end)
 
     router_assert_prioritized(g, g.replica_1_c)
-    local msg = 'The healthiness of the replica %s is unknown: ' ..
+    local msg = 'replica_1_c.*replication_status .* unknown: ' ..
                 'Health state in ping is missing'
-    msg = string.format(msg, g.replica_1_c:instance_uuid())
     t.helpers.retrying({timeout = wait_timeout}, function()
         t.assert(g.router:grep_log(msg))
     end)

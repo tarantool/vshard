@@ -863,7 +863,8 @@ test_group.test_failover_interval = function(g)
     local uuid_a = g.replica_1_a:instance_uuid()
     vtest.storage_stop(g.replica_1_a)
     t.helpers.retrying(timeout_opts, function()
-        t.assert_equals(rs.replicas[uuid_a].health_status, vconst.STATUS.YELLOW)
+        t.assert_equals(rs.replicas[uuid_a].replication_status,
+                        vconst.STATUS.YELLOW)
         rs.replicas[uuid_a].worker:wakeup_service('replica_failover')
     end)
 
@@ -884,7 +885,7 @@ test_group.test_failover_interval = function(g)
 
     local _, new_rs = next(new_replicasets)
     t.helpers.retrying(timeout_opts, function()
-        t.assert_equals(new_rs.replicas[uuid_a].health_status,
+        t.assert_equals(new_rs.replicas[uuid_a].replication_status,
                         vconst.STATUS.GREEN)
     end)
 end
