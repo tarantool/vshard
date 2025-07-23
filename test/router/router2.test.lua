@@ -188,11 +188,18 @@ vshard.storage.call = nil
 
 -- Indeed fails when called directly via netbox.
 test_run:switch('router_1')
-conn = vshard.router.route(1).master.conn
-ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
+master = vshard.router.route(1).master
+ok, err = pcall(master.conn.call, conn, 'vshard.storage.call',                  \
                 {1, 'read', 'echo', {1}})
 assert(not ok and err.code == box.error.NO_SUCH_PROC)
 
+function wait_replica_restore(r)                                                \
+    while master.health_status ~= vshard.consts.STATUS.GREEN do                 \
+        failover_wakeup()                                                       \
+        fiber.sleep(0.01)                                                       \
+    end                                                                         \
+end
+wait_replica_restore(master)
 -- Works when called via vshard - it goes to another replica.
 res = vshard.router.callro(1, 'echo', {100}, long_timeout)
 assert(res == 100)
@@ -224,7 +231,7 @@ vshard.storage.call = old_storage_call
 -- Fails without backoff for other errors.
 --
 test_run:switch('router_1')
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
 rs = vshard.router.route(1)
 ok, err = rs:callro('vshard.storage.call', {1, 'badmode', 'echo', {100}},       \
                     long_timeout)
@@ -238,7 +245,7 @@ vshard.storage.disable()
 
 test_run:switch('router_1')
 -- Drop old backoffs.
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
 -- Success, but internally the request was retried.
 --
 -- n/a: there was a bug when an error code in the router depended
@@ -266,7 +273,7 @@ vshard.storage.enable()
 
 test_run:switch('router_1')
 -- Drop the backoff.
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
 storage_2 = vshard.router.static.replicasets[replicasets[2]]
 -- Simulate successful ping.
 storage_2_a = storage_2.replicas[util.name_to_uuid.storage_2_a]
