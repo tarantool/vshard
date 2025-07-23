@@ -117,6 +117,17 @@ local replica_errinj = {
 }
 
 --
+-- Since state can be set from several places, in order to react on the failures
+-- as fast as we can, this tables allows to use unified messages.
+--
+local health_status_msgs = {
+    ['BACKOFF'] = "'%s' is in backoff",
+    ['CONN_DOWN'] = "Connection to '%s' was down for %.5f seconds",
+    ['SEQ_FAIL'] = "Requests to '%s' failed %d times in a row",
+    ['REPLICATION'] = "Replication from master on '%s' is broken"
+}
+
+--
 -- vconnect is asynchronous vshard greeting, saved inside netbox connection.
 -- It stores future object and additional info, needed for its work.
 -- Future is initialized, when the connection is established (inside
@@ -392,12 +403,12 @@ end
 --
 -- Check if replica can be considered healthy. It's connection wasn't down
 -- for FAILOVER_FOWN_TIMEOUT, the requests didn't fail sequentially for
--- failover_sequential_fail_count (cfg option), it has alive replication
--- from master.
+-- failover_sequential_fail_count (cfg option).
 --
-local function replicaset_check_replica_health(replicaset, replica, now)
+local function replica_check_health(replica, now)
+    local name = replica.name or replica.uuid
     if not replica_check_backoff(replica, now) then
-        return false
+        return SRED, string.format(health_status_msgs.BACKOFF, name)
     end
     -- down_ts not nil does not mean that the replica is not
     -- connected. Probably it is connected and now fetches schema,
@@ -405,33 +416,17 @@ local function replicaset_check_replica_health(replicaset, replica, now)
     -- to down the prio.
     if replica.down_ts and
        now - replica.down_ts >= consts.FAILOVER_DOWN_TIMEOUT then
-        return false
+        return SRED, string.format(health_status_msgs.CONN_DOWN,
+                                   name, now - replica.down_ts)
     end
     -- If we failed several sequential requests to replica, then something
     -- is wrong with it. Temporary lower its priority.
     if replica.net_sequential_fail >=
        replica.failover_sequential_fail_count then
-        return false
+        return SRED, string.format(health_status_msgs.SEQ_FAIL,
+                                   name, replica.net_sequential_fail)
     end
-    -- The replication health check must be applied if and only if there's
-    -- node in replicaset with alive replication or master with alive
-    -- connection.
-    local is_replication_alive = false
-    for _, r in pairs(replicaset.replicas) do
-        local is_master = r == replicaset.master
-        if (is_master and r.replication_status == SGREEN) or
-           (not is_master and r.replication_status ~= SRED) then
-            is_replication_alive = true
-            break
-        end
-    end
-    -- If replica doesn't have proper connection with its master: connection
-    -- is dead, lag or idle time is too big - then replica has outdated data
-    -- and shouldn't be used as prioritized.
-    if is_replication_alive and replica.replication_status == SRED then
-        return false
-    end
-    return true
+    return SGREEN
 end
 
 
@@ -615,6 +610,13 @@ end
 local function replica_on_failed_request(replica)
     replica.net_sequential_ok = 0
     replica.net_sequential_fail = replica.net_sequential_fail + 1
+    if replica.net_sequential_fail >=
+       replica.failover_sequential_fail_count then
+        local msg = string.format(health_status_msgs.SEQ_FAIL,
+                                  replica.name or replica.uuid,
+                                  replica.net_sequential_fail)
+        replica:update_status('health_status', SRED, msg)
+    end
     if replica.net_sequential_fail >= 2 then
         local new_timeout = replica.net_timeout * 2
         if new_timeout <= consts.CALL_TIMEOUT_MAX then
@@ -869,7 +871,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
     --
     -- Pick a next replica according to round-robin load balancing policy.
     --
-    local function pick_next_replica(replicaset, now, state)
+    local function pick_next_replica(replicaset, state)
         local r
         local master = replicaset.master
         local i = #replicaset.priority_list
@@ -885,7 +887,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
             state.balance_checked_num = state.balance_checked_num + 1
             r = replicaset_balance_replica(replicaset, state)
             if r:is_connected() and (not prefer_replica or r ~= master) and
-               replicaset_check_replica_health(replicaset, r, now) then
+               r.health_status ~= SRED then
                 return r
             end
         end
@@ -925,7 +927,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         local now = fiber_clock()
         local end_time = now + timeout
         while not net_status and timeout > 0 do
-            replica = pick_next_replica(replicaset, now, state)
+            replica = pick_next_replica(replicaset, state)
             if not replica then
                 replica, timeout = replicaset_wait_master(replicaset, timeout)
                 if not replica then
@@ -966,6 +968,9 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                                  consts.REPLICA_BACKOFF_INTERVAL, retval)
                         replica.backoff_ts = now
                         replica.backoff_err = retval
+                        local msg = string.format(health_status_msgs.BACKOFF,
+                                                  replica.name or replica.uuid)
+                        replica:update_status('health_status', SRED, msg)
                     end
                 else
                     -- There is no sense to retry LuaJit errors, such as
@@ -1631,6 +1636,7 @@ local function buildall(sharding_cfg)
                 failover_sequential_fail_count = sharding_cfg[count_name],
                 failover_interval = sharding_cfg.failover_interval,
                 failover_replica_lag_limit = sharding_cfg[lag_name],
+                health_status = SYELLOW,
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then
@@ -1810,15 +1816,41 @@ end
 --------------------------------------------------------------------------------
 
 --
+-- Update the health_status of all replicas in the replicaset.
+--
+local function replicaset_failover_update_health(replicaset, now)
+    -- The replication health check must be applied iff there's node in
+    -- replicaset with alive replication or master with alive connection.
+    local is_replication_alive = false
+    for _, r in pairs(replicaset.replicas) do
+        local is_master = r == replicaset.master
+        if (is_master and r.replication_status == SGREEN) or
+           (not is_master and r.replication_status ~= SRED) then
+            is_replication_alive = true
+            break
+        end
+    end
+    for _, r in pairs(replicaset.replicas) do
+        local status, reason = replica_check_health(r, now)
+        if is_replication_alive and status < r.replication_status then
+            status = r.replication_status
+            reason = string.format(health_status_msgs.REPLICATION,
+                                   r.name or r.uuid)
+        end
+        replica_update_status(r, 'health_status', status, reason)
+    end
+end
+
+--
 -- Replicaset must fall its replica connection to lower priority,
 -- if the current one is down too long.
 --
-local function replicaset_failover_need_down_priority(replicaset, curr_ts)
+local function replicaset_failover_need_down_priority(replicaset)
     local r = replicaset.replica
     if not r or not r.next_by_priority then
         return false
     end
-    return not replicaset_check_replica_health(replicaset, r, curr_ts)
+    return r.health_status == SRED
 end
 
 --
@@ -1841,11 +1873,12 @@ local function replicaset_failover_step(replicaset)
         return false
     end
     local curr_ts = fiber_clock()
+    replicaset_failover_update_health(replicaset, curr_ts)
     local old_replica = replicaset.replica
     if replicaset_failover_need_up_priority(replicaset, curr_ts) then
         replicaset:up_replica_priority()
     end
-    if replicaset_failover_need_down_priority(replicaset, curr_ts) then
+    if replicaset_failover_need_down_priority(replicaset) then
         replicaset:down_replica_priority()
     end
     if old_replica ~= replicaset.replica then

@@ -33,7 +33,7 @@ local cfg_template = {
 local global_cfg
 
 test_group.before_all(function(g)
-    global_cfg = vtest.config_new(cfg_template)
+    global_cfg = vcfg.check(vtest.config_new(cfg_template))
 
     vtest.cluster_new(g, global_cfg)
     vtest.cluster_bootstrap(g, global_cfg)
@@ -221,7 +221,7 @@ local function get_auto_master_global_cfg()
     local rs_cfg = new_cfg_template.sharding[1]
     rs_cfg.master = 'auto'
     rs_cfg.replicas.replica_1_a.master = nil
-    return vtest.config_new(new_cfg_template)
+    return vcfg.check(vtest.config_new(new_cfg_template))
 end
 
 test_group.test_locate_master_when_no_conn_object = function(g)

@@ -473,10 +473,10 @@ test_run:switch('router_1')
  | ---
  | - true
  | ...
-conn = vshard.router.route(1).master.conn
+master = vshard.router.route(1).master
  | ---
  | ...
-ok, err = pcall(conn.call, conn, 'vshard.storage.call',                         \
+ok, err = pcall(master.conn.call, conn, 'vshard.storage.call',                  \
                 {1, 'read', 'echo', {1}})
  | ---
  | ...
@@ -485,6 +485,17 @@ assert(not ok and err.code == box.error.NO_SUCH_PROC)
  | - true
  | ...
 
+function wait_replica_restore(r)                                                \
+    while master.health_status ~= vshard.consts.STATUS.GREEN do                 \
+        failover_wakeup()                                                       \
+        fiber.sleep(0.01)                                                       \
+    end                                                                         \
+end
+ | ---
+ | ...
+wait_replica_restore(master)
+ | ---
+ | ...
 -- Works when called via vshard - it goes to another replica.
 res = vshard.router.callro(1, 'echo', {100}, long_timeout)
  | ---
@@ -563,7 +574,7 @@ test_run:switch('router_1')
  | ---
  | - true
  | ...
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
  | ---
  | ...
 rs = vshard.router.route(1)
@@ -594,7 +605,7 @@ test_run:switch('router_1')
  | - true
  | ...
 -- Drop old backoffs.
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
  | ---
  | ...
 -- Success, but internally the request was retried.
@@ -663,7 +674,7 @@ test_run:switch('router_1')
  | - true
  | ...
 -- Drop the backoff.
-fiber.sleep(vshard.consts.REPLICA_BACKOFF_INTERVAL)
+wait_replica_restore(master)
  | ---
  | ...
 storage_2 = vshard.router.static.replicasets[replicasets[2]]
