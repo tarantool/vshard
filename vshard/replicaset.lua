@@ -26,9 +26,9 @@
 --             net_sequential_fail = <count of sequential failed
 --                                    requests to the replica>,
 --             is_outdated = nil/true,
---             health_status = <STATUS.GREEN  - replica is healthy,
---                              STATUS.YELLOW - health of replica is unknown,
---                              STATUS.RED    - replica is unhealthy>,
+--             health_status = <SGREEN  - replica is healthy,
+--                              SYELLOW - health of replica is unknown,
+--                              SRED    - replica is unhealthy>,
 --             fetch_schema = <whether the connection should fetch schema>,
 --             worker = { <same as replicaset.worker but for replica> }
 --             failover_ping_timeout = <timeout after which a ping is
@@ -97,6 +97,9 @@ local fiber_yield = fiber.yield
 local fiber_cond_wait = util.fiber_cond_wait
 local future_wait = util.future_wait
 local gsc = util.generate_self_checker
+local SGREEN = consts.STATUS.GREEN
+local SYELLOW = consts.STATUS.YELLOW
+local SRED = consts.STATUS.RED
 
 local replicaset_errinj = {
     ERRINJ_REPLICA_FAILOVER_DELAY = false,
@@ -410,8 +413,8 @@ local function replicaset_check_replica_health(replicaset, replica, now)
     local is_replication_alive = false
     for _, r in pairs(replicaset.replicas) do
         local is_master = r == replicaset.master
-        if (is_master and r.health_status == consts.STATUS.GREEN) or
-           (not is_master and r.health_status ~= consts.STATUS.RED) then
+        if (is_master and r.health_status == SGREEN) or
+           (not is_master and r.health_status ~= SRED) then
             is_replication_alive = true
             break
         end
@@ -419,7 +422,7 @@ local function replicaset_check_replica_health(replicaset, replica, now)
     -- If replica doesn't have proper connection with its master: connection
     -- is dead, lag or idle time is too big - then replica has outdated data
     -- and shouldn't be used as prioritized.
-    if is_replication_alive and replica.health_status == consts.STATUS.RED then
+    if is_replication_alive and replica.health_status == SRED then
         return false
     end
     return true
@@ -559,7 +562,7 @@ local function replicaset_down_replica_priority(replicaset)
            not old_replica:is_connected()) or
            old_replica.net_sequential_fail >=
            old_replica.failover_sequential_fail_count or
-           old_replica.health_status == consts.STATUS.RED))
+           old_replica.health_status == SRED))
     local new_replica = old_replica.next_by_priority
     if new_replica then
         assert(new_replica ~= old_replica)
@@ -586,7 +589,7 @@ local function replicaset_up_replica_priority(replicaset)
             -- Failed to up priority.
             return
         end
-        local is_healthy = replica.health_status == consts.STATUS.GREEN
+        local is_healthy = replica.health_status == SGREEN
         is_healthy = is_healthy and replica.net_sequential_ok > 0
         if replica:is_connected() and (is_healthy or not old_replica) then
             assert(replica.net_sequential_fail == 0)
@@ -1314,13 +1317,13 @@ local function replica_update_health_status(replica, status, reason)
     end
 
     replica.health_status = status
-    if status == consts.STATUS.GREEN then
+    if status == SGREEN then
         log.info("Replica %s is healthy", replica.id)
-    elseif status == consts.STATUS.RED then
+    elseif status == SRED then
         assert(reason ~= nil)
         log.warn("Replica %s is unhealthy: %s", replica.id, reason)
     else
-        assert(status == consts.STATUS.YELLOW and reason ~= nil)
+        assert(status == SYELLOW and reason ~= nil)
         log.warn("The healthiness of the replica %s is unknown: %s",
                  replica.id, reason)
     end
@@ -1615,7 +1618,7 @@ local function buildall(sharding_cfg)
                 zone = replica.zone, net_timeout = consts.CALL_TIMEOUT_MIN,
                 net_sequential_ok = 0, net_sequential_fail = 0,
                 down_ts = curr_ts, backoff_ts = nil, backoff_err = nil,
-                id = replica_id, health_status = consts.STATUS.YELLOW,
+                id = replica_id, health_status = SYELLOW,
                 fetch_schema = sharding_cfg.connection_fetch_schema,
                 failover_ping_timeout = sharding_cfg.failover_ping_timeout,
                 errinj = table.deepcopy(replica_errinj),
@@ -1704,7 +1707,7 @@ end
 --
 local function failover_check_upstream(upstream, lag_limit)
     if not upstream then
-        return consts.STATUS.RED, 'Missing upstream from the master'
+        return SRED, 'Missing upstream from the master'
     end
     local status = upstream.status
     -- 'loading' status is required for 1.10 to work, since applier there
@@ -1713,24 +1716,24 @@ local function failover_check_upstream(upstream, lag_limit)
     if status and
        (status == 'follow' or status == 'sync' or status == 'loading') then
         if not upstream.lag then
-            return consts.STATUS.YELLOW, 'Missing upstream lag from the master'
+            return SYELLOW, 'Missing upstream lag from the master'
         end
         if upstream.lag > lag_limit then
             local msg = string.format('Upstream to master has lag %.5f > %.5f',
                                        upstream.lag, lag_limit)
-            return consts.STATUS.RED, msg
+            return SRED, msg
         end
-        return consts.STATUS.GREEN
+        return SGREEN
     end
     if not upstream.idle then
-        return consts.STATUS.YELLOW, 'Missing upstream idle from the master'
+        return SYELLOW, 'Missing upstream idle from the master'
     end
     if upstream.idle > lag_limit then
         local msg = string.format('Upstream to master has idle %.5f > %.5f',
                                   upstream.idle, lag_limit)
-        return consts.STATUS.RED, msg
+        return SRED, msg
     end
-    return consts.STATUS.GREEN
+    return SGREEN
 end
 
 local function replica_failover_ping(replica, opts)
@@ -1738,11 +1741,11 @@ local function replica_failover_ping(replica, opts)
     local net_status, info, err =
         replica:call('vshard.storage._call', {'info', info_opts}, opts)
     if not info then
-        replica:update_health_status(consts.STATUS.YELLOW, err)
+        replica:update_health_status(SYELLOW, err)
         return net_status, info, err
     elseif not info.health then
         local msg = 'Health state in ping is missing - please upgrade storage'
-        replica:update_health_status(consts.STATUS.YELLOW, msg)
+        replica:update_health_status(SYELLOW, msg)
         return net_status, info, msg
     end
 
