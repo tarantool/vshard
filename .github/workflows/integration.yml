@@ -1,0 +1,55 @@
+name: integration
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+  workflow_dispatch:
+
+env:
+  ROCK_NAME: vshard
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vshard:
+    runs-on: ubuntu-22.04
+    if: |
+      github.event_name == 'pull_request' &&
+      (contains(join(github.event.pull_request.labels.*.name, ','), 'full-ci') ||
+       contains(join(github.event.pull_request.labels.*.name, ','), 'integration-ci'))
+    outputs:
+      sha: ${{ steps.get_sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 'Get the commit SHA'
+        id: get_sha
+        run: echo "sha=$(git log -1 --format='%H')" >> $GITHUB_OUTPUT
+      - name: Setup tarantool
+        uses: tarantool/setup-tarantool@v3
+        with:
+          tarantool-version: '2.11'
+      - name: Setup tt
+        run: |
+          curl -L https://tarantool.io/release/3/installer.sh | bash
+          sudo apt-get -y install tt
+      - name: Create test rock
+        run: |
+          tt rocks install ${{ env.ROCK_NAME }}-scm-1.rockspec
+          tt rocks pack ${{ env.ROCK_NAME }} scm-1
+      - name: Upload test rock
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshard-${{ steps.get_sha.outputs.sha }}
+          retention-days: 21
+          path: |
+            ${{ env.ROCK_NAME }}-scm-1.all.rock
+
+  cartridge:
+    needs: vshard
+    uses: ./.github/workflows/cartridge_integration.yml
+    with:
+      artifact_name: vshard-${{ needs.vshard.outputs.sha }}
+      tarantool_version: '2.11'
