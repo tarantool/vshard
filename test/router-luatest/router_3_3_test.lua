@@ -637,3 +637,82 @@ end
 g.test_callbro_with_freezed_master_without_ping = function(g)
     test_callbro_with_freezed_replica_without_ping(g, g.replica_1_a)
 end
+
+local function storage_enable_set(replica, is_enable)
+    replica:exec(function(is_enable)
+        if is_enable then
+            ivshard.storage.enable()
+        else
+            ivshard.storage.disable()
+        end
+    end, {is_enable})
+end
+
+local function test_request_fallbacks_to_master_backoff_template(request)
+    g.router:exec(function()
+        -- Stop the failover, don't allow it to restore the state of the master.
+        _G.failover_pause()
+    end)
+
+    -- Send master to backoff.
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    local uuid = g.replica_1_a:instance_uuid()
+    storage_enable_set(g.replica_1_a, false)
+    g.router:exec(function(bid, master_uuid)
+        local uuid = ivshard.router.callro(bid, 'get_uuid')
+        ilt.assert_not_equals(uuid, master_uuid)
+        -- Master is in backoff.
+        local rs = ivshard.router.route(bid)
+        ilt.assert(rs.master.backoff_ts)
+    end, {bid, uuid})
+
+    -- Enable master back, send all other replicas to backoff. All requests
+    -- must be able to fallback to master.
+    storage_enable_set(g.replica_1_a, true)
+    storage_enable_set(g.replica_1_b, false)
+    storage_enable_set(g.replica_1_c, false)
+    g.router:exec(function(bid, master_uuid, request)
+        -- Master is still in backoff.
+        local rs = ivshard.router.route(bid)
+        ilt.assert(rs.master.backoff_ts)
+        -- Master is prioritized.
+        ilt.assert_equals(rs.master, rs.replica)
+        -- Now request can fallback to the master.
+        local uuid = ivshard.router[request](bid, 'get_uuid')
+        ilt.assert_equals(uuid, master_uuid, request)
+        -- Master is not in backoff anymore.
+        ilt.assert_not(rs.master.backoff_ts)
+    end, {bid, uuid, request})
+
+    -- Cleanup.
+    storage_enable_set(g.replica_1_b, true)
+    storage_enable_set(g.replica_1_c, true)
+    g.router:exec(function(bid)
+        _G.failover_continue()
+        local rs = ivshard.router.route(bid)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            _G.failover_wakeup()
+            for _, r in pairs(rs.replicas) do
+                ilt.assert_equals(r.health_status, ivconst.STATUS.GREEN)
+            end
+        end)
+    end, {bid})
+end
+
+g.test_request_fallbacks_to_master_backoff = function(g)
+    g.router:exec(function()
+        -- Set small backoff interval, so that it ends as fast as possible.
+        rawset(_G, 'old_backoff_interval', ivconst.REPLICA_BACKOFF_INTERVAL)
+        ivconst.REPLICA_BACKOFF_INTERVAL = 0
+    end)
+
+    local requests = {'callro', 'callbro', 'callre', 'callbre'}
+    for _, r in ipairs(requests) do
+        test_request_fallbacks_to_master_backoff_template(r)
+    end
+
+    g.router:exec(function()
+        ivconst.REPLICA_BACKOFF_INTERVAL = _G.old_backoff_interval
+        _G.old_backoff_interval = nil
+    end)
+end

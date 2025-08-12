@@ -934,7 +934,7 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                     return nil, timeout
                 end
                 replica_connect(replica)
-                if replica.backoff_ts then
+                if not replica_check_backoff(replica, now) then
                     return nil, lerror.vshard(
                         lerror.code.REPLICASET_IN_BACKOFF, replicaset.id,
                         replica.backoff_err)
