@@ -2882,6 +2882,10 @@ local function rebalancer_service_f(service)
         -- incorrectly.
         assert(next(routes) ~= nil)
         for src_id, src_routes in pairs(routes) do
+            for dest_id, buckets_count in pairs(src_routes) do
+                log.info('Move %s bucket(s) from %s to %s',
+                         buckets_count, src_id, dest_id)
+            end
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
             lfiber.testcancel()
