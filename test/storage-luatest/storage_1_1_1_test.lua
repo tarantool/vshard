@@ -261,3 +261,19 @@ rebalancer_recovery_group.test_no_log_spam_when_buckets_no_active = function(g)
     end)
     g.replica_2_a:start()
 end
+
+rebalancer_recovery_group.test_no_object_is_outdated_logs = function(g)
+    g.replica_1_a:exec(function(cfg)
+        ivshard.storage.internal.errinj.ERRINJ_CFG_OUTDATED_DELAY = true
+        require('fiber').new(function()
+            ivshard.storage.cfg(cfg, box.info.uuid)
+        end)
+        ivshard.storage.rebalancer_wakeup()
+    end, {global_cfg})
+    move_bucket(g.replica_3_a, g.replica_1_a,
+                get_first_storage_bucket_id(g.replica_3_a))
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_CFG_OUTDATED_DELAY = false
+    end)
+    t.assert_not(g.replica_1_a:grep_log('Object is outdated'))
+end
