@@ -123,6 +123,31 @@ local function move_bucket(src_storage, dest_storage, bucket_id)
     end, {bucket_id})
 end
 
+--
+-- The datetime in log should be strictly in format:
+-- YEAR-MONTH-DAY HOUR:MIN:SEC.MS
+--
+local function extract_datetime_from_log(str)
+    return string.match(str, "(%d+-%d+-%d+) (%d+:%d+:%d+.%d+)")
+end
+
+local function test_only_one_record_appears_in_logs(server, record, wait_time)
+    local first_log_record = nil
+    t.helpers.retrying({}, function()
+        first_log_record = server:grep_log(record)
+        t.assert(first_log_record)
+    end)
+    local first_log_time = extract_datetime_from_log(first_log_record)
+    -- We need to wait a bit in order to catch how much as possible
+    -- spam in server's logs.
+    require("fiber").sleep(wait_time)
+    local last_log_record = server:grep_log(record)
+    t.assert(last_log_record)
+    local last_log_time = extract_datetime_from_log(last_log_record)
+    t.assert_equals(first_log_time, last_log_time,
+                    "There are two identical records in logs")
+end
+
 rebalancer_recovery_group.before_all(function(g)
     global_cfg = vtest.config_new(cfg_template)
     vtest.cluster_new(g, global_cfg)
@@ -212,4 +237,27 @@ rebalancer_recovery_group.test_rebalancer_routes_logging = function(g)
                                        g.replica_3_a:replicaset_uuid())
     t.assert(g.replica_1_a:grep_log(route_1_to_2))
     t.assert(g.replica_1_a:grep_log(route_1_to_3))
+end
+
+rebalancer_recovery_group.test_no_log_spam_when_buckets_no_active = function(g)
+    g.replica_2_a:stop()
+    g.replica_1_a:exec(function()
+        rawset(_G, 'old_rebalancer_interval', ivconst.REBALANCER_WORK_INTERVAL)
+        rawset(_G, 'old_rebalancer_timeout',
+               ivconst.REBALANCER_GET_STATE_TIMEOUT)
+        ivconst.REBALANCER_WORK_INTERVAL = 0.01
+        ivconst.REBALANCER_GET_STATE_TIMEOUT = 0.01
+    end)
+
+    t.helpers.retrying({timeout = 10}, function()
+        t.assert(g.replica_1_a:grep_log(g.buckets_not_active_log))
+    end)
+    test_only_one_record_appears_in_logs(g.replica_1_a,
+                                         g.buckets_not_active_pattern,
+                                         g.rebalancer_wait_interval * 2)
+    g.replica_1_a:exec(function()
+        ivconst.REBALANCER_WORK_INTERVAL = _G.old_rebalancer_interval
+        ivconst.REBALANCER_GET_STATE_TIMEOUT = _G.old_rebalancer_timeout
+    end)
+    g.replica_2_a:start()
 end

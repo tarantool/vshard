@@ -2823,6 +2823,7 @@ end
 --
 local function rebalancer_service_f(service)
     local module_version = M.module_version
+    local some_buckets_are_not_active = false
     while module_version == M.module_version do
         service:next_iter()
         while not M.is_rebalancer_active do
@@ -2844,7 +2845,13 @@ local function rebalancer_service_f(service)
                     'Error during downloading rebalancer states: %s',
                     replicasets))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            if not some_buckets_are_not_active then
+                log.info('Some buckets are not active, replicaset ' ..
+                         string.format('%s will retry', M.this_replicaset.id) ..
+                         string.format(' rebalancing every %s s.',
+                                       consts.REBALANCER_WORK_INTERVAL))
+                some_buckets_are_not_active = true
+            end
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2874,6 +2881,7 @@ local function rebalancer_service_f(service)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+            some_buckets_are_not_active = false
             goto continue
         end
         local routes = rebalancer_build_routes(replicasets)
@@ -2901,6 +2909,7 @@ local function rebalancer_service_f(service)
                 goto continue
             end
         end
+        some_buckets_are_not_active = false
         log.info('Rebalance routes are sent. Schedule next wakeup after '..
                  '%f seconds', consts.REBALANCER_WORK_INTERVAL)
         service:set_activity('idling')
