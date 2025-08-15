@@ -41,6 +41,7 @@ local cfg_template = {
     },
     bucket_count = 15,
     replication_timeout = 0.1,
+    rebalancer_mode = 'auto',
 }
 local global_cfg
 
@@ -100,4 +101,179 @@ test_group.test_manual_bucket_send_doubled_buckets = function(g)
         _G.bucket_gc_wait()
         ilt.assert_equals(box.space._bucket:get(bid), nil)
     end, {bid})
+end
+
+local rebalancer_recovery_group = t.group('rebalancer-recovery-logging')
+
+local function get_first_storage_bucket_id(storage)
+    return storage:exec(function()
+        return box.space._bucket:select()[1].id
+    end)
+end
+
+local function move_bucket(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        ivshard.storage.bucket_send(bucket_id, replicaset_id)
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert(box.space._bucket:select(bucket_id))
+        end)
+    end, {bucket_id})
+end
+
+--
+-- The datetime in log should be strictly in format:
+-- YEAR-MONTH-DAY HOUR:MIN:SEC.MS
+--
+local function extract_datetime_from_log(str)
+    return string.match(str, "(%d+-%d+-%d+) (%d+:%d+:%d+.%d+)")
+end
+
+local function test_only_one_record_appears_in_logs(server, record, wait_time)
+    local first_log_record = nil
+    t.helpers.retrying({}, function()
+        first_log_record = server:grep_log(record)
+        t.assert(first_log_record)
+    end)
+    local first_log_time = extract_datetime_from_log(first_log_record)
+    -- We need to wait a bit in order to catch how much as possible
+    -- spam in server's logs.
+    require("fiber").sleep(wait_time)
+    local last_log_record = server:grep_log(record)
+    t.assert(last_log_record)
+    local last_log_time = extract_datetime_from_log(last_log_record)
+    t.assert_equals(first_log_time, last_log_time,
+                    "There are two identical records in logs")
+end
+
+rebalancer_recovery_group.before_all(function(g)
+    global_cfg = vtest.config_new(cfg_template)
+    vtest.cluster_new(g, global_cfg)
+    g.router = vtest.router_new(g, 'router', global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_wait_vclock_all(g)
+
+    local first_buckets = vtest.cluster_exec_each_master(g, function()
+        rawset(_G, 'create_test_space', function()
+            box.schema.create_space('test_space')
+            box.space.test_space:format({
+                {name = 'pk', type = 'unsigned'},
+                {name = 'bucket_id', type = 'unsigned'},
+            })
+            box.space.test_space:create_index('primary', {parts = {'pk'}})
+            box.space.test_space:create_index(
+                'bucket_id', {parts = {'bucket_id'}, unique = false})
+        end)
+        return _G.get_first_bucket()
+    end)
+    for _, bucket_id in pairs(first_buckets) do
+        g.router:exec(function(storage_bucket)
+            ivshard.router.call(storage_bucket, 'write', 'create_test_space')
+        end, {bucket_id})
+    end
+    g.buckets_not_active_log = 'Some buckets are not active'
+    g.buckets_not_active_pattern = "%d+-%d+-%d+ %d+:%d+:%d+.%d+ .* " ..
+                                   g.buckets_not_active_log
+    g.rebalancer_wait_interval = 0.01
+end)
+
+rebalancer_recovery_group.after_all(function(g)
+    g.cluster:drop()
+end)
+
+--
+-- Improve logging of rebalancer and recovery (gh-212).
+--
+rebalancer_recovery_group.test_no_logs_while_unsuccess_recovery = function(g)
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'recovery_bucket_stat' then
+                return error('TimedOut')
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+    local hanged_bucket_id = get_first_storage_bucket_id(g.replica_1_a)
+    move_bucket(g.replica_1_a, g.replica_2_a, hanged_bucket_id)
+    t.helpers.retrying({}, function()
+        t.assert(g.replica_1_a:grep_log('Error during recovery of bucket 1'))
+    end)
+    t.assert_not(g.replica_1_a:grep_log('Finish bucket recovery step, 0'))
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+        ivshard.storage._call = _G.old_call
+        ivshard.storage.recovery_wakeup()
+    end)
+    g.replica_1_a:exec(function(bucket_id)
+        t.helpers.retrying({}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id)[1].status,
+                            'active')
+        end)
+    end, {hanged_bucket_id})
+end
+
+rebalancer_recovery_group.test_rebalancer_routes_logging = function(g)
+    move_bucket(g.replica_2_a, g.replica_1_a,
+                get_first_storage_bucket_id(g.replica_2_a))
+    move_bucket(g.replica_3_a, g.replica_1_a,
+                get_first_storage_bucket_id(g.replica_3_a))
+    g.replica_1_a:exec(function()
+        ivshard.storage.rebalancer_wakeup()
+    end)
+    t.helpers.retrying({timeout = 10}, function()
+        t.assert(g.replica_1_a:grep_log(
+            'Apply rebalancer routes with 1 workers'))
+    end)
+    t.assert(g.replica_1_a:grep_log('Move 1 bucket'))
+    local route_1_to_2 = string.format('from %s to %s',
+                                       g.replica_1_a:replicaset_uuid(),
+                                       g.replica_2_a:replicaset_uuid())
+    local route_1_to_3 = string.format('from %s to %s',
+                                       g.replica_1_a:replicaset_uuid(),
+                                       g.replica_3_a:replicaset_uuid())
+    t.assert(g.replica_1_a:grep_log(route_1_to_2))
+    t.assert(g.replica_1_a:grep_log(route_1_to_3))
+end
+
+rebalancer_recovery_group.test_no_log_spam_when_buckets_no_active = function(g)
+    g.replica_2_a:stop()
+    g.replica_1_a:exec(function()
+        rawset(_G, 'old_rebalancer_interval', ivconst.REBALANCER_WORK_INTERVAL)
+        rawset(_G, 'old_rebalancer_timeout',
+               ivconst.REBALANCER_GET_STATE_TIMEOUT)
+        ivconst.REBALANCER_WORK_INTERVAL = 0.01
+        ivconst.REBALANCER_GET_STATE_TIMEOUT = 0.01
+    end)
+
+    t.helpers.retrying({timeout = 10}, function()
+        t.assert(g.replica_1_a:grep_log(g.buckets_not_active_log))
+    end)
+    test_only_one_record_appears_in_logs(g.replica_1_a,
+                                         g.buckets_not_active_pattern,
+                                         g.rebalancer_wait_interval * 2)
+    g.replica_1_a:exec(function()
+        ivconst.REBALANCER_WORK_INTERVAL = _G.old_rebalancer_interval
+        ivconst.REBALANCER_GET_STATE_TIMEOUT = _G.old_rebalancer_timeout
+    end)
+    g.replica_2_a:start()
+end
+
+rebalancer_recovery_group.test_no_object_is_outdated_logs = function(g)
+    g.replica_1_a:exec(function(cfg)
+        ivshard.storage.internal.errinj.ERRINJ_CFG_OUTDATED_DELAY = true
+        require('fiber').new(function()
+            ivshard.storage.cfg(cfg, box.info.uuid)
+        end)
+        ivshard.storage.rebalancer_wakeup()
+    end, {global_cfg})
+    move_bucket(g.replica_3_a, g.replica_1_a,
+                get_first_storage_bucket_id(g.replica_3_a))
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_CFG_OUTDATED_DELAY = false
+    end)
+    t.assert_not(g.replica_1_a:grep_log('Object is outdated'))
 end

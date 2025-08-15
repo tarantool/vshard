@@ -86,6 +86,7 @@ if not M then
         total_bucket_count = 0,
         errinj = {
             ERRINJ_CFG = false,
+            ERRINJ_CFG_OUTDATED_DELAY = false,
             ERRINJ_RELOAD = false,
             ERRINJ_CFG_DELAY = false,
             ERRINJ_LONG_RECEIVE = false,
@@ -964,9 +965,11 @@ local function recovery_step_by_type(type)
                 if err == nil then
                     err = 'unknown'
                 end
-                log.info(start_format, type)
-                log.error('Error during recovery of bucket %s on replicaset '..
-                          '%s: %s', bucket_id, peer_id, err)
+                if err.name ~= 'OBJECT_IS_OUTDATED' then
+                    log.info(start_format, type)
+                    log.error('Error during recovery of bucket %s ' ..
+                              ' on replicaset %s: %s', bucket_id, peer_id, err)
+                end
                 is_step_empty = false
             end
             goto continue
@@ -1003,7 +1006,7 @@ local function recovery_step_by_type(type)
         is_step_empty = false
 ::continue::
     end
-    if not is_step_empty then
+    if not is_step_empty and recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
@@ -1854,7 +1857,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
                     {bucket_id, id, data}, opts)
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
-                if not status then
+                if not status and err.name ~= 'OBJECT_IS_OUTDATED' then
                     return status, lerror.make(err)
                 end
                 limit = consts.BUCKET_CHUNK_SIZE
@@ -1866,7 +1869,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     end
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
                               {bucket_id, id, data}, opts)
-    if not status then
+    if not status and err.name ~= 'OBJECT_IS_OUTDATED' then
         return status, lerror.make(err)
     end
     while M.errinj.ERRINJ_LAST_SEND_DELAY do
@@ -1896,7 +1899,7 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     -- the same bucket is activated on the destination.
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
                               {bucket_id, id, {}, {is_last = true}}, opts)
-    if not status then
+    if not status and err.name ~= 'OBJECT_IS_OUTDATED' then
         return status, lerror.make(err)
     end
     return true
@@ -2823,6 +2826,7 @@ end
 --
 local function rebalancer_service_f(service)
     local module_version = M.module_version
+    local some_buckets_are_not_active = false
     while module_version == M.module_version do
         service:next_iter()
         while not M.is_rebalancer_active do
@@ -2844,7 +2848,13 @@ local function rebalancer_service_f(service)
                     'Error during downloading rebalancer states: %s',
                     replicasets))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            if not some_buckets_are_not_active then
+                log.info('Some buckets are not active, replicaset ' ..
+                         string.format('%s will retry', M.this_replicaset.id) ..
+                         string.format(' rebalancing every %s s.',
+                                       consts.REBALANCER_WORK_INTERVAL))
+                some_buckets_are_not_active = true
+            end
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2874,6 +2884,7 @@ local function rebalancer_service_f(service)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+            some_buckets_are_not_active = false
             goto continue
         end
         local routes = rebalancer_build_routes(replicasets)
@@ -2882,6 +2893,10 @@ local function rebalancer_service_f(service)
         -- incorrectly.
         assert(next(routes) ~= nil)
         for src_id, src_routes in pairs(routes) do
+            for dest_id, buckets_count in pairs(src_routes) do
+                log.info('Move %s bucket(s) from %s to %s',
+                         buckets_count, src_id, dest_id)
+            end
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
             lfiber.testcancel()
@@ -2889,14 +2904,17 @@ local function rebalancer_service_f(service)
                 rs, 'vshard.storage.rebalancer_apply_routes', {src_routes},
                 {timeout = consts.REBALANCER_APPLY_ROUTES_TIMEOUT})
             if not status then
-                log.error(service:set_status_error(
-                    'Error during routes appying on "%s": %s. '..
-                    'Try rebalance later', rs, lerror.make(err)))
+                if err.name ~= 'OBJECT_IS_OUTDATED' then
+                    log.error(service:set_status_error(
+                        'Error during routes appying on "%s": %s. '..
+                        'Try rebalance later', rs, lerror.make(err)))
+                end
                 service:set_activity('idling')
                 lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
                 goto continue
             end
         end
+        some_buckets_are_not_active = false
         log.info('Rebalance routes are sent. Schedule next wakeup after '..
                  '%f seconds', consts.REBALANCER_WORK_INTERVAL)
         service:set_activity('idling')
@@ -3744,6 +3762,9 @@ local function storage_cfg_xc(cfgctx)
     lschema.cfg(new_cfg)
     lreplicaset.rebind_replicasets(new_replicasets, M.replicasets)
     lreplicaset.outdate_replicasets(M.replicasets)
+    while M.errinj.ERRINJ_CFG_OUTDATED_DELAY do
+        lfiber.sleep(0.01)
+    end
     lreplicaset.create_workers(new_replicasets)
     M.replicasets = new_replicasets
     M.this_replicaset = new_replicasets[replicaset_id]
