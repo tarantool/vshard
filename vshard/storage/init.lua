@@ -1,6 +1,7 @@
 local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
+local json_encode = require('json').encode
 local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
@@ -2882,6 +2883,13 @@ local function rebalancer_service_f(service)
         -- incorrectly.
         assert(next(routes) ~= nil)
         for src_id, src_routes in pairs(routes) do
+            local routes_info = {}
+            for dest_id, buckets_count in pairs(src_routes) do
+                table.insert(routes_info,
+                             string.format('Move %s bucket(s) from %s to %s',
+                                           buckets_count, src_id, dest_id))
+            end
+            log.info(json_encode(routes_info))
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
             lfiber.testcancel()
