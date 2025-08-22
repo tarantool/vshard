@@ -927,7 +927,6 @@ end
 --
 local function recovery_step_by_type(type)
     local _bucket = box.space._bucket
-    local is_step_empty = true
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
@@ -944,12 +943,9 @@ local function recovery_step_by_type(type)
         if not destination then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
-            if is_step_empty then
-                log.info(start_format, type)
-                log.warn('Can not find for bucket %s its peer %s', bucket_id,
-                         peer_id)
-                is_step_empty = false
-            end
+            log.info(start_format, type)
+            log.warn('Can not find for bucket %s its peer %s', bucket_id,
+                     peer_id)
             goto continue
         end
         lfiber.testcancel()
@@ -960,15 +956,12 @@ local function recovery_step_by_type(type)
         -- Check if it is not a bucket error, and this result can
         -- not be used to recovery anything. Try later.
         if remote_bucket == nil and err ~= nil then
-            if is_step_empty then
-                if err == nil then
-                    err = 'unknown'
-                end
-                log.info(start_format, type)
-                log.error('Error during recovery of bucket %s on replicaset '..
-                          '%s: %s', bucket_id, peer_id, err)
-                is_step_empty = false
+            if err == nil then
+                err = 'unknown'
             end
+            log.info(start_format, type)
+            log.error('Error during recovery of bucket %s on replicaset '..
+                      '%s: %s', bucket_id, peer_id, err)
             goto continue
         end
         -- Do nothing until the bucket on both sides stopped
@@ -983,9 +976,7 @@ local function recovery_step_by_type(type)
            not bucket_status_is_transfer_in_progress(bucket.status) then
             goto continue
         end
-        if is_step_empty then
-            log.info(start_format, type)
-        end
+        log.info(start_format, type)
         lfiber.testcancel()
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BSENT}})
@@ -996,14 +987,13 @@ local function recovery_step_by_type(type)
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, BACTIVE})
             recovered = recovered + 1
-        elseif is_step_empty then
+        else
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
         end
-        is_step_empty = false
 ::continue::
     end
-    if not is_step_empty then
+    if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
