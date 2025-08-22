@@ -174,3 +174,28 @@ rebalancer_recovery_group.test_no_logs_while_unsuccess_recovery = function(g)
         end)
     end, {hanged_bucket_id})
 end
+
+rebalancer_recovery_group.test_rebalancer_routes_logging = function(g)
+    local moved_bucket_from_2 = vtest.storage_first_bucket(g.replica_2_a)
+    local moved_bucket_from_3 = vtest.storage_first_bucket(g.replica_3_a)
+    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket_from_2)
+    move_bucket(g.replica_3_a, g.replica_1_a, moved_bucket_from_3)
+    g.replica_1_a:exec(function()
+        ivshard.storage.rebalancer_wakeup()
+    end)
+    t.helpers.retrying({timeout = 60}, function()
+        t.assert(g.replica_1_a:grep_log(
+            'Apply rebalancer routes with 1 workers'))
+        end)
+    t.assert(g.replica_1_a:grep_log('Move 1 bucket'))
+    local route_1_to_2 = string.format('from %s to %s',
+                                       g.replica_1_a:replicaset_uuid(),
+                                       g.replica_2_a:replicaset_uuid())
+    local route_1_to_3 = string.format('from %s to %s',
+                                       g.replica_1_a:replicaset_uuid(),
+                                       g.replica_3_a:replicaset_uuid())
+    t.assert(g.replica_1_a:grep_log(route_1_to_2))
+    t.assert(g.replica_1_a:grep_log(route_1_to_3))
+    move_bucket(g.replica_1_a, g.replica_2_a, moved_bucket_from_2)
+    move_bucket(g.replica_1_a, g.replica_3_a, moved_bucket_from_3)
+end
