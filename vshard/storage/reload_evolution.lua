@@ -31,6 +31,9 @@ migrations[#migrations + 1] = function(M)
         M.bucket_generation_cond = fiber.cond()
         M.route_map = {}
     end
+    if not M.replicasets_active_completeness then
+        M.replicasets_active_completeness = {}
+    end
 end
 
 --
