@@ -1,6 +1,7 @@
 local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
+local json_encode = require('json').encode
 local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
@@ -231,7 +232,10 @@ if not M then
         -- Condition variable fired each time a bucket locked for
         -- RW refs reaches 0 of the latter.
         bucket_rw_lock_is_ready_cond = lfiber.cond(),
-
+        -- This table contains true/false values for each replicaset depending
+        -- on whether all of its buckets have BACTIVE status during rebalancing
+        -- stage.
+        replicasets_active_completeness = {},
         ------------------------- Reload -------------------------
         -- Version of the loaded module. This number is used on
         -- reload to determine which upgrade scripts to run.
@@ -1003,7 +1007,7 @@ local function recovery_step_by_type(type)
         is_step_empty = false
 ::continue::
     end
-    if not is_step_empty then
+    if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
@@ -2794,6 +2798,12 @@ local function rebalancer_download_states()
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
+            if not M.replicasets_active_completeness[replicaset.id] then
+                M.replicasets_active_completeness[replicaset.id] = true
+                log.info('Some buckets in replicaset %s are not active! ' ..
+                         'Will retry rebalancing every %s s.', replicaset.id,
+                         consts.REBALANCER_WORK_INTERVAL)
+            end
             return
         end
         local bucket_count = state.bucket_active_count +
@@ -2805,6 +2815,7 @@ local function rebalancer_download_states()
             replicasets[id] = {bucket_count = bucket_count,
                                weight = replicaset.weight,
                                pinned_count = state.bucket_pinned_count}
+            M.replicasets_active_completeness[replicaset.id] = false
         end
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
@@ -2882,6 +2893,13 @@ local function rebalancer_service_f(service)
         -- incorrectly.
         assert(next(routes) ~= nil)
         for src_id, src_routes in pairs(routes) do
+            local routes_info = {}
+            for dest_id, buckets_count in pairs(src_routes) do
+                table.insert(routes_info,
+                             string.format('Move %s bucket(s) from %s to %s',
+                                           buckets_count, src_id, dest_id))
+            end
+            log.info(json_encode(routes_info))
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
             lfiber.testcancel()
