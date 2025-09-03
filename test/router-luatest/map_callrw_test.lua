@@ -647,3 +647,41 @@ g.test_map_callrw_array_encoded_as_map = function(cg)
         end
     end, nil, bids)
 end
+
+--
+-- gh-594: using cdata as bucket_id should be prohibited, as it causes fullscan
+-- of the cluster and subsequent memory leak in the route_map.
+--
+g.test_map_callrw_with_cdata_bucket_id = function(cg)
+    cg.router:exec(function()
+        -- vshard.router._buckets_group is checked for the sake of unit
+        -- testing of the map_callrw() protection.
+        local msg = 'is not a number'
+        local _, err = ivshard.router._buckets_group({1ULL, 2ULL}, 1)
+        ilt.assert_str_contains(err.message, msg)
+        _, err = ivshard.router._buckets_group({1, 2ULL}, 1)
+        ilt.assert_str_contains(err.message, msg)
+        _, err = ivshard.router._buckets_group({1ULL, 2}, 1)
+        ilt.assert_str_contains(err.message, msg)
+
+        -- Map_callrw in general forbids using cdata.
+        _, err = ivshard.router.map_callrw('assert', {'a'},
+            {bucket_ids = {1, 2ULL}})
+        ilt.assert_str_contains(err.message, msg)
+        _, err = ivshard.router.map_callrw('assert', {'a'},
+            {bucket_ids = {[1] = 'a', [2ULL] = 'b'}})
+        ilt.assert_str_contains(err.message, msg)
+        _, err = ivshard.router.map_callrw('assert', {'a'},
+            {bucket_ids = {[1ULL] = 'a', [2ULL] = 'b'}})
+        ilt.assert_str_contains(err.message, msg)
+
+        local res
+        -- But there's one case, where it's not possible to forbid that,
+        -- since it's interpreted as {1 = 5ULL, 2 = 6ULL}. If there's a way,
+        -- which will allow to forbid that, it'd be great.
+        res, err = ivshard.router.map_callrw('assert', {'a'},
+            {bucket_ids = {5ULL, 6ULL}})
+        ilt.assert(res)
+        ilt.assert_not(err)
+    end)
+end

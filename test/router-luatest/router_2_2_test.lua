@@ -1165,3 +1165,39 @@ g.test_discovery_can_be_restarted_fast = function(g)
     t.assert_not(g.router:grep_log('assertion failed'))
     vtest.router_cfg(g.router, global_cfg)
 end
+
+--
+-- gh-594: using cdata as bucket_id should be prohibited, as it causes fullscan
+-- of the cluster and subsequent memory leak in the route_map.
+--
+g.test_cdata_as_bucket_id_is_prohibited = function(g)
+    g.router:exec(function()
+        local msg = 'Usage: '
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.buckets_info(1ULL, 2ULL)
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.call(1ULL, 'read', 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.callro(1ULL, 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.callbro(1ULL, 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.callrw(1ULL, 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.callre(1ULL, 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.callbre(1ULL, 'assert', {'a'})
+        end)
+        ilt.assert_error_msg_contains(msg, function()
+            ivshard.router.route(1ULL)
+        end)
+        -- vshard.router._bucket_reset() is not public and doesn't require
+        -- protection from the misusage.
+    end)
+end
