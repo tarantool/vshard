@@ -206,6 +206,10 @@ local function buckets_group(router, bucket_ids, timeout)
         if bucket_map[bucket_id] then
             goto continue
         end
+        if type(bucket_id) ~= 'number' then
+            local msg = string.format("Bucket '%s' is not a number", bucket_id)
+            return nil, lerror.make(msg)
+        end
         -- Avoid duplicates.
         bucket_map[bucket_id] = true
         if fiber_clock() > deadline then
@@ -609,6 +613,9 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
     end
     local replicaset, err
     local tend = fiber_clock() + timeout
+    if type(bucket_id) ~= 'number' then
+        error('Usage: call(bucket_id, mode, func, args, opts)')
+    end
     if bucket_id > router.total_bucket_count or bucket_id <= 0 then
         error('Bucket is unreachable: bucket id is out of range')
     end
@@ -1140,8 +1147,10 @@ local function router_map_callrw(router, func, args, opts)
         timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_by_buckets(router, plain_bucket_ids, timeout)
         -- Grouped arguments are only possible with partial Map-Reduce.
-        grouped_args =
-            router_group_map_callrw_args(router, plain_bucket_ids, bucket_ids)
+        if timeout then
+            grouped_args = router_group_map_callrw_args(
+                router, plain_bucket_ids, bucket_ids)
+        end
     else
         timeout, err, err_id, rid, replicasets_to_map =
             router_ref_storage_all(router, timeout)
