@@ -2918,8 +2918,9 @@ local function rebalancer_service_f(service, limiter)
                 goto continue
             end
         end
-        log.info('Rebalance routes are sent. Schedule next wakeup after '..
-                 '%f seconds', consts.REBALANCER_WORK_INTERVAL)
+        log.info('The following rebalancer routes were sent: %s. ' ..
+                 'Schedule next wakeup after %f seconds', json_encode(routes),
+                 consts.REBALANCER_WORK_INTERVAL)
         service:set_activity('idling')
         lfiber.testcancel()
         lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
