@@ -146,6 +146,18 @@ local function wait_for_bucket_is_transferred(src_storage, dest_storage,
     end, {bucket_id})
 end
 
+local function move_bucket(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        t.helpers.retrying({timeout = 60}, function()
+            local res, err = ivshard.storage.bucket_send(bucket_id,
+                                                         replicaset_id)
+            t.assert_not(err)
+            t.assert(res)
+        end)
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+    wait_for_bucket_is_transferred(src_storage, dest_storage, bucket_id)
+end
+
 --
 -- Reduce spam of "Finish bucket recovery step" logs and add logging of
 -- recovered buckets in recovery service (gh-212).
@@ -192,4 +204,33 @@ test_group.test_no_logs_while_unsuccess_recovery = function(g)
                                    hung_bucket_id_1)
     wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
                                    hung_bucket_id_2)
+end
+
+--
+-- Add logging of routes in rebalancer service (gh-212).
+--
+test_group.test_rebalancer_routes_logging = function(g)
+    local moved_bucket_from_2 = vtest.storage_first_bucket(g.replica_2_a)
+    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket_from_2)
+    local moved_bucket_from_3 = vtest.storage_first_bucket(g.replica_3_a)
+    move_bucket(g.replica_3_a, g.replica_1_a, moved_bucket_from_3)
+    vtest.cluster_rebalancer_enable(g)
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_1_a:exec(function() ivshard.storage.rebalancer_wakeup() end)
+        t.assert(g.replica_1_a:grep_log('Apply rebalancer routes with 1 ' ..
+                                        'workers'))
+    end)
+    local rebalancer_routes_msg = string.format(
+        'The following rebalancer routes were sent: {\"%s\":',
+        g.replica_1_a:replicaset_uuid())
+    local rebalancer_transfer_msg = string.format(
+        '1 buckets were successfully sent to %s',
+        g.replica_2_a:replicaset_uuid())
+    t.helpers.retrying({}, function()
+        t.assert(g.replica_1_a:grep_log(rebalancer_routes_msg))
+        t.assert(g.replica_1_a:grep_log(rebalancer_transfer_msg))
+        g.replica_1_a:exec(function() ivshard.storage.rebalancer_wakeup() end)
+        g.replica_1_a:grep_log('The cluster is balanced ok.')
+    end)
+    vtest.cluster_rebalancer_disable(g)
 end

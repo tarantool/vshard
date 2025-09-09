@@ -71,7 +71,7 @@ fiber.sleep(0.5)
 test_run:switch('box_1_a')
 add_replicaset()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-wait_rebalancer_state('Rebalance routes are sent', test_run)
+wait_rebalancer_state('The following rebalancer routes were sent', test_run)
 
 -- Now, add a second replicaset.
 
@@ -153,7 +153,7 @@ fiber.sleep(0.5)
 test_run:switch('box_1_a')
 remove_second_replicaset_first_stage()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-wait_rebalancer_state('Rebalance routes are sent', test_run)
+wait_rebalancer_state('The following rebalancer routes were sent', test_run)
 -- Rebalancing has been started - now remove second replicaset.
 remove_replicaset_first_stage()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
