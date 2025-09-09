@@ -78,7 +78,7 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
-wait_rebalancer_state("Rebalance routes are sent", test_run)
+wait_rebalancer_state("The following rebalancer routes were sent", test_run)
 
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
@@ -118,7 +118,7 @@ _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 -- Return 1%.
 cfg.rebalancer_disbalance_threshold = 0.01
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-wait_rebalancer_state('Rebalance routes are sent', test_run)
+wait_rebalancer_state('The following rebalancer routes were sent', test_run)
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 _bucket.index.status:min({vshard.consts.BUCKET.ACTIVE})
