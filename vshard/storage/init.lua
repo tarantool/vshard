@@ -2885,6 +2885,7 @@ local function rebalancer_service_f(service)
         -- then max_disbalance would have been calculated
         -- incorrectly.
         assert(next(routes) ~= nil)
+        log.info(json_encode(routes))
         for src_id, src_routes in pairs(routes) do
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
