@@ -333,6 +333,14 @@ local function error_is_timeout(err)
            err.message == 'Timeout exceeded') or err.type == 'TimedOut'
 end
 
+local function errors_are_same(err1, err2)
+    if (err1 and not err2) or (not err1 and err2) then
+        return false
+    end
+    return err1.code == err2.code and err1.message == err2.message and
+          (err1.prev and err1.prev.code) == (err2.prev and err2.prev.code)
+end
+
 return {
     code = error_code,
     box = box_error,
@@ -342,4 +350,5 @@ return {
     alert = make_alert,
     timeout = make_timeout,
     is_timeout = error_is_timeout,
+    are_same = errors_are_same,
 }

@@ -45,6 +45,8 @@
 --                                               fails, after which the node
 --                                               is considered unhealthy>,
 --             failover_interval = <interval in seconds between pings>,
+--             last_error = <error from the last call, used for deduplication
+--                           of the error logging>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -697,10 +699,17 @@ local function replica_call(replica, func, args, opts)
            err.type == 'ClientError') then
             err = lerror.from_string(err.message) or err
         end
-        log.error("Exception during calling '%s' on '%s': %s", func, replica,
-                  err)
+        local log_level = lerror.are_same(err, replica.last_error) and
+                          'verbose' or 'error'
+        log[log_level]("Exception during calling '%s' on '%s': %s",
+                       func, replica, err)
+        replica.last_error = err
         return false, nil, lerror.make(err)
     else
+        if replica.last_error ~= nil then
+            log.info("Calling '%s' on '%s' succeeded", func, replica)
+            replica.last_error = nil
+        end
         replica_on_success_request(replica)
     end
     if storage_status == nil then
