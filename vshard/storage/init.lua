@@ -1005,7 +1005,7 @@ local function recovery_step_by_type(type, limiter)
         is_step_empty = false
 ::continue::
     end
-    if not is_step_empty then
+    if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
     end
