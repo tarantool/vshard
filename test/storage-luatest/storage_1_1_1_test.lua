@@ -188,6 +188,7 @@ rebalancer_recovery_group.test_no_logs_while_unsuccess_recovery = function(g)
         g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
         t.assert(g.replica_1_a:grep_log('Finish bucket recovery step, 2 ' ..
                                         'sending buckets are recovered among'))
+        t.assert(g.replica_1_a:grep_log('Recovered buckets: %[1,2%]'))
     end)
     assert_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
                                  hanged_bucket_id_1)

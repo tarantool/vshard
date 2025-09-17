@@ -5,6 +5,7 @@ local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
+local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
@@ -931,6 +932,7 @@ local function recovery_step_by_type(type)
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {}
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -1001,11 +1003,13 @@ local function recovery_step_by_type(type)
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
         end
         is_step_empty = false
+        table.insert(recovered_buckets, bucket_id)
 ::continue::
     end
     if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
+        log.info('Recovered buckets: %s', json_encode(recovered_buckets))
     end
     return total, recovered
 end
