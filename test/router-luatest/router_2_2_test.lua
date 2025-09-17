@@ -1201,3 +1201,28 @@ g.test_cdata_as_bucket_id_is_prohibited = function(g)
         -- protection from the misusage.
     end)
 end
+
+--
+-- gh-588: services should not spam the same errors on every iteration.
+--
+g.test_services_do_not_spam_same_errors = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_2_a)
+    vtest.storage_stop(g.replica_2_a)
+    vtest.storage_stop(g.replica_2_b)
+
+    --
+    -- Discovery service.
+    --
+    g.router:exec(function(bid)
+        ivshard.router._bucket_reset(bid)
+    end, {bid})
+    -- Note, that there will be 2 messages from the discovery, since the errors
+    -- are different: "Peer closed" and "No such file", the latter is the last.
+    local msg = "Error during discovery .* No such file"
+    g.router:assert_log_exactly_once(msg, {timeout = 0.5, on_yield = function()
+        ivshard.router.discovery_wakeup()
+    end})
+
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    vtest.storage_start(g.replica_2_b, global_cfg)
+end

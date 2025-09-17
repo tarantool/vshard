@@ -308,7 +308,7 @@ local function discovery_service_f(router, service)
                 replicaset:callro('vshard.storage.buckets_discovery', iter.args,
                                   opts)
             if not future then
-                log.warn(service:set_status_error(
+                service:set_status_error(service:log_error_if_needed('warn',
                         'Error during discovery %s, retry will be done '..
                         'later: %s', rs_id, err))
                 goto continue
@@ -338,7 +338,7 @@ local function discovery_service_f(router, service)
             end
             if not result then
                 future:discard()
-                log.warn(service:set_status_error(
+                service:set_status_error(service:log_error_if_needed('warn',
                         'Error during discovery %s, retry will be done '..
                         'later: %s', rs_id, err))
                 goto continue

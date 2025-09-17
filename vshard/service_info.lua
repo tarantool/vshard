@@ -8,6 +8,7 @@
 -- using luatest. For monitoring purposes the info can be accessed via
 -- vshard.router/storage.info({with_services = true}).
 --
+local log = require('log')
 
 local SERVICE_TEMPLATE = {
     -- For logging purposes
@@ -45,6 +46,15 @@ local function service_set_status_ok(service)
     service.error = ''
 end
 
+local function service_log_error_if_needed(service, level, err, ...)
+    local err_str = string.format(err, ...)
+    if not service.is_error_set then
+        level = service.error ~= err_str and level or 'verbose'
+        log[level](err_str)
+    end
+    return err_str
+end
+
 local function service_set_status_error(service, err, ...)
     local err_str = string.format(err, ...)
     if not service.is_error_set then
@@ -77,6 +87,7 @@ local service_mt = {
         set_status_error = service_set_status_error,
         -- Misc
         info = service_info,
+        log_error_if_needed = service_log_error_if_needed,
     }
 }
 
