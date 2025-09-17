@@ -147,8 +147,8 @@ local function wait_for_bucket_is_transferred(src_storage, dest_storage,
 end
 
 --
--- Reduce spam of "Finish bucket recovery step" logs in recovery
--- service (gh-212).
+-- Reduce spam of "Finish bucket recovery step" logs and add logging of
+-- recovered buckets in recovery service (gh-212).
 --
 test_group.test_no_logs_while_unsuccess_recovery = function(g)
     g.replica_2_a:exec(function()
@@ -180,11 +180,13 @@ test_group.test_no_logs_while_unsuccess_recovery = function(g)
             ivshard.storage.recovery_wakeup()
         end)
         g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
-        -- In rare cases the recovery service may restore buckets one by one,
-        -- not all at once. That is why we shouldn't hardcode the amount of
-        -- "sending" buckets.
-        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step, %d ' ..
-                                        'sending buckets are recovered among'))
+        -- In some rare cases the recovery service can recover buckets one
+        -- by one. As a result we get multiple "Finish bucket recovery" and
+        -- "Recovery buckets" logs with different bucket ids and buckets'
+        -- count. That is why we should grep general logs without buckets'
+        -- count and bucket ids to avoid flakiness.
+        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step'))
+        t.assert(g.replica_1_a:grep_log('Recovered buckets'))
     end)
     wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
                                    hung_bucket_id_1)

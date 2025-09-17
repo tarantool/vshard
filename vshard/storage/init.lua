@@ -5,6 +5,7 @@ local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
+local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
@@ -922,6 +923,12 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
     return status == BSENT or status == BGARBAGE
 end
 
+local function recovery_save_recovered(dict, id, status)
+    local ids = dict[status] or {}
+    table.insert(ids, id)
+    dict[status] = ids
+end
+
 --
 -- Check status of each transferring bucket. Resolve status where
 -- possible.
@@ -932,6 +939,7 @@ local function recovery_step_by_type(type, limiter)
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {}
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -992,12 +1000,15 @@ local function recovery_step_by_type(type, limiter)
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BSENT}})
             recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BSENT)
         elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
             recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BGARBAGE)
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, BACTIVE})
             recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BACTIVE)
         elseif is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
@@ -1007,7 +1018,8 @@ local function recovery_step_by_type(type, limiter)
     end
     if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
-                 'among %d', recovered, type, total)
+                 'among %d. Recovered buckets: %s', recovered, type, total,
+                 json_encode(recovered_buckets))
     end
     return total, recovered
 end
