@@ -220,3 +220,22 @@ rebalancer_recovery_group.test_rebalancer_routes_logging = function(g)
         g.replica_1_a:grep_log('The cluster is balanced ok.')
     end)
 end
+
+rebalancer_recovery_group.test_no_log_spam_when_buckets_no_active = function(g)
+    local moved_bucket = vtest.storage_first_bucket(g.replica_2_a)
+    start_bucket_move(g.replica_1_a, g.replica_2_a, moved_bucket)
+    wait_for_bucket_is_transferred(g.replica_1_a, g.replica_2_a, moved_bucket)
+    vtest.storage_stop(g.replica_2_a)
+    local buckets_not_active = string.format('Some buckets in replicaset ' ..
+                                             '%s are not active',
+                                             g.replica_2_a:replicaset_uuid())
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_1_a:exec(function()
+            ivshard.storage.rebalancer_wakeup()
+        end)
+        t.assert(g.replica_1_a:grep_log(buckets_not_active))
+    end)
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    start_bucket_move(g.replica_2_a, g.replica_1_a, moved_bucket)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a, moved_bucket)
+end
