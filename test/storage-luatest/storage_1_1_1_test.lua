@@ -51,6 +51,18 @@ test_group.before_all(function(g)
     vtest.cluster_new(g, global_cfg)
     vtest.cluster_bootstrap(g, global_cfg)
     vtest.cluster_rebalancer_disable(g)
+    vtest.cluster_wait_vclock_all(g)
+
+    vtest.cluster_exec_each_master(g, function()
+        box.schema.create_space('test_space')
+        box.space.test_space:format({
+            {name = 'pk', type = 'unsigned'},
+            {name = 'bucket_id', type = 'unsigned'},
+        })
+        box.space.test_space:create_index('primary', {parts = {'pk'}})
+        box.space.test_space:create_index(
+            'bucket_id', {parts = {'bucket_id'}, unique = false})
+    end)
 end)
 
 test_group.after_all(function(g)
@@ -100,4 +112,82 @@ test_group.test_manual_bucket_send_doubled_buckets = function(g)
         _G.bucket_gc_wait()
         ilt.assert_equals(box.space._bucket:get(bid), nil)
     end, {bid})
+end
+
+local function start_partial_bucket_move(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        local res, err = ivshard.storage.bucket_send(bucket_id, replicaset_id)
+        t.assert_not(res)
+        t.assert(err)
+            -- The bucket on src_storage must be in "sending" state. The
+            -- recovery service on src_storage should not erase this bucket.
+        t.assert_equals(box.space._bucket:get(bucket_id).status, 'sending')
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            -- The recovery service on dest_storage should clear this bucket.
+            t.assert_equals(box.space._bucket:select(bucket_id), {})
+        end)
+    end, {bucket_id})
+end
+
+local function wait_for_bucket_is_transferred(src_storage, dest_storage,
+                                              bucket_id)
+    src_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id), {})
+        end)
+    end, {bucket_id})
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:get(bucket_id).status, 'active')
+        end)
+    end, {bucket_id})
+end
+
+--
+-- Reduce spam of "Finish bucket recovery step" logs in recovery
+-- service (gh-212).
+--
+test_group.test_no_logs_while_unsuccess_recovery = function(g)
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'recovery_bucket_stat' then
+                return error('TimedOut')
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+    local hung_bucket_id_1 = vtest.storage_first_bucket(g.replica_1_a)
+    start_partial_bucket_move(g.replica_1_a, g.replica_2_a, hung_bucket_id_1)
+    local hung_bucket_id_2 = vtest.storage_first_bucket(g.replica_1_a)
+    start_partial_bucket_move(g.replica_1_a, g.replica_2_a, hung_bucket_id_2)
+    t.helpers.retrying({}, function()
+        g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
+        t.assert(g.replica_1_a:grep_log('Error during recovery of bucket'))
+    end)
+    t.assert_not(g.replica_1_a:grep_log('Finish bucket recovery step, 0'))
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+        ivshard.storage._call = _G.old_call
+    end)
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_2_a:exec(function()
+            ivshard.storage.garbage_collector_wakeup()
+            ivshard.storage.recovery_wakeup()
+        end)
+        g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
+        -- In rare cases the recovery service may restore buckets one by one,
+        -- not all at once. That is why we shouldn't hardcode the amount of
+        -- "sending" buckets.
+        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step, %d ' ..
+                                        'sending buckets are recovered among'))
+    end)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
+                                   hung_bucket_id_1)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
+                                   hung_bucket_id_2)
 end
