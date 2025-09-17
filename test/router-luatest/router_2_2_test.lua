@@ -643,21 +643,25 @@ g.test_named_config_identification = function(g)
     vtest.router_cfg(g.router, global_cfg)
 end
 
---
--- gh-ee-4: when a known master is disconnected, the router wouldn't try to find
--- the new one and would keep trying to hit the old instance. It should instead
--- try to locate a new master when the old one is disconnected.
---
-g.test_master_discovery_on_disconnect = function(g)
+local function get_auto_master_global_cfg()
     local new_cfg_template = table.deepcopy(cfg_template)
-    -- Auto-master simplifies master switch which is very needed in this test.
     for _, rs in pairs(new_cfg_template.sharding) do
         rs.master = 'auto'
         for _, r in pairs(rs.replicas) do
             r.master = nil
         end
     end
-    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    return vtest.config_new(new_cfg_template)
+end
+
+--
+-- gh-ee-4: when a known master is disconnected, the router wouldn't try to find
+-- the new one and would keep trying to hit the old instance. It should instead
+-- try to locate a new master when the old one is disconnected.
+--
+g.test_master_discovery_on_disconnect = function(g)
+    -- Auto-master simplifies master switch which is very needed in this test.
+    local new_cluster_cfg = get_auto_master_global_cfg()
     vtest.cluster_cfg(g, new_cluster_cfg)
     g.replica_1_a:update_box_cfg{read_only = false}
     g.replica_1_b:update_box_cfg{read_only = true}
@@ -1225,4 +1229,44 @@ g.test_services_do_not_spam_same_errors = function(g)
 
     vtest.storage_start(g.replica_2_a, global_cfg)
     vtest.storage_start(g.replica_2_b, global_cfg)
+end
+
+g.test_replicaset_services_do_not_spam_same_errors = function(g)
+    local new_cluster_cfg = get_auto_master_global_cfg()
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    --
+    -- Replica failover service. Replicaset failover fails only on assertion,
+    -- which should not normally happen.
+    --
+    g.replica_2_a:exec(function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'info' then
+                error('TimedOut')
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+    local msg = "Ping error from replica_2_a"
+    g.router:assert_log_exactly_once(msg, {timeout = 0.5, on_yield = function()
+        _G.failover_wakeup()
+    end})
+
+    --
+    -- Master search services.
+    --
+    g.router:exec(function(uuid)
+        ivshard.router.internal.static_router.replicasets[uuid].master = nil
+    end, {g.replica_2_a:replicaset_uuid()})
+    msg = "Error during master search"
+    g.router:assert_log_exactly_once(msg, {timeout = 0.5, on_yield = function()
+        ivshard.router.master_search_wakeup()
+    end})
+
+    g.replica_2_a:exec(function()
+        ivshard.storage._call = _G.old_call
+        _G.old_call = nil
+    end)
+    vtest.router_cfg(g.router, global_cfg)
 end

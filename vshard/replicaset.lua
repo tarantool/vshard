@@ -1806,7 +1806,7 @@ local function replica_failover_service_step(replica, data)
     data.info:set_activity('pinging')
     local net_status, _, err = replica_failover_ping(replica, opts)
     if not net_status then
-        log.error(data.info:set_status_error(
+        data.info:set_status_error(data.info:log_error_if_needed('error',
             'Ping error from %s: perhaps a connection is down: %s',
             replica, err))
         -- Connection hangs. Recreate it to be able to
@@ -1938,7 +1938,7 @@ local function replicaset_failover_service_step(replicaset, data)
     data.info:set_activity('updating replicas')
     local ok, replica_is_changed = pcall(replicaset_failover_step, replicaset)
     if not ok then
-        log.error(data.info:set_status_error(
+        data.info:set_status_error(data.info:log_error_if_needed('error',
             'Error during failovering: %s',
             lerror.make(replica_is_changed)))
         replica_is_changed = true
@@ -2040,7 +2040,7 @@ local function replicaset_master_search_service_step(replicaset, data)
     local is_done, is_nop, err =
         replicaset_master_search_step(replicaset, {mode = mode})
     if err then
-        log.error(data.info:set_status_error(
+        data.info:set_status_error(data.info:log_error_if_needed('error',
             'Error during master search: %s', lerror.make(err)))
     end
     if is_done then
