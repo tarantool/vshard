@@ -2700,7 +2700,7 @@ local function rebalancer_service_apply_routes_f(service, routes)
         local f = workers[i]
         local ok, res = f:join()
         if not ok then
-            log.error(service:set_status_error(
+            service:set_status_error(service:log_error_if_needed('error',
                 'Rebalancer worker %d threw an exception: %s', i, res))
         end
     end
@@ -2708,7 +2708,7 @@ local function rebalancer_service_apply_routes_f(service, routes)
         log.info('Rebalancer routes are applied')
         service:set_status_ok()
     else
-        log.info(service:set_status_error(
+        service:set_status_error(service:log_error_if_needed('info',
             "Couldn't apply some rebalancer routes: %s", dispenser.error))
     end
     local throttled = {}
@@ -2796,6 +2796,9 @@ local function rebalancer_download_states()
     if sum == M.total_bucket_count then
         return replicasets, total_bucket_active_count
     else
+        -- This message is intentionally not deduplicated, since it's spammed
+        -- either before `vshard.router.bootstrap` is called or due to serious
+        -- problems in cluster (e.g. doubled buckets).
         log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet. Expected %d, but '..
                  'found %d', M.total_bucket_count, sum)
@@ -2825,11 +2828,14 @@ local function rebalancer_service_f(service)
         end
         if not status or replicasets == nil then
             if not status then
-                log.error(service:set_status_error(
-                    'Error during downloading rebalancer states: %s',
+                service:set_status_error(service:log_error_if_needed('error',
+                    'Error during downloading rebalancer states: %s. ' ..
+                    'Some buckets are not active, retry rebalancing later',
                     replicasets))
+            else
+                service:set_status_error(service:log_error_if_needed('info',
+                    'Some buckets are not active, retry rebalancing later'))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2874,7 +2880,7 @@ local function rebalancer_service_f(service)
                 rs, 'vshard.storage.rebalancer_apply_routes', {src_routes},
                 {timeout = consts.REBALANCER_APPLY_ROUTES_TIMEOUT})
             if not status then
-                log.error(service:set_status_error(
+                service:set_status_error(service:log_error_if_needed('error',
                     'Error during routes appying on "%s": %s. '..
                     'Try rebalance later', rs, lerror.make(err)))
                 service:set_activity('idling')

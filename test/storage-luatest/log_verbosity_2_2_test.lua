@@ -92,4 +92,23 @@ test_group.test_services_do_not_spam_same_errors = function(g)
             end
         end)
     end, {bids})
+
+    --
+    -- Rebalancer service.
+    --
+    vtest.cluster_rebalancer_enable(g)
+    g.replica_2_a:exec(function()
+        rawset(_G, 'old_call', ivshard.storage.rebalancer_request_state)
+        ivshard.storage.rebalancer_request_state = function()
+            error('TimedOut')
+        end
+    end)
+    msg = "Some buckets are not active"
+    g.replica_1_a:assert_log_exactly_once(msg, {timeout = 3,
+        on_yield = function() ivshard.storage.rebalancer_wakeup() end})
+    g.replica_2_a:exec(function()
+        ivshard.storage.rebalancer_request_state = _G.old_call
+    end)
+
+    vtest.cluster_rebalancer_disable(g)
 end
