@@ -207,6 +207,11 @@ local error_message_template = {
         msg = 'Mismatch server name: expected "%s", but got "%s"',
         args = {'expected_name', 'actual_name'},
     },
+    [42] = {
+        name = 'BUCKETS_NOT_IN_PROPER_STATE',
+        msg = 'Replicaset %s doesn\'t have all buckets in proper state',
+        args = {'replicaset_id'}
+    }
 }
 
 --

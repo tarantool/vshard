@@ -2802,11 +2802,12 @@ local function rebalancer_download_states()
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for id, replicaset in pairs(M.replicasets) do
-        local state, err = master_call(
+        local state = master_call(
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
-            return nil, err
+            return lerror.vshard(lerror.code.BUCKETS_NOT_IN_PROPER_STATE,
+                                 replicaset.id), nil
         end
         local bucket_count = state.bucket_active_count +
                              state.bucket_pinned_count
@@ -2850,13 +2851,15 @@ local function rebalancer_service_f(service, limiter)
         if M.module_version ~= module_version then
             return
         end
-        if not status or replicasets == nil then
+        if not status or total_bucket_active_count == nil then
             local err = status and total_bucket_active_count or replicasets
             if err then
                 limiter:log_error(err, service:set_status_error(
-                    'Error during downloading rebalancer states: %s', err))
+                    'Error during downloading rebalancer states: %s',
+                    err.replicaset_id))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            log.info('Some buckets in replicaset %s are not active, retry ' ..
+                     'rebalancing later', err and err.replicaset_id)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)

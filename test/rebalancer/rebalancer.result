@@ -318,7 +318,13 @@ _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
 ---
 - [150, 'receiving']
 ...
-wait_rebalancer_state("Some buckets are not active", test_run)
+formatted_replicaset_uuid = string.gsub(util.replicasets[1], '%-', '%%-')
+---
+...
+log_msg = string.format('Some buckets in replicaset %s are not active', formatted_replicaset_uuid)
+---
+...
+wait_rebalancer_state(log_msg, test_run)
 ---
 ...
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
