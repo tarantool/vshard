@@ -2798,7 +2798,7 @@ local function rebalancer_download_states()
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
-            return
+            return nil, replicaset.id
         end
         local bucket_count = state.bucket_active_count +
                              state.bucket_pinned_count
@@ -2813,7 +2813,7 @@ local function rebalancer_download_states()
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
     if sum == M.total_bucket_count then
-        return replicasets, total_bucket_active_count
+        return total_bucket_active_count, replicasets
     else
         log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet. Expected %d, but '..
@@ -2837,18 +2837,19 @@ local function rebalancer_service_f(service)
         end
         service:set_activity('downloading states')
         lfiber.testcancel()
-        local status, replicasets, total_bucket_active_count =
+        local status, total_bucket_active_count, replicasets =
             pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
             return
         end
-        if not status or replicasets == nil then
+        if not status or total_bucket_active_count == nil then
             if not status then
                 log.error(service:set_status_error(
                     'Error during downloading rebalancer states: %s',
                     replicasets))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            log.info('Some buckets in replicaset %s are not active, retry ' ..
+                     'rebalancing later', replicasets)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
