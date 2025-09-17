@@ -5,6 +5,7 @@ local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
+local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
@@ -931,6 +932,7 @@ local function recovery_step_by_type(type)
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {SENT = {}, GARBAGE = {}, ACTIVE = {}}
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -990,12 +992,15 @@ local function recovery_step_by_type(type)
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BSENT}})
             recovered = recovered + 1
+            table.insert(recovered_buckets['SENT'], bucket_id)
         elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
             recovered = recovered + 1
+            table.insert(recovered_buckets['SENT'], bucket_id)
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, BACTIVE})
             recovered = recovered + 1
+            table.insert(recovered_buckets['ACTIVE'], bucket_id)
         elseif is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
@@ -1005,7 +1010,8 @@ local function recovery_step_by_type(type)
     end
     if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
-                 'among %d', recovered, type, total)
+                 'among %d. Recovered buckets: %s', recovered, type, total,
+                 json_encode(recovered_buckets))
     end
     return total, recovered
 end

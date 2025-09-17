@@ -186,8 +186,13 @@ rebalancer_recovery_group.test_no_logs_while_unsuccess_recovery = function(g)
             ivshard.storage.recovery_wakeup()
         end)
         g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
-        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step, 2 ' ..
-                                        'sending buckets are recovered among'))
+        -- In some rare cases the recovery service can recover buckets one
+        -- by one. As a result we get multiple "Finish bucket recovery" and
+        -- "Recovery buckets" logs with different bucket ids and buckets'
+        -- count. That is why we should grep general logs without buckets'
+        -- count and bucket ids to avoid flakiness.
+        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step'))
+        t.assert(g.replica_1_a:grep_log('Recovered buckets'))
     end)
     wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
                                    hanged_bucket_id_1)
