@@ -44,6 +44,7 @@ local function service_set_status_ok(service)
     service_set_status(service, 'ok')
     service_next_iter(service)
     service.error = ''
+    service.last_info = ''
 end
 
 local function service_log_error_if_needed(service, level, err, ...)

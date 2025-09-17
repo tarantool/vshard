@@ -925,12 +925,11 @@ end
 -- Check status of each transferring bucket. Resolve status where
 -- possible.
 --
-local function recovery_step_by_type(type)
+local function recovery_step_by_type(service, type)
     local _bucket = box.space._bucket
     local is_step_empty = true
     local recovered = 0
     local total = 0
-    local start_format = 'Starting %s buckets recovery step'
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -942,14 +941,9 @@ local function recovery_step_by_type(type)
         local peer_id = bucket.destination
         local destination = M.replicasets[peer_id]
         if not destination then
-            -- No replicaset master for a bucket. Wait until it
-            -- appears.
-            if is_step_empty then
-                log.info(start_format, type)
-                log.warn('Can not find for bucket %s its peer %s', bucket_id,
-                         peer_id)
-                is_step_empty = false
-            end
+            -- No replicaset master for a bucket. Wait until it appears.
+            service:set_status_error(service:log_error_if_needed('warn',
+                'Can not find for bucket %s its peer %s', bucket_id, peer_id))
             goto continue
         end
         lfiber.testcancel()
@@ -960,15 +954,9 @@ local function recovery_step_by_type(type)
         -- Check if it is not a bucket error, and this result can
         -- not be used to recovery anything. Try later.
         if remote_bucket == nil and err ~= nil then
-            if is_step_empty then
-                if err == nil then
-                    err = 'unknown'
-                end
-                log.info(start_format, type)
-                log.error('Error during recovery of bucket %s on replicaset '..
-                          '%s: %s', bucket_id, peer_id, err)
-                is_step_empty = false
-            end
+            service:set_status_error(service:log_error_if_needed('error',
+                'Error during recovery of bucket %s on replicaset %s: %s',
+                bucket_id, peer_id, err))
             goto continue
         end
         -- Do nothing until the bucket on both sides stopped
@@ -982,9 +970,6 @@ local function recovery_step_by_type(type)
         if not bucket or
            not bucket_status_is_transfer_in_progress(bucket.status) then
             goto continue
-        end
-        if is_step_empty then
-            log.info(start_format, type)
         end
         lfiber.testcancel()
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
@@ -1041,10 +1026,10 @@ local function recovery_service_f(service)
 
         service:set_activity('recovering sending')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BSENDING)
+        ok, total, recovered = pcall(recovery_step_by_type, service, BSENDING)
         if not ok then
             is_all_recovered = false
-            log.error(service:set_status_error(
+            service:set_status_error(service:log_error_if_needed('error',
                 'Error during sending buckets recovery: %s', total))
         elseif total ~= recovered then
             is_all_recovered = false
@@ -1052,10 +1037,10 @@ local function recovery_service_f(service)
 
         service:set_activity('recovering receiving')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING)
+        ok, total, recovered = pcall(recovery_step_by_type, service, BRECEIVING)
         if not ok then
             is_all_recovered = false
-            log.error(service:set_status_error(
+            service:set_status_error(service:log_error_if_needed('error',
                 'Error during receiving buckets recovery: %s', total))
         elseif total == 0 then
             bucket_receiving_quota_reset()
@@ -2253,7 +2238,7 @@ local function gc_bucket_service_f(service)
             end
             if not status then
                 box.rollback()
-                log.error(service:set_status_error(
+                service:set_status_error(service:log_error_if_needed('error',
                     'Error during garbage collection step: %s', err))
             elseif is_done then
                 -- Don't use global generation. During the collection it could
