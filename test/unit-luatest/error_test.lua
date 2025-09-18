@@ -33,3 +33,19 @@ g.test_box_error_prev = function()
     t.assert_equals(e2, ve2)
     t.assert_equals(e3, ve3)
 end
+
+g.test_errors_are_same = function()
+    t.run_only_if(vutil.feature.error_stack)
+
+    local code = box.error.PROC_LUA
+    local e1 = box.error.new(code, 'err')
+    local e2 = box.error.new(code, 'err')
+    local e3 = box.error.new(code, 'err3')
+    t.assert_not(verror.are_same(e1, nil))
+    t.assert_not(verror.are_same(nil, e2))
+    t.assert_not(verror.are_same(e2, e3))
+    t.assert(verror.are_same(e1, e2))
+
+    e1:set_prev(e3)
+    t.assert_not(verror.are_same(e1, e2))
+end

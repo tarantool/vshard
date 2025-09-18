@@ -1,0 +1,46 @@
+name: catch_flaky
+
+on:
+  pull_request
+
+jobs:
+  linux:
+    # We want to run on external PRs, but not on our own internal
+    # PRs as they'll be run by the push to the branch. The job is also not
+    # launched, if he 'notest' or 'noflaky' label is set.
+    #
+    # The main trick is described here:
+    # https://github.com/Dart-Code/Dart-Code/pull/2375
+    if: (github.event_name == 'push'||
+        github.event.pull_request.head.repo.full_name != github.repository) &&
+        !contains(github.event.pull_request.labels.*.name, 'noflaky') &&
+        !contains(github.event.pull_request.labels.*.name, 'notest')
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Install tarantool ${{ matrix.tarantool }}
+        uses: tarantool/setup-tarantool@v3
+        with:
+          tarantool-version: '3.5'
+
+      - name: Clone the module
+        uses: actions/checkout@v3
+        with:
+          # Fetch the entire history for all branches and tags. It is needed for
+          # upgrade testing.
+          fetch-depth: 0
+          # Enable recursive submodules checkout as test-run git module is used
+          # for running tests.
+          submodules: recursive
+
+      - name: Install test requirements
+        run: pip3 install --user -r test-run/requirements.txt
+
+      - run: cmake .
+
+      - name: Run the changed tests
+        env:
+          RANGE: HEAD~${{ github.event.pull_request.commits }}..HEAD
+        run: make test-flaky

@@ -8,6 +8,7 @@ local json = require('json')
 local errno = require('errno')
 local log = require('log')
 local yaml = require('yaml')
+local uri = require('uri')
 local vutil = require('vshard.util')
 
 local checks = require('checks')
@@ -341,6 +342,31 @@ function Server:grep_log(what, bytes, opts)
     until s == ''
     file:close()
     return found
+end
+
+function Server:assert_log_exactly_once(what, opts)
+    local found
+    assert(opts.timeout)
+    local deadline = fiber.clock() + opts.timeout
+    local grep = "%d+-%d+-%d+ %d+:%d+:%d+.%d+ .*" .. what
+    while fiber.clock() < deadline do
+        -- Execute user function on server to fasten the process up.
+        if opts.on_yield then
+            self:exec(opts.on_yield)
+        end
+        local msg = self:grep_log(grep)
+        if not msg then
+            goto continue
+        end
+        if found then
+            luatest.assert_equals(found, msg, string.format(
+                "Found duplicate '%s' in logs", what))
+        end
+        found = msg
+        ::continue::
+        fiber.sleep(opts.delay or 0.01)
+    end
+    luatest.assert(found, string.format("Failed to find '%s' in logs", what))
 end
 
 function Server:assert_follows_upstream(server_id)
