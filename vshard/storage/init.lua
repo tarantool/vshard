@@ -5,6 +5,7 @@ local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
+local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
@@ -931,6 +932,7 @@ local function recovery_step_by_type(type)
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {}
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -1001,11 +1003,13 @@ local function recovery_step_by_type(type)
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
         end
         is_step_empty = false
+        table.insert(recovered_buckets, bucket_id)
 ::continue::
     end
-    if not is_step_empty then
+    if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
                  'among %d', recovered, type, total)
+        log.info('Recovered buckets: %s', json_encode(recovered_buckets))
     end
     return total, recovered
 end
@@ -2794,7 +2798,7 @@ local function rebalancer_download_states()
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
-            return
+            return nil, replicaset.id
         end
         local bucket_count = state.bucket_active_count +
                              state.bucket_pinned_count
@@ -2809,7 +2813,7 @@ local function rebalancer_download_states()
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
     if sum == M.total_bucket_count then
-        return replicasets, total_bucket_active_count
+        return total_bucket_active_count, replicasets
     else
         log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet. Expected %d, but '..
@@ -2833,18 +2837,19 @@ local function rebalancer_service_f(service)
         end
         service:set_activity('downloading states')
         lfiber.testcancel()
-        local status, replicasets, total_bucket_active_count =
+        local status, total_bucket_active_count, replicasets =
             pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
             return
         end
-        if not status or replicasets == nil then
+        if not status or total_bucket_active_count == nil then
             if not status then
                 log.error(service:set_status_error(
                     'Error during downloading rebalancer states: %s',
                     replicasets))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            log.info('Some buckets in replicaset %s are not active, retry ' ..
+                     'rebalancing later', replicasets)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2881,6 +2886,7 @@ local function rebalancer_service_f(service)
         -- then max_disbalance would have been calculated
         -- incorrectly.
         assert(next(routes) ~= nil)
+        log.info(json_encode(routes))
         for src_id, src_routes in pairs(routes) do
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
