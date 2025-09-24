@@ -1416,7 +1416,7 @@ local replica_mt = {
         safe_uri = function(replica)
             local uri = luri.parse(replica.uri)
             uri.password = nil
-            return util.uri_format(uri)
+            return util.uri_format(uri, false)
         end,
         connect = replica_connect,
         detach_conn = replica_detach_conn,
