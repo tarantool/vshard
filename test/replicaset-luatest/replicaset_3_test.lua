@@ -8,6 +8,7 @@ local vutil = require('vshard.util')
 local vconst = require('vshard.consts')
 local server = require('test.luatest_helpers.server')
 local vcfg = require('vshard.cfg')
+local fio = require('fio')
 
 local small_timeout_opts = {timeout = 0.05}
 local timeout_opts = {timeout = vtest.wait_timeout}
@@ -922,4 +923,81 @@ test_group.test_locate_master_not_hangs_on_futures = function(g)
 
     g.replica_1_b:thaw()
     vtest.cluster_cfg(g, global_cfg)
+end
+
+local test_ssl_group = t.group('ssl-test')
+
+test_ssl_group.before_all(function(g)
+    t.run_only_if(vutil.feature.ssl)
+    global_cfg = vtest.config_new(cfg_template)
+    vtest.cluster_new(g, global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_rebalancer_disable(g)
+
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].is_ssl = true
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+
+    g.router = vtest.router_new(g, 'router', new_global_cfg)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.router_cfg(g.router, new_global_cfg)
+
+    local cert_dir = fio.pathjoin(fio.cwd(), './test/certs')
+    g.sensitive_ssl_data = {
+        ssl_cert_file = fio.pathjoin(cert_dir, 'server.crt'),
+        ssl_key_file = fio.pathjoin(cert_dir, 'server.key'),
+        ssl_ca_file = fio.pathjoin(cert_dir, 'ca.crt'),
+        ssl_password = 'P4ssw0rd',
+        ssl_password_file = 'PATH_TO_PASSWORD_FILE',
+        ssl_ciphers = {'TLS_AES_256_GCM_SHA384', 'TLS_RSA_POLY1305_SHA256'}
+    }
+    -- Check that ssl replication is successfully established
+    g.replica_1_a:exec(function(replica_ids)
+        for _, replica_id in pairs(replica_ids) do
+            local repl = box.info.replication[replica_id]
+            t.assert(repl.upstream)
+            t.assert(repl.downstream)
+            t.assert_equals(repl.upstream.status, 'follow')
+            t.assert_equals(repl.downstream.status, 'follow')
+        end
+    end, {{g.replica_1_b:instance_id(), g.replica_1_c:instance_id()}})
+end)
+
+test_ssl_group.after_all(function(g)
+    g.cluster:drop()
+end)
+
+local function assert_no_sensitive_data_in_server_logs(server, sensitive_data)
+    assert(type(sensitive_data) == 'table')
+    for sensitive_key, sensitive_value in pairs(sensitive_data) do
+        t.assert_not(server:grep_log(sensitive_key))
+        if type(sensitive_value) == 'table' then
+            for _, sub_value in pairs(sensitive_value) do
+                t.assert_not(server:grep_log(sub_value))
+            end
+        else
+            t.assert_not(server:grep_log(sensitive_value))
+        end
+    end
+end
+
+test_ssl_group.test_no_ssl_sensitive_data_in_storage_logs = function(g)
+    t.run_only_if(vutil.feature.ssl)
+    assert_no_sensitive_data_in_server_logs(g.replica_1_a,
+                                            g.sensitive_ssl_data)
+end
+
+test_ssl_group.test_no_ssl_sensitive_data_in_router_logs = function(g)
+    t.run_only_if(vutil.feature.ssl)
+    local replica_1_a_uri = g.router:exec(function(replicaset_id, master_uuid)
+        local replicasets = ivshard.router.internal.static_router.replicasets
+        local replica_1_a = replicasets[replicaset_id].replicas[master_uuid]
+        return replica_1_a:safe_uri()
+    end, {g.replica_1_a:replicaset_uuid(), g.replica_1_a:instance_uuid()})
+
+    t.assert_not(string.match(replica_1_a_uri, 'password'))
+    for sensitive_key, _ in pairs(g.sensitive_ssl_data) do
+        t.assert_not(string.match(replica_1_a_uri, sensitive_key))
+    end
+    assert_no_sensitive_data_in_server_logs(g.router, g.sensitive_ssl_data)
 end
