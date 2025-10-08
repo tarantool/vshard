@@ -1397,8 +1397,7 @@ replicaset_mt.__index = index
 
 local function replica_safe_uri(replica)
     local uri = luri.parse(replica.uri)
-    uri.password = nil
-    return util.uri_format(uri)
+    return util.uri_format(uri, false)
 end
 
 --
