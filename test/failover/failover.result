@@ -105,7 +105,7 @@ test_run:switch('router_1')
 vshard.router.cfg(cfg)
 ---
 ...
-while not test_run:grep_log('router_1', 'New replica box_1_d%(storage%@') do fiber.sleep(0.1) end
+while not test_run:grep_log('router_1', 'New replica replica%(id=box_1_d') do fiber.sleep(0.1) end
 ---
 ...
 priority_order()
@@ -222,9 +222,9 @@ rs1.replica_up_ts ~= nil
 ---
 - true
 ...
-test_run:grep_log('router_1', 'New replica box_1_b%(storage%@')
+test_run:grep_log('router_1', 'New replica replica%(id=box_1_b')
 ---
-- New replica box_1_b(storage@
+- New replica replica(id=box_1_b
 ...
 -- gh-69: ensure callro() goes to a replica.
 vshard.router.callro(1, 'echo', {123})
@@ -299,9 +299,9 @@ ts2 - ts1 < vshard.consts.FAILOVER_UP_TIMEOUT
 ---
 - true
 ...
-test_run:grep_log('router_1', 'New replica box_1_d%(storage%@')
+test_run:grep_log('router_1', 'New replica replica%(id=box_1_d')
 ---
-- New replica box_1_d(storage@
+- New replica replica(id=box_1_d
 ...
 -- Ensure the master connection is used as replica's one instead
 -- of creation of a new connection to the same host.

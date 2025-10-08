@@ -1062,10 +1062,13 @@ end
 --
 -- Nice formatter for replicaset
 --
-local function replicaset_tostring(replicaset)
-    local master_str = replicaset.master and replicaset.master or 'missing'
-    return string.format('replicaset(id="%s", master=%s)',
-                         replicaset.id, master_str)
+local function replicaset_tostring(is_outdated)
+    local outdated_warning = is_outdated and '(outdated) ' or ''
+    return function(replicaset)
+        local master_str = replicaset.master and replicaset.master or 'missing'
+        return string.format('%sreplicaset(id="%s", master=%s)',
+                             outdated_warning, replicaset.id, master_str)
+    end
 end
 
 --
@@ -1381,7 +1384,7 @@ local replicaset_mt = {
         locate_master = replicaset_locate_master,
         service_info = replicaset_service_info,
     };
-    __tostring = replicaset_tostring;
+    __tostring = replicaset_tostring(false);
 }
 --
 -- Wrap self methods with a sanity checker.
@@ -1401,11 +1404,13 @@ end
 --
 -- Nice formatter for replica
 --
-local function replica_tostring(replica)
-    if replica.name then
-        return replica.name..'('..replica_safe_uri(replica)..')'
+local function replica_tostring(is_outdated)
+    local outdated_warning = is_outdated and '(outdated) ' or ''
+    return function(replica)
+        local replica_str = replica.name and replica.name or replica.uuid
+        return string.format('%sreplica(id=%s, uri=%s)', outdated_warning,
+                             replica_str, replica_safe_uri(replica))
     end
-    return replica_safe_uri(replica)
 end
 
 local replica_mt = {
@@ -1430,7 +1435,7 @@ local replica_mt = {
         call = replica_call,
         update_status = replica_update_status,
     },
-    __tostring = replica_tostring,
+    __tostring = replica_tostring(false),
 }
 index = {}
 for name, func in pairs(replica_mt.__index) do
@@ -1451,7 +1456,7 @@ local outdated_replicaset_mt = {
     __index = {
         is_outdated = true
     },
-    __tostring = replicaset_tostring,
+    __tostring = replicaset_tostring(true),
 }
 for fname, _ in pairs(replicaset_mt.__index) do
     outdated_replicaset_mt.__index[fname] = outdated_warning
@@ -1461,7 +1466,7 @@ local outdated_replica_mt = {
     __index = {
         is_outdated = true
     },
-    __tostring = replica_tostring,
+    __tostring = replica_tostring(true),
 }
 for fname, _ in pairs(replica_mt.__index) do
     outdated_replica_mt.__index[fname] = outdated_warning
