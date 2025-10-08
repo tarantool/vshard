@@ -923,3 +923,46 @@ test_group.test_locate_master_not_hangs_on_futures = function(g)
     g.replica_1_b:thaw()
     vtest.cluster_cfg(g, global_cfg)
 end
+
+local function assert_rs_tostring_correctness(rs, is_master_missed)
+    local rs_tostring_template = 'replicaset(id=\"%s\", master=%s)'
+    local master_str = is_master_missed and 'missing' or rs.master
+    local rs_str = string.format(rs_tostring_template, rs.id, master_str)
+    t.assert_equals(tostring(rs), rs_str)
+end
+
+local function assert_replica_tostring_correctness(replica)
+    local replica_tostring_template = '%s(%s)'
+    local replica_id = replica.name or replica.uuid
+    local replica_str = string.format(replica_tostring_template, replica_id,
+                                      vreplicaset.replica_safe_uri(replica))
+    t.assert_equals(tostring(replica), replica_str)
+end
+
+local function assert_full_rs_tostring_correctness(replicasets,
+                                                   is_master_missed)
+    for _, rs in pairs(replicasets) do
+        assert_rs_tostring_correctness(rs, is_master_missed)
+        for _, replica in pairs(rs.replicas) do
+            assert_replica_tostring_correctness(replica)
+        end
+    end
+end
+
+--
+-- gh-597: outdating the replicasets leads to broken replicas in logs.
+--
+test_group.test_tostring_of_outdated_replicasets_and_replicas = function()
+    local replicasets = vreplicaset.buildall(global_cfg)
+    assert_full_rs_tostring_correctness(replicasets, false)
+    vreplicaset.outdate_replicasets(replicasets)
+    assert_full_rs_tostring_correctness(replicasets, false)
+
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].replicas.replica_1_a.master = false
+    global_cfg = vcfg.check(vtest.config_new(new_cfg_template))
+    local replicasets_with_no_master = vreplicaset.buildall(global_cfg)
+    assert_full_rs_tostring_correctness(replicasets_with_no_master, true)
+    vreplicaset.outdate_replicasets(replicasets_with_no_master)
+    assert_full_rs_tostring_correctness(replicasets_with_no_master, true)
+end

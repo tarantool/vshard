@@ -1063,14 +1063,9 @@ end
 -- Nice formatter for replicaset
 --
 local function replicaset_tostring(replicaset)
-    local master
-    if replicaset.master then
-        master = replicaset.master
-    else
-        master = 'missing'
-    end
-    return string.format('replicaset(id="%s", master=%s)', replicaset.id,
-                         master)
+    local master_str = replicaset.master and replicaset.master or 'missing'
+    return string.format('replicaset(id="%s", master=%s)',
+                         replicaset.id, master_str)
 end
 
 --
@@ -1397,6 +1392,22 @@ for name, func in pairs(replicaset_mt.__index) do
 end
 replicaset_mt.__index = index
 
+local function replica_safe_uri(replica)
+    local uri = luri.parse(replica.uri)
+    uri.password = nil
+    return util.uri_format(uri)
+end
+
+--
+-- Nice formatter for replica
+--
+local function replica_tostring(replica)
+    if replica.name then
+        return replica.name..'('..replica_safe_uri(replica)..')'
+    end
+    return replica_safe_uri(replica)
+end
+
 local replica_mt = {
     __index = {
         is_connected = function(replica)
@@ -1413,23 +1424,13 @@ local replica_mt = {
             end
             return conn_vconnect_check_or_close(replica.conn)
         end,
-        safe_uri = function(replica)
-            local uri = luri.parse(replica.uri)
-            uri.password = nil
-            return util.uri_format(uri)
-        end,
+        safe_uri = replica_safe_uri,
         connect = replica_connect,
         detach_conn = replica_detach_conn,
         call = replica_call,
         update_status = replica_update_status,
     },
-    __tostring = function(replica)
-        if replica.name then
-            return replica.name..'('..replica:safe_uri()..')'
-        else
-            return replica:safe_uri()
-        end
-    end,
+    __tostring = replica_tostring,
 }
 index = {}
 for name, func in pairs(replica_mt.__index) do
@@ -1449,7 +1450,8 @@ end
 local outdated_replicaset_mt = {
     __index = {
         is_outdated = true
-    }
+    },
+    __tostring = replicaset_tostring,
 }
 for fname, _ in pairs(replicaset_mt.__index) do
     outdated_replicaset_mt.__index[fname] = outdated_warning
@@ -1458,7 +1460,8 @@ end
 local outdated_replica_mt = {
     __index = {
         is_outdated = true
-    }
+    },
+    __tostring = replica_tostring,
 }
 for fname, _ in pairs(replica_mt.__index) do
     outdated_replica_mt.__index[fname] = outdated_warning
@@ -2191,6 +2194,7 @@ return {
     calculate_etalon_balance = cluster_calculate_etalon_balance,
     wait_masters_connect = wait_masters_connect,
     rebind_replicasets = rebind_replicasets,
+    replica_safe_uri = replica_safe_uri,
     outdate_replicasets = outdate_replicasets,
     create_workers = create_workers,
     locate_masters = locate_masters,
