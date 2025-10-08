@@ -17,7 +17,7 @@ vshard.storage.bucket_force_create(1)
 -- master UUID.
 res, err = vshard.storage.bucket_send(1, replicaset_uuid[2])
 res, util.portable_error(err)
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%(storage%@')
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a')
 box.space._bucket:select{}
 -- Bucket sending fails, but it remains 'sending'. It is because
 -- we do not know was request executed or not before connection
@@ -30,7 +30,7 @@ test_run:switch('bad_uuid_router')
 fiber = require('fiber')
 
 -- Router failed to connect because of UUID mismatch.
-while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID on replica bad_uuid_2_a') == nil do fiber.sleep(0.1) end
+while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a') == nil do fiber.sleep(0.1) end
 
 --
 -- Repair config and try start again. After successfull start,
@@ -67,7 +67,7 @@ vshard.storage.bucket_force_create(2)
 res, err = vshard.storage.bucket_send(2, replicaset_uuid[2])
 res, util.portable_error(err)
 -- Close existing connection on a first error and log it.
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a') ~= nil
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a') ~= nil
 
 test_run:switch('bad_uuid_router')
 -- Can not discovery - UUID of bucket 1 replicaset is incorrect.

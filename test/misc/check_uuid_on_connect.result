@@ -47,9 +47,9 @@ res, util.portable_error(err)
 - type: ClientError
   message: Connection closed
 ...
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a%(storage%@')
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a')
 ---
-- Mismatch server UUID on replica bad_uuid_2_a(storage@
+- Mismatch server UUID on replica replica(id=bad_uuid_2_a
 ...
 box.space._bucket:select{}
 ---
@@ -78,7 +78,7 @@ fiber = require('fiber')
 ---
 ...
 -- Router failed to connect because of UUID mismatch.
-while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID on replica bad_uuid_2_a') == nil do fiber.sleep(0.1) end
+while test_run:grep_log('bad_uuid_router', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a') == nil do fiber.sleep(0.1) end
 ---
 ...
 --
@@ -176,7 +176,7 @@ res, util.portable_error(err)
   message: Connection closed
 ...
 -- Close existing connection on a first error and log it.
-test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica bad_uuid_2_a') ~= nil
+test_run:grep_log('bad_uuid_1_a', 'Mismatch server UUID on replica replica%(id=bad_uuid_2_a') ~= nil
 ---
 - true
 ...
