@@ -5,6 +5,7 @@ local lmsgpack = require('msgpack')
 local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
+local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
@@ -931,6 +932,7 @@ local function recovery_step_by_type(type)
     local recovered = 0
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {SENT = {}, GARBAGE = {}, ACTIVE = {}}
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -990,12 +992,15 @@ local function recovery_step_by_type(type)
         if recovery_local_bucket_is_sent(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BSENT}})
             recovered = recovered + 1
+            table.insert(recovered_buckets['SENT'], bucket_id)
         elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
             _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
             recovered = recovered + 1
+            table.insert(recovered_buckets['SENT'], bucket_id)
         elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
             _bucket:replace({bucket_id, BACTIVE})
             recovered = recovered + 1
+            table.insert(recovered_buckets['ACTIVE'], bucket_id)
         elseif is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
@@ -1003,9 +1008,10 @@ local function recovery_step_by_type(type)
         is_step_empty = false
 ::continue::
     end
-    if not is_step_empty then
+    if recovered > 0 then
         log.info('Finish bucket recovery step, %d %s buckets are recovered '..
-                 'among %d', recovered, type, total)
+                 'among %d. Recovered buckets: %s', recovered, type, total,
+                 json_encode(recovered_buckets))
     end
     return total, recovered
 end
@@ -2794,7 +2800,7 @@ local function rebalancer_download_states()
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
-            return
+            return nil, replicaset.id
         end
         local bucket_count = state.bucket_active_count +
                              state.bucket_pinned_count
@@ -2809,7 +2815,7 @@ local function rebalancer_download_states()
     end
     local sum = total_bucket_active_count + total_bucket_locked_count
     if sum == M.total_bucket_count then
-        return replicasets, total_bucket_active_count
+        return total_bucket_active_count, replicasets
     else
         log.info('Total active bucket count is not equal to total. '..
                  'Possibly a boostrap is not finished yet. Expected %d, but '..
@@ -2833,18 +2839,19 @@ local function rebalancer_service_f(service)
         end
         service:set_activity('downloading states')
         lfiber.testcancel()
-        local status, replicasets, total_bucket_active_count =
+        local status, total_bucket_active_count, replicasets =
             pcall(rebalancer_download_states)
         if M.module_version ~= module_version then
             return
         end
-        if not status or replicasets == nil then
+        if not status or total_bucket_active_count == nil then
             if not status then
                 log.error(service:set_status_error(
                     'Error during downloading rebalancer states: %s',
                     replicasets))
             end
-            log.info('Some buckets are not active, retry rebalancing later')
+            log.info('Some buckets in replicaset %s are not active, retry ' ..
+                     'rebalancing later', replicasets)
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2897,8 +2904,9 @@ local function rebalancer_service_f(service)
                 goto continue
             end
         end
-        log.info('Rebalance routes are sent. Schedule next wakeup after '..
-                 '%f seconds', consts.REBALANCER_WORK_INTERVAL)
+        log.info('The following rebalancer routes were sent: %s. ' ..
+                 'Schedule next wakeup after %f seconds', json_encode(routes),
+                 consts.REBALANCER_WORK_INTERVAL)
         service:set_activity('idling')
         lfiber.testcancel()
         lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)

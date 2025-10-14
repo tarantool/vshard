@@ -101,3 +101,141 @@ test_group.test_manual_bucket_send_doubled_buckets = function(g)
         ilt.assert_equals(box.space._bucket:get(bid), nil)
     end, {bid})
 end
+
+local rebalancer_recovery_group = t.group('rebalancer-recovery-logging')
+
+local function start_bucket_move(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        ivshard.storage.bucket_send(bucket_id, replicaset_id)
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert(box.space._bucket:select(bucket_id))
+        end)
+    end, {bucket_id})
+end
+
+local function wait_for_bucket_is_transferred(src_storage, dest_storage,
+                                              bucket_id)
+    src_storage:exec(function(bucket_id)
+        t.helpers.retrying({}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id), {})
+        end)
+    end, {bucket_id})
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id)[1].status,
+                            'active')
+        end)
+    end, {bucket_id})
+end
+
+rebalancer_recovery_group.before_all(function(g)
+    global_cfg = vtest.config_new(cfg_template)
+    vtest.cluster_new(g, global_cfg)
+    g.router = vtest.router_new(g, 'router', global_cfg)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_wait_vclock_all(g)
+
+    vtest.cluster_exec_each_master(g, function()
+        box.schema.create_space('test_space')
+        box.space.test_space:format({
+            {name = 'pk', type = 'unsigned'},
+            {name = 'bucket_id', type = 'unsigned'},
+        })
+        box.space.test_space:create_index('primary', {parts = {'pk'}})
+        box.space.test_space:create_index(
+            'bucket_id', {parts = {'bucket_id'}, unique = false})
+    end)
+end)
+
+rebalancer_recovery_group.after_all(function(g)
+    g.cluster:drop()
+end)
+
+--
+-- Improve logging of rebalancer and recovery (gh-212).
+--
+rebalancer_recovery_group.test_no_logs_while_unsuccess_recovery = function(g)
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function(service_name, ...)
+            if service_name == 'recovery_bucket_stat' then
+                return error('TimedOut')
+            end
+            return _G.old_call(service_name, ...)
+        end
+    end)
+    local hanged_bucket_id_1 = vtest.storage_first_bucket(g.replica_1_a)
+    start_bucket_move(g.replica_1_a, g.replica_2_a, hanged_bucket_id_1)
+    local hanged_bucket_id_2 = vtest.storage_first_bucket(g.replica_1_a)
+    start_bucket_move(g.replica_1_a, g.replica_2_a, hanged_bucket_id_2)
+    t.helpers.retrying({}, function()
+        t.assert(g.replica_1_a:grep_log('Error during recovery of bucket 1'))
+    end)
+    t.assert_not(g.replica_1_a:grep_log('Finish bucket recovery step, 0'))
+    g.replica_2_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+        ivshard.storage._call = _G.old_call
+    end)
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_2_a:exec(function()
+            ivshard.storage.garbage_collector_wakeup()
+            ivshard.storage.recovery_wakeup()
+        end)
+        g.replica_1_a:exec(function() ivshard.storage.recovery_wakeup() end)
+        -- In some rare cases the recovery service can recover buckets one
+        -- by one. As a result we get multiple "Finish bucket recovery" and
+        -- "Recovery buckets" logs with different bucket ids and buckets'
+        -- count. That is why we should grep general logs without buckets'
+        -- count and bucket ids to avoid flakiness.
+        t.assert(g.replica_1_a:grep_log('Finish bucket recovery step'))
+        t.assert(g.replica_1_a:grep_log('Recovered buckets'))
+    end)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
+                                   hanged_bucket_id_1)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
+                                   hanged_bucket_id_2)
+end
+
+rebalancer_recovery_group.test_rebalancer_routes_logging = function(g)
+    local moved_bucket_from_2 = vtest.storage_first_bucket(g.replica_2_a)
+    start_bucket_move(g.replica_2_a, g.replica_1_a, moved_bucket_from_2)
+    local moved_bucket_from_3 = vtest.storage_first_bucket(g.replica_3_a)
+    start_bucket_move(g.replica_3_a, g.replica_1_a, moved_bucket_from_3)
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_1_a:exec(function()
+            ivshard.storage.rebalancer_wakeup()
+        end)
+        t.assert(g.replica_1_a:grep_log('Apply rebalancer routes with 1 ' ..
+                                        'workers'))
+    end)
+    local rebalancer_routes_msg = string.format(
+        "{\"%s\":{\"%s\":1,\"%s\":1}}", g.replica_1_a:replicaset_uuid(),
+        g.replica_3_a:replicaset_uuid(), g.replica_2_a:replicaset_uuid())
+    t.assert(g.replica_1_a:grep_log(rebalancer_routes_msg))
+    t.helpers.retrying({}, function()
+        g.replica_1_a:grep_log('The cluster is balanced ok.')
+    end)
+end
+
+rebalancer_recovery_group.test_no_log_spam_when_buckets_no_active = function(g)
+    local moved_bucket = vtest.storage_first_bucket(g.replica_2_a)
+    start_bucket_move(g.replica_1_a, g.replica_2_a, moved_bucket)
+    wait_for_bucket_is_transferred(g.replica_1_a, g.replica_2_a, moved_bucket)
+    vtest.storage_stop(g.replica_2_a)
+    local buckets_not_active = string.format('Some buckets in replicaset ' ..
+                                             '%s are not active',
+                                             g.replica_2_a:replicaset_uuid())
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_1_a:exec(function()
+            ivshard.storage.rebalancer_wakeup()
+        end)
+        t.assert(g.replica_1_a:grep_log(buckets_not_active))
+    end)
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    start_bucket_move(g.replica_2_a, g.replica_1_a, moved_bucket)
+    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a, moved_bucket)
+end
