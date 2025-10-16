@@ -1169,3 +1169,33 @@ g.test_log_ratelimiter_is_dropped_on_replica_delete = function(g)
 
     vtest.router_cfg(g.router, global_cfg)
 end
+
+--
+-- gh-588: services should not spam the same errors on every iteration.
+--
+g.test_discovery_not_spam_same_errors = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_2_a)
+    vtest.storage_stop(g.replica_2_a)
+    vtest.storage_stop(g.replica_2_b)
+
+    g.router:exec(function(bid)
+        ivshard.router._bucket_reset(bid)
+        rawset(_G, 'old_interval', ivconst.LOG_RATELIMIT_INTERVAL)
+        ivconst.LOG_RATELIMIT_INTERVAL = 0.1
+    end, {bid})
+    local msg = "Error during discovery .*Peer closed"
+    g.router:wait_log_exactly_once(msg, {timeout = 0.1, on_yield = function()
+        ivshard.router.discovery_wakeup()
+    end})
+
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    vtest.storage_start(g.replica_2_b, global_cfg)
+    t.helpers.retrying({}, function()
+        g.router:exec(function() ivshard.router.discovery_wakeup() end)
+        t.assert(g.router:grep_log("Suppressed .* messages from 'discovery'"))
+    end)
+    g.router:exec(function()
+        ivconst.LOG_RATELIMIT_INTERVAL = _G.old_interval
+        _G.old_interval = nil
+    end)
+end

@@ -358,6 +358,31 @@ function Server:assert_log_exactly_once(what, callback)
         string.format("Found duplicate '%s' in logs", what))
 end
 
+function Server:wait_log_exactly_once(what, opts)
+    local found
+    assert(opts.timeout)
+    local deadline = fiber.clock() + opts.timeout
+    local grep = "%d+-%d+-%d+ %d+:%d+:%d+.%d+ .*" .. what
+    while fiber.clock() < deadline do
+        -- Execute user function on server to fasten the process up.
+        if opts.on_yield then
+            self:exec(opts.on_yield)
+        end
+        local msg = self:grep_log(grep)
+        if not msg then
+            goto continue
+        end
+        if found then
+            luatest.assert_equals(found, msg, string.format(
+                "Found duplicate '%s' in logs", what))
+        end
+        found = msg
+        ::continue::
+        fiber.sleep(opts.delay or 0.01)
+    end
+    luatest.assert(found, string.format("Failed to find '%s' in logs", what))
+end
+
 function Server:assert_follows_upstream(server_id)
     local status = self:exec(function(id)
         return box.info.replication[id].upstream.status
