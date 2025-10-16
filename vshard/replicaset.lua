@@ -45,6 +45,7 @@
 --                                               fails, after which the node
 --                                               is considered unhealthy>,
 --             failover_interval = <interval in seconds between pings>,
+--             limiter = <log ratelimiter, used in the replica_call>,
 --          }
 --      },
 --      master = <master server from the array above>,
@@ -98,6 +99,7 @@ local ffi = require('ffi')
 local lcfg = require('vshard.cfg')
 local util = require('vshard.util')
 local lservice_info = require('vshard.service_info')
+local lratelimit = require('vshard.log_ratelimit')
 local fiber_clock = fiber.clock
 local fiber_yield = fiber.yield
 local fiber_cond_wait = util.fiber_cond_wait
@@ -697,8 +699,8 @@ local function replica_call(replica, func, args, opts)
            err.type == 'ClientError') then
             err = lerror.from_string(err.message) or err
         end
-        log.error("Exception during calling '%s' on '%s': %s", func, replica,
-                  err)
+        replica.limiter:log_error(err,
+            "Exception during calling '%s' on '%s': %s", func, replica, err)
         return false, nil, lerror.make(err)
     else
         replica_on_success_request(replica)
@@ -1647,7 +1649,8 @@ local function buildall(sharding_cfg)
                 failover_sequential_fail_count = sharding_cfg[count_name],
                 failover_interval = sharding_cfg.failover_interval,
                 failover_replica_lag_limit = sharding_cfg[lag_name],
-                health_status = SYELLOW,
+                health_status = SYELLOW, limiter = lratelimit.create{name =
+                'replica.' .. replica_id},
             }, replica_mt)
             new_replicaset.replicas[replica_id] = new_replica
             if replica.master then

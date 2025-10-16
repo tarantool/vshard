@@ -971,3 +971,29 @@ test_group.test_tostring_of_outdated_replicasets_and_replicas = function()
     vreplicaset.outdate_replicasets(replicasets_with_no_master)
     assert_full_rs_tostring_correctness(replicasets_with_no_master, true, true)
 end
+
+--
+-- gh-588: replica call should not spam the same error on every call.
+--
+test_group.test_replica_call_not_spams_same_error = function(g)
+    local server = server:new({alias = 'node'})
+    server:start()
+    server:exec(function(cfg)
+        require('vshard.consts').LOG_RATELIMIT_INTERVAL = 0.1
+        local _, rs = next(require('vshard.replicaset').buildall(cfg))
+        rawset(_G, 'rs', rs)
+        _G.rs:wait_connected_all({timeout = 10})
+    end, {global_cfg})
+
+    vtest.storage_stop(g.replica_1_a)
+    server:assert_log_exactly_once("Exception during calling 'echo'", function()
+        ilt.assert_not(_G.rs:callrw('echo', nil, {timeout = 0.01}))
+    end)
+    t.helpers.retrying({}, function()
+        t.assert(server:grep_log("Suppressed 1 .* messages " ..
+                                 "from 'replica"))
+    end)
+
+    vtest.storage_start(g.replica_1_a, global_cfg)
+    server:drop()
+end
