@@ -343,6 +343,21 @@ function Server:grep_log(what, bytes, opts)
     return found
 end
 
+--
+-- Checks, that the message is printed in logs exactly once. The callback
+-- function must cause that message.
+--
+function Server:assert_log_exactly_once(what, callback)
+    local grep = "%d+-%d+-%d+ %d+:%d+:%d+.%d+ .*" .. what
+    self:exec(callback)
+    local msg = self:grep_log(grep)
+    luatest.assert(msg, string.format("Failed to find '%s' in logs", what))
+    self:exec(callback)
+    local msg_2 = self:grep_log(grep)
+    luatest.assert_equals(msg_2, msg,
+        string.format("Found duplicate '%s' in logs", what))
+end
+
 function Server:assert_follows_upstream(server_id)
     local status = self:exec(function(id)
         return box.info.replication[id].upstream.status
