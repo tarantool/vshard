@@ -1146,3 +1146,26 @@ g.test_cdata_as_bucket_id_is_prohibited = function(g)
         -- protection from the misusage.
     end)
 end
+
+g.test_log_ratelimiter_is_dropped_on_replica_delete = function(g)
+    local name = g.router:exec(function(rs_uuid, r_uuid)
+        rawset(_G, 'ratelimit', require('vshard.log_ratelimit'))
+        local rs = ivshard.router.internal.static_router.replicasets[rs_uuid]
+        local name = 'replica.' .. rs.replicas[r_uuid].id
+        ilt.assert(_G.ratelimit.internal.limiters[name])
+        return name
+    end, {g.replica_2_b:replicaset_uuid(), g.replica_2_b:instance_uuid()})
+
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[2].replicas.replica_2_b = nil
+    local new_cluster_cfg = vtest.config_new(new_cfg_template)
+    vtest.router_cfg(g.router, new_cluster_cfg)
+
+    g.router:exec(function(name)
+        collectgarbage()
+        ilt.assert_not(_G.ratelimit.internal.limiters[name])
+        _G.ratelimit = nil
+    end, {name})
+
+    vtest.router_cfg(g.router, global_cfg)
+end
