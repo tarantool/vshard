@@ -20,7 +20,7 @@ if rawget(_G, MODULE_INTERNALS) then
         'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
         'vshard.storage.schema', 'vshard.storage.export_log',
-        'vshard.storage.exports'
+        'vshard.storage.exports', 'vshard.log_ratelimit',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
@@ -34,6 +34,7 @@ local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
 local lregistry = require('vshard.registry')
 local lservice_info = require('vshard.service_info')
+local lratelimit = require('vshard.log_ratelimit')
 local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
 local lschema = require('vshard.storage.schema')
@@ -925,7 +926,7 @@ end
 -- Check status of each transferring bucket. Resolve status where
 -- possible.
 --
-local function recovery_step_by_type(type)
+local function recovery_step_by_type(type, limiter)
     local _bucket = box.space._bucket
     local is_step_empty = true
     local recovered = 0
@@ -965,8 +966,9 @@ local function recovery_step_by_type(type)
                     err = 'unknown'
                 end
                 log.info(start_format, type)
-                log.error('Error during recovery of bucket %s on replicaset '..
-                          '%s: %s', bucket_id, peer_id, err)
+                limiter:log_error(err,
+                    'Error during recovery of bucket %s on replicaset %s: %s',
+                    bucket_id, peer_id, err)
                 is_step_empty = false
             end
             goto continue
@@ -1015,7 +1017,7 @@ end
 -- has failed due to tarantool or network problems. Restarts on
 -- reload.
 --
-local function recovery_service_f(service)
+local function recovery_service_f(service, limiter)
     local module_version = M.module_version
     -- Change of _bucket increments bucket generation. Recovery has its own
     -- bucket generation which is <= actual. Recovery is finished, when its
@@ -1041,21 +1043,21 @@ local function recovery_service_f(service)
 
         service:set_activity('recovering sending')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BSENDING)
+        ok, total, recovered = pcall(recovery_step_by_type, BSENDING, limiter)
         if not ok then
             is_all_recovered = false
-            log.error(service:set_status_error(
-                'Error during sending buckets recovery: %s', total))
+            limiter:log_error(total, service:set_status_error(
+                       'Error during sending buckets recovery: %s', total))
         elseif total ~= recovered then
             is_all_recovered = false
         end
 
         service:set_activity('recovering receiving')
         lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING)
+        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING, limiter)
         if not ok then
             is_all_recovered = false
-            log.error(service:set_status_error(
+            limiter:log_error(total, service:set_status_error(
                 'Error during receiving buckets recovery: %s', total))
         elseif total == 0 then
             bucket_receiving_quota_reset()
@@ -1099,9 +1101,11 @@ local function recovery_service_f(service)
 end
 
 local function recovery_f()
-    local service = lservice_info.new('recovery')
+    local name = 'recovery'
+    local service = lservice_info.new(name)
     M.recovery_service = service
-    local ok, err = pcall(recovery_service_f, service)
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(recovery_service_f, service, ratelimit)
     if M.recovery_service == service then
         M.recovery_service = nil
     end
@@ -2214,7 +2218,7 @@ end
 -- 4) Sleep, go to (1).
 -- For each step details see comments in the code.
 --
-local function gc_bucket_service_f(service)
+local function gc_bucket_service_f(service, limiter)
     local module_version = M.module_version
     -- Changes of _bucket increments bucket generation. Garbage
     -- collector has its own bucket generation which is <= actual.
@@ -2253,8 +2257,8 @@ local function gc_bucket_service_f(service)
             end
             if not status then
                 box.rollback()
-                log.error(service:set_status_error(
-                    'Error during garbage collection step: %s', err))
+                limiter:log_error(err, service:set_status_error(
+                           'Error during garbage collection step: %s', err))
             elseif is_done then
                 -- Don't use global generation. During the collection it could
                 -- already change. Instead, remember the generation known before
@@ -2320,9 +2324,11 @@ local function gc_bucket_service_f(service)
 end
 
 local function gc_bucket_f()
-    local service = lservice_info.new('gc')
+    local name = 'gc'
+    local service = lservice_info.new(name)
     M.gc_service = service
-    local ok, err = pcall(gc_bucket_service_f, service)
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(gc_bucket_service_f, service, ratelimit)
     if M.gc_service == service then
         M.gc_service = nil
     end
@@ -2790,11 +2796,11 @@ local function rebalancer_download_states()
     local total_bucket_locked_count = 0
     local total_bucket_active_count = 0
     for id, replicaset in pairs(M.replicasets) do
-        local state = master_call(
+        local state, err = master_call(
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
-            return
+            return nil, err
         end
         local bucket_count = state.bucket_active_count +
                              state.bucket_pinned_count
@@ -2821,7 +2827,7 @@ end
 -- Background rebalancer. Works on a storage which has the
 -- smallest replicaset id and which is master.
 --
-local function rebalancer_service_f(service)
+local function rebalancer_service_f(service, limiter)
     local module_version = M.module_version
     while module_version == M.module_version do
         service:next_iter()
@@ -2839,10 +2845,10 @@ local function rebalancer_service_f(service)
             return
         end
         if not status or replicasets == nil then
-            if not status then
-                log.error(service:set_status_error(
-                    'Error during downloading rebalancer states: %s',
-                    replicasets))
+            local err = status and total_bucket_active_count or replicasets
+            if err then
+                limiter:log_error(err, service:set_status_error(
+                    'Error during downloading rebalancer states: %s', err))
             end
             log.info('Some buckets are not active, retry rebalancing later')
             service:set_activity('idling')
@@ -2907,9 +2913,11 @@ local function rebalancer_service_f(service)
 end
 
 local function rebalancer_f()
-    local service = lservice_info.new('rebalancer')
+    local name = 'rebalancer'
+    local service = lservice_info.new(name)
     M.rebalancer_service = service
-    local ok, err = pcall(rebalancer_service_f, service)
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(rebalancer_service_f, service, ratelimit)
     if M.rebalancer_service == service then
         M.rebalancer_service = nil
     end
