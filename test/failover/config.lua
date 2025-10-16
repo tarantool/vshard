@@ -131,5 +131,6 @@ return {
     weights = weights,
     sharding = sharding,
     replication_connect_quorum = 0,
+    log_level = 6, -- verbose
 }
 
