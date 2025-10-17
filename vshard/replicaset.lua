@@ -2160,16 +2160,10 @@ local function worker_wakeup_service(worker, service_name)
     pcall(worker.fiber.wakeup, worker.fiber)
 end
 
-local function worker_remove_service(worker, service_name)
-    -- On the next iteration of worker service won't run.
-    worker.services[service_name] = nil
-end
-
 local worker_mt = {
     __index = {
         add_service = worker_add_service,
         wakeup_service = worker_wakeup_service,
-        remove_service = worker_remove_service,
     }
 }
 

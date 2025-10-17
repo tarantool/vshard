@@ -1214,12 +1214,7 @@ local function master_search_set(router)
             end
         end
     else
-        -- Do not make users pay for what they do not use - when the search is
-        -- disabled for all replicasets, there should not be any fiber.
         log.info('Master auto search is disabled')
-        for _, replicaset in pairs(router.replicasets) do
-            replicaset.worker:remove_service(service_name)
-        end
     end
 end
 
