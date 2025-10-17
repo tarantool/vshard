@@ -837,7 +837,7 @@ test_group.test_worker_service_info = function()
     end
 
     -- Check info of replicas only.
-    rs.worker:remove_service(rs_service_name)
+    rs.worker.services[rs_service_name] = nil
     info = rs:service_info(service_name)
     t.assert_equals(info.name, nil)
     t.assert_not_equals(info.replicas, nil)
