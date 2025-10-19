@@ -965,8 +965,8 @@ test_group.test_tostring_of_outdated_replicasets_and_replicas = function()
 
     local new_cfg_template = table.deepcopy(cfg_template)
     new_cfg_template.sharding[1].replicas.replica_1_a.master = false
-    global_cfg = vcfg.check(vtest.config_new(new_cfg_template))
-    local replicasets_with_no_master = vreplicaset.buildall(global_cfg)
+    local new_global_cfg = vcfg.check(vtest.config_new(new_cfg_template))
+    local replicasets_with_no_master = vreplicaset.buildall(new_global_cfg)
     assert_full_rs_tostring_correctness(replicasets_with_no_master, false, true)
     vreplicaset.outdate_replicasets(replicasets_with_no_master)
     assert_full_rs_tostring_correctness(replicasets_with_no_master, true, true)
