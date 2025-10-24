@@ -3404,6 +3404,10 @@ end
 local function master_on_disable()
     log.info("Stepping down from the master role")
     M.is_master = false
+    local rs = M.this_replicaset
+    if rs.master ~= nil then
+        rs:update_master(rs.master.id, nil)
+    end
     M._on_master_disable:run()
     master_role_update()
     rebalancer_role_update()
@@ -3412,6 +3416,11 @@ end
 local function master_on_enable()
     log.info("Stepping up into the master role")
     M.is_master = true
+    local rs = M.this_replicaset
+    if rs.master ~= M.this_replica then
+        local old_master_id = rs.master and rs.master.id
+        M.this_replicaset:update_master(old_master_id, M.this_replica.id)
+    end
     M._on_master_enable:run()
     master_role_update()
     rebalancer_role_update()

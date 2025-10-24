@@ -105,3 +105,43 @@ test_group.test_turn_off_and_on = function(g)
         ilt.assert(ivshard.storage.internal.this_replicaset.is_master_auto)
     end)
 end
+
+test_group.test_master_search_in_services = function(g)
+    vtest.cluster_rebalancer_enable(g)
+    g.replica_1_b:exec(function(uuid)
+        -- Simulate router's ping, which forces the node to search for master.
+        ivshard.storage._call('info', {timeout = 10, with_health = true})
+        local internal = ivshard.storage.internal
+        ilt.assert_not_equals(internal.this_replicaset.master, nil)
+        ilt.assert_equals(internal.this_replicaset.master.id, uuid)
+    end, {g.replica_1_a:instance_uuid()})
+
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        ilt.assert_not_equals(internal.this_replicaset.master, nil)
+        ilt.assert_equals(internal.this_replicaset.master.id, box.info.uuid)
+        box.cfg{read_only = true}
+        ilt.helpers.retrying({}, function()
+            internal.instance_watch_fiber:wakeup()
+            ilt.assert_not(internal.is_master)
+            ilt.assert_equals(internal.this_replicaset.master, nil)
+        end)
+    end)
+
+    g.replica_1_b:exec(function()
+        local internal = ivshard.storage.internal
+        box.cfg{read_only = false}
+        ilt.helpers.retrying({}, function()
+            internal.instance_watch_fiber:wakeup()
+            ilt.assert(internal.is_master)
+            ilt.assert_not_equals(internal.this_replicaset.master, nil)
+            ilt.assert_equals(internal.this_replicaset.master.id, box.info.uuid)
+        end)
+        internal.rebalancer_fiber:wakeup()
+    end)
+    t.assert_not(g.replica_1_b:grep_log('reports self as both master'))
+
+    g.replica_1_a:exec(function() box.cfg{read_only = false} end)
+    g.replica_1_b:exec(function() box.cfg{read_only = true} end)
+    vtest.cluster_rebalancer_disable(g)
+end
