@@ -1,6 +1,7 @@
 local t = require('luatest')
 local server = require('test.luatest_helpers.server')
 local verror = require('vshard.error')
+local vconsts = require('vshard.consts')
 local vratelimit = require('vshard.log_ratelimit')
 
 local test_group = t.group('log_ratelimit')
@@ -75,4 +76,25 @@ test_group.test_garbage_collection = function()
     limiter = nil
     collectgarbage()
     t.assert_not(vratelimit.internal.limiters[name])
+end
+
+test_group.test_disable_ratelimit = function()
+    local old_interval = vconsts.LOG_RATELIMIT_INTERVAL
+    vconsts.LOG_RATELIMIT_INTERVAL = 0.1
+    local limiter = vratelimit.create({name = 'test_disable_ratelimit'})
+
+    local err = verror.box(box.error.new(box.error.NO_CONNECTION))
+    limiter:log_error(err)
+    t.assert(limiter.map[err.type][err.code])
+    limiter:log_error(err)
+    t.assert_equals(limiter.map[err.type][err.code].suppressed, 1)
+    -- Now limiter is disabled right in the middle of work.
+    vconsts.LOG_RATELIMIT_INTERVAL = 0
+    t.helpers.retrying({}, function()
+        -- Errors are not suppressed, old suppressed entries are flushed.
+        limiter:log_error(err)
+        t.assert_not(limiter.map[err.type])
+    end)
+
+    vconsts.LOG_RATELIMIT_INTERVAL = old_interval
 end
