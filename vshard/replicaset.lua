@@ -1098,6 +1098,7 @@ local function rebind_replicasets(replicasets, old_replicasets)
                     local conn = old_replica.conn
                     old_replica.conn = nil
                     replica.conn = conn
+                    replica.activity_ts = old_replica.activity_ts
                     if conn then
                         conn.replica = replica
                     end
