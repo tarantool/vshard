@@ -1072,3 +1072,44 @@ test_group.test_update_master_auto_master = function(g)
 
     server:drop()
 end
+
+--
+-- gh-605: rebound connection should be garbage collected, when unused.
+--
+test_group.test_replica_conn_gc_after_rebind = function()
+    local function init_auto_master_replicasets(replicasets)
+        local _, rs = next(replicasets)
+        vreplicaset.create_workers(replicasets)
+        rs.worker:add_service('replicaset_master_search', {mode = 'lazy'})
+        for _, r in pairs(rs.replicas) do
+            r.worker:add_service('replica_collect_idle_conns')
+        end
+    end
+
+    local new_global_cfg = get_auto_master_global_cfg()
+    local replicasets = vreplicaset.buildall(new_global_cfg)
+    init_auto_master_replicasets(replicasets)
+    local _, rs = next(replicasets)
+
+    local old_timeout = vconsts.REPLICA_NOACTIVITY_TIMEOUT
+    vconsts.REPLICA_NOACTIVITY_TIMEOUT = 0.1
+    t.assert(rs:callrw('echo', {true}))
+    t.assert(rs.master and rs.master.conn)
+    -- Rebind while there's an alive connection.
+    local new_replicasets = vreplicaset.buildall(new_global_cfg)
+    vreplicaset.rebind_replicasets(new_replicasets, replicasets)
+    vreplicaset.outdate_replicasets(replicasets)
+    init_auto_master_replicasets(new_replicasets)
+    _, rs = next(new_replicasets)
+    t.assert(rs.master and rs.master.conn)
+    -- Wait for connection and master to be garbage collected after rebind.
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        t.assert(not rs.master)
+        rs.worker:wakeup_service('replicaset_master_search')
+        for _, r in pairs(rs.replicas) do
+            r.worker:wakeup_service('replica_collect_idle_conns')
+        end
+    end)
+
+    vconsts.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
+end
