@@ -110,6 +110,11 @@ end
 local function ratelimit_log_template(log_lvl)
     return function (limiter, entry, format, ...)
         ratelimit_flush(limiter)
+        if consts.LOG_RATELIMIT_INTERVAL <= 0 then
+            -- Ratelimiter is disabled.
+            log[log_lvl](format, ...)
+            return
+        end
         local level = 'verbose'
         local signed_entry = ratelimit_sign_entry(entry)
         if signed_entry.type and signed_entry.code then
@@ -119,6 +124,11 @@ local function ratelimit_log_template(log_lvl)
                 -- entries are not printed until it's flushed.
                 ratelimit_add_entry(limiter, signed_entry)
                 level = log_lvl
+                -- Create flusher fiber, if needed.
+                if M.flush_fiber == nil then
+                    M.flush_fiber = util.reloadable_fiber_create(
+                        'vshard.ratelimit_flush', M, 'ratelimit_flush_f')
+                end
             else
                 -- The entry should be suppressed, it's in the limiter already.
                 ratelimit_suppress_entry(limiter, signed_entry)
@@ -167,10 +177,6 @@ local function ratelimit_create(cfg)
     }
     setmetatable(ratelimit, ratelimit_mt)
     M.limiters[ratelimit.name] = ratelimit
-    if M.flush_fiber == nil then
-        M.flush_fiber = util.reloadable_fiber_create(
-            'vshard.ratelimit_flush', M, 'ratelimit_flush_f')
-    end
     return ratelimit
 end
 
