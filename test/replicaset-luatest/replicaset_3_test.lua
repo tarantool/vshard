@@ -997,3 +997,78 @@ test_group.test_replica_call_not_spams_same_error = function(g)
     vtest.storage_start(g.replica_1_a, global_cfg)
     server:drop()
 end
+
+test_group.test_update_master_auto_master = function(g)
+    local new_global_cfg = get_auto_master_global_cfg()
+    local uuid_a = g.replica_1_a:instance_uuid()
+    local uuid_b = g.replica_1_b:instance_uuid()
+    -- The server is started for grepping logs.
+    local server = server:new({alias = 'update_master'})
+    server:start()
+    server:exec(function(cfg)
+        local _, rs = next(require('vshard.replicaset').buildall(cfg))
+        ilt.assert_equals(rs.master, nil)
+        rawset(_G, 'rs', rs)
+    end, {new_global_cfg})
+
+    -- No logs are printed.
+    server:exec(function(uuid_a, uuid_b)
+        -- Nil -> Nil. None of the logs are printed, NoOp.
+        ilt.assert(_G.rs:update_master(nil, nil))
+        ilt.assert_equals(_G.rs.master, nil)
+        -- Some replica with incorrect old_master.
+        _G.rs.master = _G.rs.replicas[uuid_a]
+        ilt.assert(_G.rs:update_master(uuid_b, uuid_a))
+        _G.rs.master = nil
+    end, {uuid_a, uuid_b})
+    t.assert_not(server:grep_log('Replica'))
+
+    -- Replica -> same replica, NoOp, warning.
+    server:exec(function(uuid_a)
+        ilt.assert(_G.rs:update_master(uuid_a, uuid_a))
+    end, {uuid_a})
+    t.assert(server:grep_log('reports self as both master and not master'))
+
+    -- Nil -> some replica, without source.
+    server:exec(function(uuid)
+        ilt.assert(_G.rs:update_master(nil, uuid))
+    end, {uuid_a})
+    local msg = string.format('Replica %s becomes a master', uuid_a)
+    t.assert(server:grep_log(msg))
+    msg = msg .. ' as reported'
+    t.assert_not(server:grep_log(msg))
+
+    -- Nil -> some replica, but with source.
+    server:exec(function(uuid_a, uuid_b)
+        _G.rs.master = nil
+        ilt.assert(_G.rs:update_master(uuid_a, uuid_b))
+    end, {uuid_a, uuid_b})
+    msg = string.format('Replica %s becomes a master as reported', uuid_b)
+    t.assert(server:grep_log(msg))
+
+    -- Some replica -> nil.
+    server:exec(function(uuid_b)
+        ilt.assert(_G.rs:update_master(uuid_b, nil))
+        ilt.assert_equals(_G.rs.master, nil)
+    end, {uuid_b})
+    msg = string.format('Replica %s is not a master anymore', uuid_b)
+    t.assert(server:grep_log(msg))
+
+    -- One replica -> another replica.
+    server:exec(function(uuid_a, uuid_b)
+        _G.rs.master = _G.rs.replicas[uuid_a]
+        ilt.assert(_G.rs:update_master(uuid_a, uuid_b))
+    end, {uuid_a, uuid_b})
+    msg = string.format('Replica %s becomes master instead of %s',
+                        uuid_b, uuid_a)
+    t.assert(server:grep_log(msg))
+
+    -- One replica -> incorrect replica.
+    server:exec(function(uuid_b)
+        ilt.assert(_G.rs:update_master(uuid_b, require('uuid').str()))
+    end, {uuid_b})
+    msg = string.format('Replica %s is not a master .* could not', uuid_b)
+    t.assert(server:grep_log(msg))
+
+    server:drop()
+end
