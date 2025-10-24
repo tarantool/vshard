@@ -1139,7 +1139,7 @@ end
 local function replicaset_update_master(replicaset, old_master_id, candidate_id)
     local is_auto = replicaset.is_master_auto
     local replicaset_id = replicaset.id
-    if old_master_id == candidate_id then
+    if old_master_id and old_master_id == candidate_id then
         -- It should not happen ever, but be ready to everything.
         log.warn('Replica %s in replicaset %s reports self as both master '..
                  'and not master', old_master_id, replicaset_id)
@@ -1155,9 +1155,16 @@ local function replicaset_update_master(replicaset, old_master_id, candidate_id)
             return true
         end
         replicaset.master = candidate
-        log.info('Replica %s becomes a master as reported by %s for '..
-                 'replicaset %s', candidate_id, old_master_id,
-                 replicaset_id)
+        local msg
+        if old_master_id then
+            msg = string.format('Replica %s becomes a master as reported ' ..
+                'by %s for replicaset %s', candidate_id, old_master_id,
+                replicaset_id)
+        else
+            msg = string.format('Replica %s becomes a master for replicaset %s',
+                candidate_id, replicaset_id)
+        end
+        log.info(msg)
         return true
     end
     local master_id = master.id
