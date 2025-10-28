@@ -3723,11 +3723,8 @@ local function storage_cfg_xc(cfgctx)
     local instance_id = cfgctx.instance_id
     local replicaset_id = cfgctx.replicaset_id
     local new_cfg = cfgctx.new_cfg
-    if M.replicasets then
-        log.info("Starting reconfiguration of replica %s", instance_id)
-    else
-        log.info("Starting configuration of replica %s", instance_id)
-    end
+    log.info('Starting %sconfiguration of replica %s at VShard %s',
+             M.replicasets and 're' or '', instance_id, consts.VERSION)
     if cfgctx.new_cfg.box_cfg_mode == 'manual' then
         if type(box.cfg) == 'function' then
             local msg = "Box must be configured, when box_cfg_mode is 'manual'"
