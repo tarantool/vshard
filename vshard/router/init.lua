@@ -1231,11 +1231,8 @@ end
 local function router_cfg(router, cfg, is_reload)
     cfg = lcfg.check(cfg, router.current_cfg)
     local vshard_cfg = lcfg.extract_vshard(cfg)
-    if not M.replicasets then
-        log.info('Starting router configuration')
-    else
-        log.info('Starting router reconfiguration')
-    end
+    log.info('Starting router %sconfiguration at VShard %s',
+             M.replicasets and 're' or '', consts.VERSION)
     if vshard_cfg.box_cfg_mode ~= 'manual' then
         local box_cfg = lcfg.extract_box(cfg, {})
         log.info("Calling box.cfg()...")
