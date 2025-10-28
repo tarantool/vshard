@@ -110,6 +110,11 @@ end
 local function ratelimit_log_template(log_lvl)
     return function (limiter, entry, format, ...)
         ratelimit_flush(limiter)
+        if consts.LOG_RATELIMIT_INTERVAL <= 0 then
+            -- Ratelimiter is disabled.
+            log[log_lvl](format, ...)
+            return
+        end
         local level = 'verbose'
         local signed_entry = ratelimit_sign_entry(entry)
         if signed_entry.type and signed_entry.code then
