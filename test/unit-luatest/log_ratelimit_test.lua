@@ -1,4 +1,5 @@
 local t = require('luatest')
+local fiber = require('fiber')
 local server = require('test.luatest_helpers.server')
 local verror = require('vshard.error')
 local vconsts = require('vshard.consts')
@@ -96,5 +97,38 @@ test_group.test_disable_ratelimit = function()
         t.assert_not(limiter.map[err.type])
     end)
 
+    vconsts.LOG_RATELIMIT_INTERVAL = old_interval
+end
+
+test_group.test_fiber_not_started_when_disabled = function()
+    -- Kill flush fiber from other tests before starting the test.
+    local function find_fiber_by_name(name)
+        local fibs = fiber.info()
+        for id, f in pairs(fibs) do
+            if f.name == name then
+                return fiber.find(id)
+            end
+        end
+    end
+
+    local flush_fiber_name = 'vshard.ratelimit_flush'
+    local flush_fiber = find_fiber_by_name(flush_fiber_name)
+    -- If all other tests are skipped, then it may happen, that the flush fiber
+    -- doesn't exist at all.
+    if flush_fiber then
+        flush_fiber:cancel()
+        t.helpers.retrying({}, function()
+            t.assert_not(find_fiber_by_name(flush_fiber_name))
+        end)
+    end
+    vratelimit.internal.flush_fiber = nil
+
+    -- Test, that the fiber is not started, if limiter is disabled.
+    local old_interval = vconsts.LOG_RATELIMIT_INTERVAL
+    vconsts.LOG_RATELIMIT_INTERVAL = 0
+    local limiter = vratelimit.create({name = 'test_disable_ratelimit'})
+    local err = verror.box(box.error.new(box.error.NO_CONNECTION))
+    limiter:log_error(err)
+    t.assert_not(find_fiber_by_name(flush_fiber_name))
     vconsts.LOG_RATELIMIT_INTERVAL = old_interval
 end
