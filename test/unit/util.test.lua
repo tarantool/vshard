@@ -14,7 +14,7 @@ function slow_fail() fiber.sleep(0.01) error('Error happened.') end
 -- Check autoreload on function change during failure.
 fake_M.reloadable_function = function () fake_M.reloadable_function = slow_fail; slow_fail() end
 
-fib = util.reloadable_fiber_create('Worker_name', fake_M, 'reloadable_function')
+fib = util.reloadable_fiber_new('Worker_name', fake_M, 'reloadable_function')
 -- Check that the fiber starts with the proper name
 while not test_run:grep_log('default', 'Worker_name.+reloadable_function has been started') do fiber.sleep(0.01); end
 while not test_run:grep_log('default', 'reloadable function reloadable_function has been changed') do fiber.sleep(0.01); end
@@ -25,14 +25,14 @@ log.info(string.rep('a', 1000))
 
 -- Check reload feature.
 fake_M.reloadable_function = function () fiber.sleep(0.01); return true end
-fib = util.reloadable_fiber_create('Worker_name', fake_M, 'reloadable_function')
+fib = util.reloadable_fiber_new('Worker_name', fake_M, 'reloadable_function')
 while not test_run:grep_log('default', 'module is reloaded, restarting') do fiber.sleep(0.01) end
 test_run:grep_log('default', 'reloadable_function has been started', 1000)
 fib:cancel()
 
 -- Re-loadable fiber must truncate too long name.
 name = string.rep('a', 512)
-fib = util.reloadable_fiber_create(name, fake_M, 'reloadable_function')
+fib = util.reloadable_fiber_new(name, fake_M, 'reloadable_function')
 fib:cancel()
 
 -- Yielding table minus.

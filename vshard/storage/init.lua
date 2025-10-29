@@ -3085,9 +3085,8 @@ local function rebalancer_role_update()
     elseif need_rebalancer then
         if not M.rebalancer_fiber then
             log.info('Starting the rebalancer')
-            M.rebalancer_fiber =
-                util.reloadable_fiber_create('vshard.rebalancer', M,
-                                             'rebalancer_f')
+            M.rebalancer_fiber = util.reloadable_fiber_new(
+                'vshard.rebalancer', M, 'rebalancer_f')
             return
         end
     end
@@ -3381,11 +3380,11 @@ local function master_role_update()
     if this_is_master() and M.is_configured then
         if not M.collect_bucket_garbage_fiber then
             M.collect_bucket_garbage_fiber =
-                util.reloadable_fiber_create('vshard.gc', M, 'gc_bucket_f')
+                util.reloadable_fiber_new('vshard.gc', M, 'gc_bucket_f')
         end
         if not M.recovery_fiber then
             M.recovery_fiber =
-                util.reloadable_fiber_create('vshard.recovery', M, 'recovery_f')
+                util.reloadable_fiber_new('vshard.recovery', M, 'recovery_f')
         end
     else
         if M.collect_bucket_garbage_fiber then
@@ -3494,7 +3493,7 @@ end
 local function instance_watch_update()
     if M.this_replicaset.is_master_auto then
         if not M.instance_watch_fiber then
-            M.instance_watch_fiber = util.reloadable_fiber_create(
+            M.instance_watch_fiber = util.reloadable_fiber_new(
                 'vshard.state_watch', M, 'instance_watch_f')
         end
         return

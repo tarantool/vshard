@@ -102,7 +102,7 @@ end
 -- errors and module reload.
 -- This loop executes the latest version of itself in case of
 -- reload of that module.
--- See description of parameters in `reloadable_fiber_create`.
+-- See description of parameters in `reloadable_fiber_new`.
 --
 local function reloadable_fiber_main_loop(module, func_name, data)
     local func = module[func_name]
@@ -135,9 +135,9 @@ local function reloadable_fiber_main_loop(module, func_name, data)
 end
 
 --
--- Create a new fiber which runs a function in a loop. This loop
--- is aware of reload mechanism and it loads a new version of the
--- function in that case.
+-- Create but do not start a new fiber which runs a function in a loop. This
+-- loop is aware of reload mechanism and it loads a new version of the function
+-- in that case.
 -- To handle module reload and run new version of a function
 -- in the module, the function should just return.
 -- @param fiber_name Name of a new fiber. E.g.
@@ -148,12 +148,11 @@ end
 -- @param data Data to be passed to the specified function.
 -- @retval New fiber.
 --
-local function reloadable_fiber_create(fiber_name, module, func_name, data)
+local function reloadable_fiber_new(fiber_name, module, func_name, data)
     assert(type(fiber_name) == 'string')
     local xfiber = fiber.new(reloadable_fiber_main_loop, module, func_name, data)
     xfiber:name(fiber_name, {truncate = true})
     xfiber:wakeup()
-    fiber.yield()
     return xfiber
 end
 
@@ -483,7 +482,7 @@ return {
     core_version = tnt_version,
     uri_eq = uri_eq,
     tuple_extract_key = tuple_extract_key,
-    reloadable_fiber_create = reloadable_fiber_create,
+    reloadable_fiber_new = reloadable_fiber_new,
     future_wait = future_wait,
     generate_self_checker = generate_self_checker,
     async_task = async_task,
