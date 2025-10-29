@@ -457,7 +457,7 @@ local function discovery_set(router, new_mode)
         -- is found. But it is the case already. So nothing to do.
         return
     end
-    router.discovery_fiber = util.reloadable_fiber_create(
+    router.discovery_fiber = util.reloadable_fiber_new(
         'vshard.discovery.' .. router.name, M, 'discovery_f', router)
 end
 

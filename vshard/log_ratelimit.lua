@@ -173,7 +173,7 @@ local function ratelimit_create(cfg)
     setmetatable(ratelimit, ratelimit_mt)
     M.limiters[ratelimit.name] = ratelimit
     if M.flush_fiber == nil then
-        M.flush_fiber = util.reloadable_fiber_create(
+        M.flush_fiber = util.reloadable_fiber_new(
             'vshard.ratelimit_flush', M, 'ratelimit_flush_f')
     end
     return ratelimit
