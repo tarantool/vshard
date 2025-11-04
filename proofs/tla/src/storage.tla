@@ -101,6 +101,8 @@ StorageType == [
     bucketRefs : [BucketIds ->
         [ro : Nat, rw : Nat, ro_lock : BOOLEAN, rw_lock : BOOLEAN]],
     gcAck : [BucketIds -> SUBSET Storages],
+    sendWaitTarget : [BucketIds -> [Storages -> Nat]],
+    sendingBuckets : SUBSET BucketIds,
     \* For limiting tests, it cannot be done outside of the module, since
     \* a test doesn't know, whether the bucket send or ref actually happened.
     errinj : [
@@ -156,6 +158,8 @@ StorageInit ==
         bucketRefs |-> [b \in BucketIds |->
             [ro |-> 0, rw |-> 0, ro_lock |-> FALSE, rw_lock |-> FALSE]],
         gcAck |-> [b \in BucketIds |-> {}],
+        sendWaitTarget |-> [b \in BucketIds |-> [s \in Storages |-> 0]],
+        sendingBuckets |-> {},
         errinj |-> [
             bucketSendCount |-> 0,
             bucketRWRefCount |-> 0,
@@ -186,6 +190,8 @@ StorageState(i) == [
     buckets |-> storages[i].buckets,
     bucketRefs |-> storages[i].bucketRefs,
     gcAck |-> storages[i].gcAck,
+    sendWaitTarget |-> storages[i].sendWaitTarget,
+    sendingBuckets |-> storages[i].sendingBuckets,
     errinj |-> storages[i].errinj
 ]
 
@@ -196,7 +202,9 @@ StorageStateApply(i, state) ==
                    VarSet(i, "buckets", state.buckets,
                    VarSet(i, "bucketRefs", state.bucketRefs,
                    VarSet(i, "gcAck", state.gcAck,
-                   VarSet(i, "errinj", state.errinj, storages)))))))
+                   VarSet(i, "sendWaitTarget", state.sendWaitTarget,
+                   VarSet(i, "sendingBuckets", state.sendingBuckets,
+                   VarSet(i, "errinj", state.errinj, storages)))))))))
     /\ network' =
         [s \in Storages |->
             [t \in Storages |->
@@ -299,6 +307,37 @@ BucketUnRef(state, bucket, mode) ==
 (*                           Bucket sending                                *)
 (***************************************************************************)
 
+AllReplicasCaughtUp(state, b) ==
+    LET rs == ReplicasetOf(state.id)
+        replicas == OtherReplicasInReplicaset(state.id)
+        target == state.sendWaitTarget[b]
+        m == state.id
+    IN
+        \A r \in replicas : storages[r].vclock[m] >= target[m]
+
+BucketSendWaitAndSend(state, b, j) ==
+    IF IsMaster(state)
+       /\ state.buckets[b].status = "SENDING"
+       /\ ReplicasetOf(j) = state.buckets[b].destination
+       /\ b \in state.transferingBuckets
+       /\ b \in state.sendingBuckets
+       /\ j # state.id
+       /\ AllReplicasCaughtUp(state, b)
+    THEN
+        LET msg == [type |-> "BUCKET_RECV",
+                    content |-> [bucket |-> b, final |-> FALSE]]
+        IN [state EXCEPT
+                !.networkSend[j] = Append(@, msg),
+                !.sendingBuckets = @ \ {b}]
+    ELSE
+        state
+
+BucketDropFromSending(state, b) ==
+    IF b \in state.sendingBuckets THEN
+        [state EXCEPT !.sendingBuckets = @ \ {b}]
+    ELSE
+        state
+
 BucketSendStart(state, b, j) ==
     IF IsMaster(state) /\ state.buckets[b].status = "ACTIVE" /\
        state.bucketRefs[b].rw = 0 /\ ~state.bucketRefs[b].rw_lock /\
@@ -308,10 +347,11 @@ BucketSendStart(state, b, j) ==
                       !.transferingBuckets = @ \union {b},
                       !.errinj.bucketSendCount = @ + 1] IN
          LET state2 == BucketStatusChange(
-                  state1, state.id, b, "SENDING", ReplicasetOf(j)) IN
-         LET msg == [type |-> "BUCKET_RECV",
-                     content |-> [bucket |-> b, final |-> FALSE]] IN
-         [state2 EXCEPT !.networkSend[j] = Append(@, msg)]
+                  state1, state.id, b, "SENDING", ReplicasetOf(j))
+             state3 == [state2 EXCEPT
+                  !.sendWaitTarget[b] = state2.vclock,
+                  !.sendingBuckets = @ \union {b}]
+         IN BucketSendWaitAndSend(state3, b, j)
     ELSE state
 
 BucketRecvStart(state, j) ==
@@ -643,11 +683,13 @@ Next ==
                \/ StorageStateApply(i, BucketRef(state, b, mode))
                \/ StorageStateApply(i, BucketUnRef(state, b, mode))
           \/ \E j \in Storages, b \in BucketIds :
-               StorageStateApply(i, BucketSendStart(state, b, j))
+               \/ StorageStateApply(i, BucketSendStart(state, b, j))
+               \/ StorageStateApply(i, BucketSendWaitAndSend(state, b, j))
           \/ \E b \in BucketIds :
                \/ StorageStateApply(i, RecoverySendStatRequest(state, b))
                \/ StorageStateApply(i, GcDropGarbage(state, b))
                \/ StorageStateApply(i, GcSendTestRequest(state, b))
                \/ StorageStateApply(i, BucketDropFromTransfering(state, b))
+               \/ StorageStateApply(i, BucketDropFromSending(state, b))
 
 ================================================================================

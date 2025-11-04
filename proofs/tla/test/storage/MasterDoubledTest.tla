@@ -38,12 +38,11 @@ TestInit ==
 
 TestNext ==
   \/ /\ phase = 1
-     /\ ~(
-          storages["s1"].buckets[b1].status = "SENT"
-          /\ storages["s3"].buckets[b1].status = "ACTIVE"
-        )
      /\ \E i \in {"s1"}, j \in {"s3"}, b \in {b1} :
+          \/ /\ Len(StorageState("s2").networkReceive[i]) > 0
+             /\ StorageStateApply("s2", ProcessReplicationBucket(StorageState("s2"), i))
           \/ StorageStateApply(i, BucketSendStart(StorageState(i), b, j))
+          \/ StorageStateApply(i, BucketSendWaitAndSend(StorageState(i), b, j))
           \/ /\ Len(StorageState(j).networkReceive[i]) > 0
              /\ \/ StorageStateApply(j, BucketRecvStart(StorageState(j), i))
                 \/ StorageStateApply(j, BucketRecvFinish(StorageState(j), i))
