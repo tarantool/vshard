@@ -103,6 +103,7 @@ StorageType == [
     gcAck : [BucketIds -> SUBSET Storages],
     sendWaitTarget : [BucketIds -> [Storages -> Nat]],
     sendingBuckets : SUBSET BucketIds,
+    masterWaitTarget : [Storages -> Nat],
     \* For limiting tests, it cannot be done outside of the module, since
     \* a test doesn't know, whether the bucket send or ref actually happened.
     errinj : [
@@ -160,6 +161,7 @@ StorageInit ==
         gcAck |-> [b \in BucketIds |-> {}],
         sendWaitTarget |-> [b \in BucketIds |-> [s \in Storages |-> 0]],
         sendingBuckets |-> {},
+        masterWaitTarget |-> [s \in Storages |-> 0],
         errinj |-> [
             bucketSendCount |-> 0,
             bucketRWRefCount |-> 0,
@@ -192,6 +194,7 @@ StorageState(i) == [
     gcAck |-> storages[i].gcAck,
     sendWaitTarget |-> storages[i].sendWaitTarget,
     sendingBuckets |-> storages[i].sendingBuckets,
+    masterWaitTarget |-> storages[i].masterWaitTarget,
     errinj |-> storages[i].errinj
 ]
 
@@ -204,7 +207,8 @@ StorageStateApply(i, state) ==
                    VarSet(i, "gcAck", state.gcAck,
                    VarSet(i, "sendWaitTarget", state.sendWaitTarget,
                    VarSet(i, "sendingBuckets", state.sendingBuckets,
-                   VarSet(i, "errinj", state.errinj, storages)))))))))
+                   VarSet(i, "masterWaitTarget", state.masterWaitTarget,
+                   VarSet(i, "errinj", state.errinj, storages))))))))))
     /\ network' =
         [s \in Storages |->
             [t \in Storages |->
@@ -260,9 +264,28 @@ ProcessReplicationBucket(state, j) ==
 (*                        Failover master change                           *)
 (***************************************************************************)
 
+\* True iff this node's current vclock has reached the stored target.
+MasterSyncDone(state) ==
+    \A s \in Storages : state.vclock[s] >= state.masterWaitTarget[s]
+
+\* Max of a non-empty set of Nats.
+MaxNat(S) == CHOOSE m \in S : \A x \in S : m >= x
+
+\* Compute the one-shot target when i becomes master:
+\* for every source s, the maximum vclock[s] seen among peers at that instant.
+MasterCatchupTarget(i) ==
+    [ s \in Storages |->
+        IF OtherReplicasInReplicaset(i) = {} THEN 0
+        ELSE MaxNat({storages[p].vclock[s] : p \in OtherReplicasInReplicaset(i)})
+    ]
+
+\* Until master synchronizes with other repliacas, rebalancer and recovery
+\* are not allowed.
 BecomeMaster(state) ==
-    IF ~IsMaster(state) THEN [state EXCEPT
-        !.status = "master", !.errinj.masterTransitionCount = @ + 1]
+    IF ~IsMaster(state) THEN
+        LET target == MasterCatchupTarget(state.id) IN [state EXCEPT
+        !.status = "master", !.errinj.masterTransitionCount = @ + 1,
+        !.masterWaitTarget = target]
     ELSE state
 
 BecomeReplica(state) ==
@@ -323,6 +346,7 @@ BucketSendWaitAndSend(state, b, j) ==
        /\ b \in state.sendingBuckets
        /\ j # state.id
        /\ AllReplicasCaughtUp(state, b)
+       /\ MasterSyncDone(state)
     THEN
         LET msg == [type |-> "BUCKET_RECV",
                     content |-> [bucket |-> b, final |-> FALSE]]
@@ -341,7 +365,7 @@ BucketDropFromSending(state, b) ==
 BucketSendStart(state, b, j) ==
     IF IsMaster(state) /\ state.buckets[b].status = "ACTIVE" /\
        state.bucketRefs[b].rw = 0 /\ ~state.bucketRefs[b].rw_lock /\
-       b \notin state.transferingBuckets /\ j # state.id
+       b \notin state.transferingBuckets /\ j # state.id /\ MasterSyncDone(state)
     THEN LET state1 == [state EXCEPT
                       !.bucketRefs[b].rw_lock = TRUE,
                       !.transferingBuckets = @ \union {b},
@@ -356,7 +380,7 @@ BucketSendStart(state, b, j) ==
 
 BucketRecvStart(state, j) ==
     LET msg == Head(state.networkReceive[j]) IN
-    IF msg.type = "BUCKET_RECV" /\ ~msg.content.final THEN
+    IF msg.type = "BUCKET_RECV" /\ ~msg.content.final /\ MasterSyncDone(state) THEN
         LET b == msg.content.bucket IN
         IF IsMaster(state) /\ state.buckets[b].status = NULL /\
            b \notin state.transferingBuckets
@@ -384,7 +408,7 @@ BucketSendFinish(state, j) ==
         LET b == msg.content.bucket
             ok == msg.content.status
         IN
-        IF IsMaster(state) /\ b \in state.transferingBuckets THEN
+        IF IsMaster(state) /\ b \in state.transferingBuckets /\ MasterSyncDone(state) THEN
             LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
             IF ok THEN
                 \* Receiver accepted the bucket - mark as SENT
@@ -414,7 +438,7 @@ BucketRecvFinish(state, j) ==
     IF msg.type = "BUCKET_RECV" /\ msg.content.final THEN
         LET b == msg.content.bucket IN
         IF IsMaster(state) /\ state.buckets[b].status = "RECEIVING" /\
-           b \notin state.transferingBuckets
+           b \notin state.transferingBuckets /\ MasterSyncDone(state)
         THEN LET state1 == [state EXCEPT
                             !.networkReceive[j] = Tail(@)] IN
             LET state2 ==
@@ -440,6 +464,7 @@ RecoverySendStatRequest(state, b) ==
        /\ state.buckets[b].status \in {"SENDING", "RECEIVING"}
        /\ ~(b \in state.transferingBuckets)
        /\ dest_rs # NULL
+       /\ MasterSyncDone(state)
     THEN
         \* Choose any storage in the destination replicaset.
         LET candidates == {s \in Storages :
@@ -455,7 +480,7 @@ ProcessRecoveryStatRequest(state, j) ==
     LET msg == Head(state.networkReceive[j]) IN
     IF msg.type # "RECOVERY_BUCKET_STAT" THEN state
     ELSE
-        IF ~IsMaster(state) THEN
+        IF ~IsMaster(state) \/ ~MasterSyncDone(state) THEN
             \* Drop message if this node is not a master.
             [state EXCEPT !.networkReceive[j] = Tail(@)]
         ELSE
@@ -474,7 +499,7 @@ ProcessRecoveryStatResponse(state, j) ==
     LET msg == Head(state.networkReceive[j]) IN
     IF msg.type # "RECOVERY_BUCKET_STAT_RESPONSE" THEN state
     ELSE
-        IF ~IsMaster(state) THEN
+        IF ~IsMaster(state) \/ ~MasterSyncDone(state) THEN
             \* Drop message if this node is not a master.
             [state EXCEPT !.networkReceive[j] = Tail(@)]
         ELSE
