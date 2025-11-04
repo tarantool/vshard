@@ -281,7 +281,7 @@ function Server:grep_log(what, bytes, opts)
     local opts = opts or {}
     local noreset = opts.noreset or false
     -- if instance has crashed provide filename to use grep_log
-    local filename = opts.filename or self:eval('return box.cfg.log')
+    local filename = opts.filename or self.log_file
     local file = fio.open(filename, {'O_RDONLY', 'O_NONBLOCK'})
     -- This is needed to find UUID with string.match.
     what = string.gsub(what, "%-", "%%-")

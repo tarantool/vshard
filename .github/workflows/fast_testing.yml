@@ -100,5 +100,14 @@ jobs:
       - name: Install test requirements
         run: pip3 install --user -r test-run/requirements.txt
 
+      - name: Setup tt
+        run: |
+          curl -L https://tarantool.io/release/2/installer.sh | sudo bash
+          sudo apt install -y tt
+          tt version
+
+      - name: Setup luatest
+        run: tt rocks install luatest 1.2.1
+
       - run: cmake .
       - run: make test-force
