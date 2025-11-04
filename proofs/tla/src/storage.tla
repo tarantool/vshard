@@ -57,7 +57,7 @@ MessageType == {
 }
 
 BucketRecvContent ==
-    [bucket: BucketIds, final: BOOLEAN]
+    [bucket: BucketIds, final: BOOLEAN, generation : Nat]
 BucketRecvResponseContent ==
     [bucket: BucketIds, status: BOOLEAN]
 RecoveryBucketStatContent ==
@@ -70,7 +70,7 @@ BucketTestGcResponseContent ==
     [bucket: BucketIds, can_gc: BOOLEAN]
 ReplicationBucketContent ==
     [bucket: BucketIds, status: BucketState,
-     destination: ReplicaSets \union {NULL}]
+     destination: ReplicaSets \union {NULL}, generation: Nat]
 
 MessageContent ==
     BucketRecvContent \union
@@ -97,7 +97,9 @@ StorageType == [
     transferingBuckets : SUBSET BucketIds,
     buckets :
         [BucketIds ->
-            [status : BucketState, destination: ReplicaSets \union {NULL}]],
+            [status : BucketState,
+             destination : ReplicaSets \union {NULL},
+             generation : Nat]],
     bucketRefs : [BucketIds ->
         [ro : Nat, rw : Nat, ro_lock : BOOLEAN, rw_lock : BOOLEAN]],
     gcAck : [BucketIds -> SUBSET Storages],
@@ -154,8 +156,8 @@ StorageInit ==
             LET rs_for_s ==
                CHOOSE rs \in ReplicaSets : i \in StorageAssignments[rs]
             IN IF b \in BucketAssignments[rs_for_s]
-               THEN [status |-> "ACTIVE", destination |-> NULL]
-               ELSE [status |-> NULL, destination |-> NULL]],
+               THEN [status |-> "ACTIVE", destination |-> NULL, generation |-> 1]
+               ELSE [status |-> NULL, destination |-> NULL, generation |-> 0]],
         bucketRefs |-> [b \in BucketIds |->
             [ro |-> 0, rw |-> 0, ro_lock |-> FALSE, rw_lock |-> FALSE]],
         gcAck |-> [b \in BucketIds |-> {}],
@@ -229,13 +231,14 @@ StorageStateApply(i, state) ==
 (*                              Replication                                *)
 (***************************************************************************)
 
-BucketStatusChange(state, from, bucket, status, destination) ==
+BucketStatusChange(state, from, bucket, status, destination, generation) ==
     LET ref_before == state.bucketRefs[bucket]
         ref_after == [ref_before EXCEPT
                 !.ro_lock = ~(status \in ReadableStates),
                 !.rw_lock = ~(status \in WritableStates)]
         state1 == [state EXCEPT
-        !.buckets[bucket] = [status |-> status, destination |-> destination],
+        !.buckets[bucket] = [status |-> status, destination |-> destination,
+                             generation |-> generation],
         !.bucketRefs[bucket] = ref_after,
         !.vclock[from] = @ + 1]
         a == Assert(state.status = "master", "Bucket change on non-master") IN
@@ -244,7 +247,7 @@ BucketStatusChange(state, from, bucket, status, destination) ==
         \* replicate to all other nodes in replicaset
         LET replication_msg == [type |-> "REPLICATION_BUCKET",
             content |-> [bucket |-> bucket, status |-> status,
-            destination |-> destination]] IN
+            destination |-> destination, generation |-> generation]] IN
         [state1 EXCEPT !.networkSend = [
             j \in Storages |-> IF j \in OtherReplicasInReplicaset(state.id)
                                THEN Append(state1.networkSend[j], replication_msg)
@@ -256,8 +259,8 @@ ProcessReplicationBucket(state, j) ==
     LET msg == Head(state.networkReceive[j]) IN
     IF msg.type = "REPLICATION_BUCKET" THEN
         LET stateNew == BucketStatusChange(state, j, msg.content.bucket,
-            msg.content.status, msg.content.destination) IN
-        [stateNew EXCEPT !.networkReceive[j] = Tail(@)]
+            msg.content.status, msg.content.destination, msg.content.generation)
+        IN [stateNew EXCEPT !.networkReceive[j] = Tail(@)]
     ELSE state
 
 (***************************************************************************)
@@ -349,7 +352,8 @@ BucketSendWaitAndSend(state, b, j) ==
        /\ MasterSyncDone(state)
     THEN
         LET msg == [type |-> "BUCKET_RECV",
-                    content |-> [bucket |-> b, final |-> FALSE]]
+                    content |-> [bucket |-> b, final |-> FALSE,
+                    generation |-> state.buckets[b].generation]]
         IN [state EXCEPT
                 !.networkSend[j] = Append(@, msg),
                 !.sendingBuckets = @ \ {b}]
@@ -371,7 +375,8 @@ BucketSendStart(state, b, j) ==
                       !.transferingBuckets = @ \union {b},
                       !.errinj.bucketSendCount = @ + 1] IN
          LET state2 == BucketStatusChange(
-                  state1, state.id, b, "SENDING", ReplicasetOf(j))
+                  state1, state.id, b, "SENDING", ReplicasetOf(j),
+                  state1.buckets[b].generation + 1)
              state3 == [state2 EXCEPT
                   !.sendWaitTarget[b] = state2.vclock,
                   !.sendingBuckets = @ \union {b}]
@@ -389,7 +394,8 @@ BucketRecvStart(state, j) ==
             LET state1 == [state EXCEPT
                            !.networkReceive[j] = Tail(@)] IN
             LET state2 == BucketStatusChange(
-                  state1, state.id, b, "RECEIVING", ReplicasetOf(j)) IN
+                  state1, state.id, b, "RECEIVING", ReplicasetOf(j),
+                  msg.content.generation) IN
             LET response == [type |-> "BUCKET_RECV_RESPONSE",
                              content |-> [bucket |-> b, status |-> TRUE]] IN
             [state2 EXCEPT !.networkSend[j] = Append(@, response)]
@@ -413,11 +419,12 @@ BucketSendFinish(state, j) ==
             IF ok THEN
                 \* Receiver accepted the bucket - mark as SENT
                 \* and send final message.
-                LET state2 == BucketStatusChange(
-                                 state1, state.id, b, "SENT", ReplicasetOf(j)) IN
+                LET state2 == BucketStatusChange(state1, state.id, b, "SENT",
+                    ReplicasetOf(j), state1.buckets[b].generation) IN
                 LET final_msg ==
                     [ type |-> "BUCKET_RECV",
-                      content |-> [bucket |-> b, final |-> TRUE] ] IN
+                      content |-> [bucket |-> b, final |-> TRUE,
+                      generation |-> state.buckets[b].generation]] IN
                 [ state2 EXCEPT
                     !.transferingBuckets = @ \ {b},
                     !.networkSend[j] = Append(@, final_msg)
@@ -442,7 +449,8 @@ BucketRecvFinish(state, j) ==
         THEN LET state1 == [state EXCEPT
                             !.networkReceive[j] = Tail(@)] IN
             LET state2 ==
-                   BucketStatusChange(state1, state.id, b, "ACTIVE", NULL) IN
+                   BucketStatusChange(state1, state.id, b, "ACTIVE", NULL,
+                        state1.buckets[b].generation) IN
                [state2 EXCEPT !.bucketRefs[b].rw_lock = FALSE]
         ELSE [state EXCEPT !.networkReceive[j] = Tail(@)]  \* Drop if not master
     ELSE state  \* Leave non-BUCKET_RECV messages in queue
@@ -513,16 +521,19 @@ ProcessRecoveryStatResponse(state, j) ==
             \* Recovery policy: sender adjusts state after getting peer's status.
             ELSE IF localStatus = "SENDING" /\ remoteStatus \in {"ACTIVE"} THEN
                 LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
-                BucketStatusChange(state1, state.id, b, "SENT", state.buckets[b].destination)
+                BucketStatusChange(state1, state.id, b, "SENT",
+                    state.buckets[b].destination, state1.buckets[b].generation)
             ELSE IF localStatus = "RECEIVING" /\
                     (remoteStatus \in WritableStates
                      \/ (remoteStatus = "SENDING" /\ ~remoteTransf)) THEN
                 LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
-                BucketStatusChange(state1, state.id, b, "GARBAGE", NULL)
+                BucketStatusChange(state1, state.id, b, "GARBAGE", NULL,
+                    state1.buckets[b].generation)
             ELSE IF (b \notin state.transferingBuckets)
                      /\ (remoteStatus \in {"SENT", "GARBAGE"} \/ remoteStatus = NULL) THEN
                 LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
-                BucketStatusChange(state1, state.id, b, "ACTIVE", NULL)
+                BucketStatusChange(state1, state.id, b, "ACTIVE", NULL,
+                    state1.buckets[b].generation)
             ELSE
                 [state EXCEPT !.networkReceive[j] = Tail(@)]
 
@@ -550,7 +561,8 @@ TryBucketGarbage(state, b) ==
     THEN
         \* Reset acks and mark bucket as GARBAGE
         LET state1 == [state EXCEPT !.gcAck[b] = {}] IN
-        BucketStatusChange(state1, state.id, b, "GARBAGE", NULL)
+        BucketStatusChange(state1, state.id, b, "GARBAGE", NULL,
+            state1.buckets[b].generation)
     ELSE
         state
 
@@ -628,7 +640,7 @@ ProcessGcTestResponse(state, j) ==
 
 GcDropGarbage(state, b) ==
     IF IsMaster(state) /\ state.buckets[b].status = "GARBAGE" THEN
-        BucketStatusChange(state, state.id, b, NULL, NULL)
+        BucketStatusChange(state, state.id, b, NULL, NULL, 0)
     ELSE state
 
 (***************************************************************************)
