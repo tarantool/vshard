@@ -36,8 +36,8 @@ TestInit ==
 
 NetworkReorderConstraint ==
     \A s \in StoragesC :
-        /\ storages[s].errinj.networkReorderCount <= 1
-        /\ storages[s].errinj.networkDropCount <= 1
+        /\ storages[s].errinj.networkReorderCount <= 2
+        /\ storages[s].errinj.networkDropCount <= 2
 
 (***************************************************************************)
 (* Phase-driven Next                                                       *)
@@ -52,18 +52,24 @@ TestNext ==
 
   \/ /\ phase = 2
      /\ storages["s1"].buckets[b1].status = "SENDING"
-     /\ StorageStateApply("s1", BucketDropFromTransfering(StorageState("s1"), b1))
+     /\ StorageStateApply("s1", RecoverySendStatRequest(
+                BucketDropFromTransfering(StorageState("s1"), b1), b1))
      /\ phase' = 3
      /\ UNCHANGED <<storageToReplicaset>>
 
   \/ /\ phase = 3
      /\ storages["s1"].buckets[b1].status = "SENDING"
-     /\ \E i \in {"s1"}, j \in {"s3"}, b \in {b1} :
-        \/ StorageStateApply(i, RecoverySendStatRequest(StorageState(i), b))
+     /\ \E i \in {"s1"}, j \in {"s3"}, l \in {"s2"}, b \in {b1} :
         \/ /\ Len(StorageState(j).networkReceive[i]) > 0
-           /\ StorageStateApply(j, ProcessRecoveryStatRequest(StorageState(j), i))
+           /\ \/ StorageStateApply(j, ProcessRecoveryStatRequest(StorageState(j), i))
+              \/ StorageStateApply(j, ProcessRecoveryFullscanRequest(StorageState(j), i))
+        \/ /\ Len(StorageState(l).networkReceive[i]) > 0
+           /\ StorageStateApply(l, ProcessRecoveryFullscanRequest(StorageState(l), i))
         \/ /\ Len(StorageState(i).networkReceive[j]) > 0
-           /\ StorageStateApply(i, ProcessRecoveryStatResponse(StorageState(i), j))
+           /\ \/ StorageStateApply(i, ProcessRecoveryStatResponse(StorageState(i), j))
+              \/ StorageStateApply(i, ProcessRecoveryFullscanResponse(StorageState(i), j))
+        \/ /\ Len(StorageState(i).networkReceive[l]) > 0
+           /\ StorageStateApply(i, ProcessRecoveryFullscanResponse(StorageState(i), l))
         \/ ReorderOneNetworkMessage
      /\ UNCHANGED <<storageToReplicaset, phase>>
 
@@ -105,17 +111,22 @@ TestNext ==
      /\ storages["s1"].buckets[b1].status = "GARBAGE"
      /\ storages["s2"].buckets[b1].status = "ACTIVE"
      /\ storages["s3"].buckets[b1].status = "RECEIVING"
+     /\ StorageStateApply("s3", RecoverySendStatRequest(StorageState("s3"), b1))
      /\ phase' = 8
-     /\ UNCHANGED <<network, storages, storageToReplicaset>>
 
   \/ /\ phase = 8
-     /\ \E i \in {"s3"}, j \in {"s1"}, b \in {b1} :
+     /\ \E i \in {"s3"}, j \in {"s1"}, l \in {"s2"}, b \in {b1} :
         \/ DropOneNetworkMessage
-        \/ StorageStateApply(i, RecoverySendStatRequest(StorageState(i), b))
         \/ /\ Len(StorageState(j).networkReceive[i]) > 0
-           /\ StorageStateApply(j, ProcessRecoveryStatRequest(StorageState(j), i))
+           /\ \/ StorageStateApply(j, ProcessRecoveryStatRequest(StorageState(j), i))
+              \/ StorageStateApply(j, ProcessRecoveryFullscanRequest(StorageState(j), i))
+        \/ /\ Len(StorageState(l).networkReceive[i]) > 0
+           /\ StorageStateApply(l, ProcessRecoveryFullscanRequest(StorageState(l), i))
         \/ /\ Len(StorageState(i).networkReceive[j]) > 0
-           /\ StorageStateApply(i, ProcessRecoveryStatResponse(StorageState(i), j))
+           /\ \/ StorageStateApply(i, ProcessRecoveryStatResponse(StorageState(i), j))
+              \/ StorageStateApply(i, ProcessRecoveryFullscanResponse(StorageState(i), j))
+        \/ /\ Len(StorageState(i).networkReceive[l]) > 0
+           /\ StorageStateApply(i, ProcessRecoveryFullscanResponse(StorageState(i), l))
      /\ UNCHANGED <<phase>>
 
   \/ /\ phase = 8

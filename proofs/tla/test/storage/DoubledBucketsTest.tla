@@ -31,10 +31,10 @@ SendLimitConstraint ==
 \* 2. Keep network bounded - avoid message explosion.
 NetworkBoundConstraint ==
     /\ \A s1, s2 \in StoragesC :
-            Len(network[s1][s2]) =< 3
+            Len(network[s1][s2]) =< 2
     /\ \A s \in StoragesC :
-        /\ storages[s].errinj.networkReorderCount <= 1
-        /\ storages[s].errinj.networkDropCount <= 1
+        /\ storages[s].errinj.networkReorderCount <= 2
+        /\ storages[s].errinj.networkDropCount <= 2
 
 RefConstraint ==
     \A s1 \in StoragesC :

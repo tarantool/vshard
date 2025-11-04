@@ -49,6 +49,8 @@ MessageType == {
     \* recovery_step_by_step().
     "RECOVERY_BUCKET_STAT",
     "RECOVERY_BUCKET_STAT_RESPONSE",
+    "RECOVERY_BUCKET_FULLSCAN",
+    "RECOVERY_BUCKET_FULLSCAN_RESPONSE",
     \* gc_bucket_process_sent_one_batch_xc().
     "BUCKET_TEST_GC",
     "BUCKET_TEST_GC_RESPONSE",
@@ -63,7 +65,11 @@ BucketRecvResponseContent ==
 RecoveryBucketStatContent ==
     [bucket : BucketIds]
 RecoveryBucketStatResponseContent ==
-    [bucket: BucketIds, status: BucketState, transferring: BOOLEAN]
+    [bucket: BucketIds, status: BucketState, transferring: BOOLEAN, generation: Nat]
+RecoveryBucketFullscanContent ==
+    [bucket : BucketIds]
+RecoveryBucketFullscanResponseContent ==
+    [bucket: BucketIds, status: BucketState, generation: Nat]
 BucketTestGcContent ==
     [bucket : BucketIds]
 BucketTestGcResponseContent ==
@@ -77,6 +83,8 @@ MessageContent ==
     BucketRecvResponseContent \union
     RecoveryBucketStatContent \union
     RecoveryBucketStatResponseContent \union
+    RecoveryBucketFullscanContent \union
+    RecoveryBucketFullscanResponseContent \union
     BucketTestGcContent \union
     BucketTestGcResponseContent \union
     ReplicationBucketContent
@@ -106,6 +114,8 @@ StorageType == [
     sendWaitTarget : [BucketIds -> [Storages -> Nat]],
     sendingBuckets : SUBSET BucketIds,
     masterWaitTarget : [Storages -> Nat],
+    recoveryAck : [BucketIds ->
+        [ReplicaSets -> [status : BucketState, generation : Int]]],
     \* For limiting tests, it cannot be done outside of the module, since
     \* a test doesn't know, whether the bucket send or ref actually happened.
     errinj : [
@@ -164,6 +174,8 @@ StorageInit ==
         sendWaitTarget |-> [b \in BucketIds |-> [s \in Storages |-> 0]],
         sendingBuckets |-> {},
         masterWaitTarget |-> [s \in Storages |-> 0],
+        recoveryAck |-> [b \in BucketIds |->
+            [rs \in ReplicaSets |-> [status |-> NULL, generation |-> -1]]],
         errinj |-> [
             bucketSendCount |-> 0,
             bucketRWRefCount |-> 0,
@@ -197,6 +209,7 @@ StorageState(i) == [
     sendWaitTarget |-> storages[i].sendWaitTarget,
     sendingBuckets |-> storages[i].sendingBuckets,
     masterWaitTarget |-> storages[i].masterWaitTarget,
+    recoveryAck |-> storages[i].recoveryAck,
     errinj |-> storages[i].errinj
 ]
 
@@ -210,7 +223,8 @@ StorageStateApply(i, state) ==
                    VarSet(i, "sendWaitTarget", state.sendWaitTarget,
                    VarSet(i, "sendingBuckets", state.sendingBuckets,
                    VarSet(i, "masterWaitTarget", state.masterWaitTarget,
-                   VarSet(i, "errinj", state.errinj, storages))))))))))
+                   VarSet(i, "recoveryAck", state.recoveryAck,
+                   VarSet(i, "errinj", state.errinj, storages)))))))))))
     /\ network' =
         [s \in Storages |->
             [t \in Storages |->
@@ -473,6 +487,7 @@ RecoverySendStatRequest(state, b) ==
        /\ ~(b \in state.transferingBuckets)
        /\ dest_rs # NULL
        /\ MasterSyncDone(state)
+       /\ ~(\E rs \in ReplicaSets : state.recoveryAck[b][rs].generation # -1)
     THEN
         \* Choose any storage in the destination replicaset.
         LET candidates == {s \in Storages :
@@ -497,11 +512,31 @@ ProcessRecoveryStatRequest(state, j) ==
                           content |-> [
                               bucket |-> b,
                               status |-> state.buckets[b].status,
-                              transferring |-> (b \in state.transferingBuckets)
+                              transferring |-> (b \in state.transferingBuckets),
+                              generation |-> state.buckets[b].generation
                           ]]
             IN [state EXCEPT
                     !.networkReceive[j] = Tail(@),
                     !.networkSend[j] = Append(@, reply)]
+
+SendRecoveryFullscanRequests(state, b) ==
+    LET msg == [type |-> "RECOVERY_BUCKET_FULLSCAN",
+                content |-> [bucket |-> b]]
+        currentRs == ReplicasetOf(state.id)
+        chosen == [rs \in ReplicaSets \ {currentRs} |->
+                      CHOOSE s \in Storages :
+                          storageToReplicaset[s] = rs]
+        localGen == state.buckets[b].generation
+        localStatus == state.buckets[b].status
+    IN [state EXCEPT
+           !.networkSend =
+             [j \in Storages |->
+                IF \E rs \in ReplicaSets \ {currentRs} : j = chosen[rs]
+                THEN Append(state.networkSend[j], msg)
+                ELSE state.networkSend[j]],
+           !.recoveryAck = [state.recoveryAck EXCEPT ![b][currentRs] =
+                [status |-> localStatus, generation |-> localGen]]]
+
 
 ProcessRecoveryStatResponse(state, j) ==
     LET msg == Head(state.networkReceive[j]) IN
@@ -514,28 +549,87 @@ ProcessRecoveryStatResponse(state, j) ==
             LET b == msg.content.bucket
                 remoteStatus == msg.content.status
                 remoteTransf == msg.content.transferring
+                remoteGen == msg.content.generation
                 localStatus == state.buckets[b].status
+                localGen == state.buckets[b].generation
+                state1 == [state EXCEPT !.networkReceive[j] = Tail(@)]
             IN
             IF ~(localStatus \in TransferStates) THEN
-                [state EXCEPT !.networkReceive[j] = Tail(@)]
-            \* Recovery policy: sender adjusts state after getting peer's status.
-            ELSE IF localStatus = "SENDING" /\ remoteStatus \in {"ACTIVE"} THEN
-                LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
-                BucketStatusChange(state1, state.id, b, "SENT",
-                    state.buckets[b].destination, state1.buckets[b].generation)
-            ELSE IF localStatus = "RECEIVING" /\
-                    (remoteStatus \in WritableStates
-                     \/ (remoteStatus = "SENDING" /\ ~remoteTransf)) THEN
-                LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
+                state1
+            ELSE IF remoteGen > localGen THEN
                 BucketStatusChange(state1, state.id, b, "GARBAGE", NULL,
                     state1.buckets[b].generation)
-            ELSE IF (b \notin state.transferingBuckets)
-                     /\ (remoteStatus \in {"SENT", "GARBAGE"} \/ remoteStatus = NULL) THEN
-                LET state1 == [state EXCEPT !.networkReceive[j] = Tail(@)] IN
-                BucketStatusChange(state1, state.id, b, "ACTIVE", NULL,
-                    state1.buckets[b].generation)
-            ELSE
-                [state EXCEPT !.networkReceive[j] = Tail(@)]
+            ELSE IF remoteGen = localGen THEN
+                \* Recovery policy: sender adjusts state after getting peer's status.
+                IF localStatus = "SENDING" /\ remoteStatus \in {"ACTIVE"} THEN
+                    BucketStatusChange(state1, state.id, b, "SENT",
+                        state.buckets[b].destination, state1.buckets[b].generation)
+                ELSE IF localStatus = "RECEIVING" /\
+                        (remoteStatus \in WritableStates
+                         \/ (remoteStatus = "SENDING" /\ ~remoteTransf)) THEN
+                    BucketStatusChange(state1, state.id, b, "GARBAGE", NULL,
+                        state1.buckets[b].generation)
+                ELSE IF (b \notin state.transferingBuckets)
+                         /\ (remoteStatus \in {"SENT", "GARBAGE"}) THEN
+                    BucketStatusChange(state1, state.id, b, "ACTIVE", NULL,
+                        state1.buckets[b].generation)
+                ELSE
+                    state1
+            ELSE IF remoteGen = 0 THEN
+                SendRecoveryFullscanRequests(state1, b)
+            ELSE LET a == Assert(FALSE, "remote gen < local gen")
+                 \* This should never happen.
+                 IN state1
+
+ProcessRecoveryFullscanRequest(state, j) ==
+    LET msg == Head(state.networkReceive[j]) IN
+    IF msg.type # "RECOVERY_BUCKET_FULLSCAN" THEN state
+    ELSE
+        IF ~IsMaster(state) \/ ~MasterSyncDone(state) THEN
+            [state EXCEPT !.networkReceive[j] = Tail(@)]
+        ELSE
+            LET b == msg.content.bucket
+                reply == [type |-> "RECOVERY_BUCKET_FULLSCAN_RESPONSE",
+                          content |-> [
+                              bucket |-> b,
+                              status |-> state.buckets[b].status,
+                              generation |-> state.buckets[b].generation]]
+            IN [state EXCEPT
+                    !.networkReceive[j] = Tail(@),
+                    !.networkSend[j] = Append(@, reply)]
+
+BucketClearRecoveryAck(state, b) ==
+    [state EXCEPT !.recoveryAck[b] =
+            [rs \in ReplicaSets |-> [status |-> NULL, generation |-> -1]]]
+
+ProcessRecoveryFullscanResponse(state, j) ==
+    LET msg == Head(state.networkReceive[j]) IN
+    IF msg.type # "RECOVERY_BUCKET_FULLSCAN_RESPONSE" THEN state
+    ELSE
+        LET b == msg.content.bucket
+            rs  == storageToReplicaset[j]
+            remoteStatus == msg.content.status
+            remoteGen == msg.content.generation
+            localGen == state.buckets[b].generation
+            localStatus == state.buckets[b].status
+            ack_after == [state.recoveryAck EXCEPT
+                ![b][rs] = [status |-> remoteStatus, generation |-> remoteGen]]
+            state1 == [state EXCEPT
+                        !.networkReceive[j] = Tail(@),
+                        !.recoveryAck = ack_after]
+        IN LET receivedRS == {r \in ReplicaSets : ack_after[b][r].generation # -1}
+               allResponded == receivedRS = ReplicaSets
+           IN
+           IF ~allResponded THEN state1
+           ELSE
+               LET gens == [r \in ReplicaSets |-> ack_after[b][r].generation]
+                   higherGen == \E r \in ReplicaSets : gens[r] > localGen IN
+               IF higherGen THEN
+                   BucketClearRecoveryAck(
+                        BucketStatusChange(state1, state.id, b, "GARBAGE", NULL, localGen), b)
+               ELSE
+                   BucketClearRecoveryAck(
+                        BucketStatusChange(state1, state.id, b, "ACTIVE", NULL, localGen), b)
 
 (***************************************************************************)
 (*                              Garbage Collector                          *)
@@ -714,6 +808,8 @@ Next ==
                  \/ StorageStateApply(i, BucketRecvFinish(state, j))
                  \/ StorageStateApply(i, ProcessRecoveryStatRequest(state, j))
                  \/ StorageStateApply(i, ProcessRecoveryStatResponse(state, j))
+                 \/ StorageStateApply(i, ProcessRecoveryFullscanRequest(state, j))
+                 \/ StorageStateApply(i, ProcessRecoveryFullscanResponse(state, j))
                  \/ StorageStateApply(i, ProcessGcTestRequest(state, j))
                  \/ StorageStateApply(i, ProcessGcTestResponse(state, j))
           \/ \E b \in BucketIds, mode \in {"read", "write"} :
@@ -728,5 +824,6 @@ Next ==
                \/ StorageStateApply(i, GcSendTestRequest(state, b))
                \/ StorageStateApply(i, BucketDropFromTransfering(state, b))
                \/ StorageStateApply(i, BucketDropFromSending(state, b))
+               \/ StorageStateApply(i, BucketClearRecoveryAck(state, b))
 
 ================================================================================
