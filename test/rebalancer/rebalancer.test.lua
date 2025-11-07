@@ -32,6 +32,13 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'%s\'
 --
 
 test_run:switch('box_1_a')
+-- The ratelimiter object stores its state throughout the entire work of
+-- rebalancer service. As a result, after disabling of rebalancer, ratelimiter
+-- will continue to hide errors with errcodes which occurred before disabling
+-- of rebalancer. Because of this we can't test the 6th scenario ("Replica _
+-- has receiving buckets" will hided by "Rebalancer is not active ..." error).
+-- To fix it we should turn off the ratelimiter.
+vshard.consts.LOG_RATELIMIT_INTERVAL = 0
 _bucket = box.space._bucket
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 
@@ -156,7 +163,12 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, false)
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
-wait_rebalancer_state("Some buckets are not active", test_run)
+-- We should not check the certain status of buckets (e.g. receiving) because
+-- in rare cases we accidentally can get the wrong one. For example we wait for
+-- "receiving" status, but get "garbage" due to some previous rebalancer error.
+err_msg = string.format('Replica .* has receiving buckets during rebalancing')
+wait_rebalancer_state('Error during downloading rebalancer states:.*' ..  \
+                      err_msg, test_run)                                  \
 _bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 vshard.storage.sync()
 

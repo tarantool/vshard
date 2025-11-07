@@ -7,6 +7,7 @@ calc_etalon = require('vshard.replicaset').calculate_etalon_balance
 dispenser = vshard.storage.internal.route_dispenser
 rlist = vshard.storage.internal.rlist
 consts = vshard.consts
+util = require('util')
 
 --
 -- Test adding two new replicasets.
@@ -76,18 +77,32 @@ build_routes(replicasets)
 -- Test rebalancer local state.
 --
 vshard.storage.internal.is_master = true
-get_state = vshard.storage._rebalancer_request_state
+-- We need to initialize the minimal replica object in order to
+-- have a meaningful replica.id in rebalancer_request_state's error.
+vshard.storage.internal.this_replica = {id = util.name_to_uuid.box_1_a}
+get_state = function()                                          \
+    local res, err = vshard.storage._rebalancer_request_state() \
+    if res == nil then err.trace = nil end                      \
+    return res, err                                             \
+end                                                             \
 _bucket = box.schema.create_space('_bucket')
 pk = _bucket:create_index('pk')
 status = _bucket:create_index('status', {parts = {{2, 'string'}}, unique = false})
 _bucket:replace{1, consts.BUCKET.ACTIVE}
 _bucket:replace{2, consts.BUCKET.ACTIVE}
 _bucket:replace{3, consts.BUCKET.SENT}
-get_state()
+res, err = get_state()
+assert(res.bucket_active_count == 2)
+assert(res.bucket_pinned_count == 0)
+assert(not err)
 
 _bucket:replace{1, consts.BUCKET.RECEIVING}
-get_state()
+res, err = get_state()
+assert(not res)
+assert(err.message == string.format('Replica %s has receiving buckets ' ..            \
+                                    'during rebalancing', util.name_to_uuid.box_1_a)) \
 vshard.storage.internal.is_master = false
+vshard.storage.internal.this_replica = nil
 
 assert(not vshard.storage.internal.this_replicaset)
 vshard.storage.internal.this_replicaset = {                                     \

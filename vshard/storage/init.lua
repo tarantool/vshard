@@ -2861,11 +2861,9 @@ local function rebalancer_service_f(service, limiter)
         end
         if not status or replicasets == nil then
             local err = status and total_bucket_active_count or replicasets
-            if err then
-                limiter:log_error(err, service:set_status_error(
-                    'Error during downloading rebalancer states: %s', err))
-            end
-            log.info('Some buckets are not active, retry rebalancing later')
+            limiter:log_error(err, service:set_status_error(
+                'Error during downloading rebalancer states: %s, ' ..
+                'retry rebalancing later', err))
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -2954,18 +2952,17 @@ local function rebalancer_request_state()
         return nil, err
     end
     if not M.is_rebalancer_active or rebalancing_is_in_progress() then
-        return
+        return nil, lerror.make('Rebalancer is not active or is in progress')
     end
     local _bucket = box.space._bucket
     local status_index = _bucket.index.status
-    if #status_index:select({BSENDING}, {limit = 1}) > 0 then
-        return
-    end
-    if #status_index:select({BRECEIVING}, {limit = 1}) > 0 then
-        return
-    end
-    if #status_index:select({BGARBAGE}, {limit = 1}) > 0 then
-        return
+    local repl_id = M.this_replica.id
+    for _, status in pairs({BSENDING, BRECEIVING, BGARBAGE}) do
+        if #status_index:select({status}, {limit = 1}) > 0 then
+            local err = string.format('Replica %s has %s buckets during ' ..
+                                      'rebalancing', repl_id, status)
+            return nil, lerror.make(err)
+        end
     end
     return {
         bucket_active_count = status_index:count({BACTIVE}),
