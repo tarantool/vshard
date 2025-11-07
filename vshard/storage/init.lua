@@ -2815,6 +2815,7 @@ local function rebalancer_download_states()
             replicaset, 'vshard.storage.rebalancer_request_state', {},
             {timeout = consts.REBALANCER_GET_STATE_TIMEOUT})
         if state == nil then
+            err.replicaset_id = replicaset.id
             return nil, err
         end
         local bucket_count = state.bucket_active_count +
