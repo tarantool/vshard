@@ -234,3 +234,23 @@ test_group.test_rebalancer_routes_logging = function(g)
     end)
     vtest.cluster_rebalancer_disable(g)
 end
+
+--
+-- Add replicaset.id into rebalancer_request_state errors (gh-212).
+--
+test_group.test_no_log_spam_when_buckets_no_active = function(g)
+    vtest.cluster_rebalancer_enable(g)
+    local moved_bucket = vtest.storage_first_bucket(g.replica_1_a)
+    move_bucket(g.replica_1_a, g.replica_2_a, moved_bucket)
+    vtest.storage_stop(g.replica_2_a)
+    local err_log = string.format('Error during downloading rebalancer ' ..
+                                  'states:.*"replicaset_id":"%s"',
+                                  g.replica_2_a:replicaset_uuid())
+    t.helpers.retrying({timeout = 60}, function()
+        g.replica_1_a:exec(function() ivshard.storage.rebalancer_wakeup() end)
+        t.assert(g.replica_1_a:grep_log(err_log))
+    end)
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket)
+    vtest.cluster_rebalancer_disable(g)
+end
