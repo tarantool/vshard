@@ -1,0 +1,88 @@
+name: catch_flaky
+
+on:
+  pull_request:
+    paths:
+      - 'test/*/*_test.lua'
+      - 'test/*/*.test.lua'
+
+jobs:
+  catch_flaky:
+    if: github.event_name == 'pull_request' &&
+        !contains(github.event.pull_request.labels.*.name, 'noflaky')
+
+    env:
+      TNT_RELEASE_PATH: /home/runner/tnt-release
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Create variables for Tarantool
+        run: |
+          branch=master
+          commit_hash=$(git ls-remote \
+                        https://github.com/tarantool/tarantool.git \
+                        --branch ${branch} | head -c 8)
+          echo "TNT_BRANCH=${branch}" >> $GITHUB_ENV
+          echo "VERSION_POSTFIX=-${commit_hash}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Cache tarantool build
+        id: cache-tnt-release
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.TNT_RELEASE_PATH }}
+          key: cache-tnt-release-master${{ env.VERSION_POSTFIX }}
+
+      - name: Clone tarantool
+        if: steps.cache-tnt-release.outputs.cache-hit != 'true'
+        uses: actions/checkout@v3
+        with:
+          repository: tarantool/tarantool
+          ref: ${{ env.TNT_BRANCH }}
+          path: tarantool
+          fetch-depth: 0
+          submodules: true
+
+      - name: Build tarantool
+        if: steps.cache-tnt-release.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get -y install build-essential cmake make zlib1g-dev \
+            libreadline-dev libncurses5-dev libssl-dev libunwind-dev \
+            libicu-dev python3 python3-yaml python3-six python3-gevent
+          cd ${GITHUB_WORKSPACE}/tarantool
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_DIST=ON
+          make && make DESTDIR=${TNT_RELEASE_PATH} install
+
+      - name: Install tarantool
+        # Workaround as actions/cache cannot restore data to /usr/local
+        run: sudo cp -rvP ${TNT_RELEASE_PATH}/usr/local/* /usr/local/
+
+      - name: Clone the module
+        uses: actions/checkout@v3
+        with:
+          # Fetch the entire history for all branches and tags. It is needed for
+          # upgrade testing.
+          fetch-depth: 0
+          # Enable recursive submodules checkout as test-run git module is used
+          # for running tests.
+          submodules: recursive
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install test requirements
+        run: pip3 install --user -r test-run/requirements.txt
+
+      - name: Setup tt
+        run: |
+          curl -L https://tarantool.io/release/2/installer.sh | sudo bash
+          sudo apt install -y tt
+          tt version
+
+      - name: Setup luatest
+        run: tt rocks install luatest
+
+      - run: cmake .
+      - run: make test-flaky
+        env:
+          RANGE: HEAD~${{ github.event.pull_request.commits }}..HEAD
