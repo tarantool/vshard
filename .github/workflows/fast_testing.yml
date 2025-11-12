@@ -107,7 +107,7 @@ jobs:
           tt version
 
       - name: Setup luatest
-        run: tt rocks install luatest 1.2.1
+        run: tt rocks install luatest
 
       - run: cmake .
       - run: make test-force
