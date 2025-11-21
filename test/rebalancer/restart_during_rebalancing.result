@@ -285,6 +285,7 @@ info
     available_rw: 200
   identification_mode: uuid_as_key
   status: 0
+  is_enabled: true
   alerts: []
 ...
 util.stop_loading()

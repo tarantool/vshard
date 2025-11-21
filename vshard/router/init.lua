@@ -1546,6 +1546,7 @@ local function router_info(router, opts)
                 router.discovery_service:info(),
         }
     end
+    state.is_enabled = router.is_enabled
     return state
 end
 
@@ -1661,7 +1662,7 @@ end
 -- Public API protection
 --------------------------------------------------------------------------------
 
-local function router_api_call_safe(func, router, ...)
+local function router_api_call_safe(func, router, _opts, ...)
     return func(router, ...)
 end
 
@@ -1669,13 +1670,14 @@ end
 -- Unsafe proxy is loaded with protections. But it is used rarely and only in
 -- the beginning of instance's lifetime.
 --
-local function router_api_call_unsafe(func, router, ...)
+local function router_api_call_unsafe(func, router, opts, ...)
     -- Router can be started on instance with unconfigured box.cfg.
     if not router.is_configured then
         local msg = 'router is not configured'
         return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
     end
-    if not router.is_enabled then
+    local is_disabled_skip = opts and opts.is_disabled_skip
+    if not router.is_enabled and not is_disabled_skip then
         local msg = 'router is disabled explicitly'
         return error(lerror.vshard(lerror.code.ROUTER_IS_DISABLED, msg))
     end
@@ -1683,9 +1685,9 @@ local function router_api_call_unsafe(func, router, ...)
     return func(router, ...)
 end
 
-local function router_make_api(func)
+local function router_make_api(func, opts)
     return function(router, ...)
-        return router.api_call_cache(func, router, ...)
+        return router.api_call_cache(func, router, opts, ...)
     end
 end
 
@@ -1709,7 +1711,7 @@ end
 local router_mt = {
     __index = {
         cfg = function(router, cfg) return router_cfg_fiber_safe(router, cfg, false) end,
-        info = router_make_api(router_info),
+        info = router_make_api(router_info, {is_disabled_skip = true}),
         buckets_info = router_make_api(router_buckets_info),
         call = router_make_api(router_call),
         callro = router_make_api(router_callro),

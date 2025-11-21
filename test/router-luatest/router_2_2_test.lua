@@ -1265,3 +1265,37 @@ g.test_log_ratelimiter_is_dropped_on_disable_of_the_service = function(g)
         _G.ratelimit = nil
     end, {name})
 end
+
+g.test_info_disable_consistency = function(g)
+    local router = vtest.router_new(g, 'router_1')
+    router:exec(function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
+        -- Do not allow router's configuration to complete.
+        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = true
+        local fiber_cfg = ifiber.create(ivshard.router.cfg, cfg)
+        fiber_cfg:set_joinable(true)
+        local routers = ivshard.router.internal.routers
+        local _, err = pcall(routers._static_router.info,
+                             routers._static_router)
+        ilt.assert_not_equals(err, nil)
+        ilt.assert_str_contains(err.message, 'router is not configured')
+
+        -- Unblock router's configuration and wait until it's finished.
+        _G.ivshard.router.internal.errinj.ERRINJ_CFG_DELAY = false
+        fiber_cfg:join()
+        local res = ivshard.router:info()
+        ilt.assert_not_equals(res, nil)
+        ilt.assert(res.is_enabled)
+
+        ivshard.router:disable()
+        res = ivshard.router:info()
+        ilt.assert_not_equals(res, nil)
+        ilt.assert_not(res.is_enabled)
+
+        ivshard.router:enable()
+        res = ivshard.router:info()
+        t.assert_not_equals(res, nil)
+        t.assert(res.is_enabled)
+    end, {global_cfg})
+    vtest.drop_instance(g, router)
+end
