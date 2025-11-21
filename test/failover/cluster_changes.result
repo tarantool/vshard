@@ -127,6 +127,7 @@ info
     available_rw: 0
   identification_mode: uuid_as_key
   status: 1
+  is_enabled: true
   alerts:
   - ['UNKNOWN_BUCKETS', '3000 buckets are not discovered']
 ...
@@ -278,6 +279,7 @@ info
     available_rw: 0
   identification_mode: uuid_as_key
   status: 3
+  is_enabled: true
   alerts:
   - ['MISSING_MASTER', 'Master is not configured for replicaset 739fe4fb-2850-4cde-9637-10150724c5eb']
   - ['MISSING_MASTER', 'Master is not configured for replicaset 832bbba0-9699-4aa1-907d-c7c7af61f5c9']
@@ -384,6 +386,7 @@ info
     available_rw: 0
   identification_mode: uuid_as_key
   status: 1
+  is_enabled: true
   alerts:
   - ['UNKNOWN_BUCKETS', '3000 buckets are not discovered']
 ...
