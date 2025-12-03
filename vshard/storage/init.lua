@@ -4016,19 +4016,15 @@ end
 -- Public API protection
 --------------------------------------------------------------------------------
 
---
--- Arguments are listed explicitly instead of '...' because the latter does not
--- jit.
---
-local function storage_api_call_safe(func, arg1, arg2, arg3, arg4)
-    return func(arg1, arg2, arg3, arg4)
+local function storage_api_call_safe(func, ...)
+    return func(...)
 end
 
 --
 -- Unsafe proxy is loaded with protections. But it is used rarely and only in
 -- the beginning of instance's lifetime.
 --
-local function storage_api_call_unsafe(func, arg1, arg2, arg3, arg4)
+local function storage_api_call_unsafe(func, ...)
     -- box.info is quite expensive. Avoid calling it again when the instance
     -- is finally loaded.
     if not M.is_loaded then
@@ -4054,12 +4050,12 @@ local function storage_api_call_unsafe(func, arg1, arg2, arg3, arg4)
         return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
     end
     M.api_call_cache = storage_api_call_safe
-    return func(arg1, arg2, arg3, arg4)
+    return func(...)
 end
 
 local function storage_make_api(func)
-    return function(arg1, arg2, arg3, arg4)
-        return M.api_call_cache(func, arg1, arg2, arg3, arg4)
+    return function(...)
+        return M.api_call_cache(func, ...)
     end
 end
 
