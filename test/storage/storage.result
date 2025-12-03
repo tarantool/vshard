@@ -153,6 +153,7 @@ vshard.storage.info()
   uri: storage@127.0.0.1:3301
   identification_mode: uuid_as_key
   status: 2
+  is_enabled: true
   replication:
     status: slave
   alerts:
@@ -276,6 +277,7 @@ vshard.storage.info()
   uri: storage@127.0.0.1:3304
   identification_mode: uuid_as_key
   status: 0
+  is_enabled: true
   replication:
     status: follow
     lag: <lag>
@@ -338,6 +340,7 @@ info
   uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 0
+  is_enabled: true
   replication:
     status: master
   alerts: []
@@ -370,6 +373,7 @@ vshard.storage.info()
   uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 3
+  is_enabled: true
   replication:
     status: master
   alerts:
@@ -403,6 +407,7 @@ vshard.storage.info()
   uri: storage@127.0.0.1:3304
   identification_mode: uuid_as_key
   status: 0
+  is_enabled: true
   replication:
     status: follow
     lag: <lag>
@@ -436,6 +441,7 @@ vshard.storage.info()
   uri: storage@127.0.0.1:3303
   identification_mode: uuid_as_key
   status: 0
+  is_enabled: true
   replication:
     status: master
   alerts: []

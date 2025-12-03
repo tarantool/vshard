@@ -4009,6 +4009,7 @@ local function storage_info(opts)
                 M.instance_watch_service:info(),
         }
     end
+    state.is_enabled = M.is_enabled
     return state
 end
 
@@ -4016,7 +4017,7 @@ end
 -- Public API protection
 --------------------------------------------------------------------------------
 
-local function storage_api_call_safe(func, ...)
+local function storage_api_call_safe(func, _opts, ...)
     return func(...)
 end
 
@@ -4024,7 +4025,7 @@ end
 -- Unsafe proxy is loaded with protections. But it is used rarely and only in
 -- the beginning of instance's lifetime.
 --
-local function storage_api_call_unsafe(func, ...)
+local function storage_api_call_unsafe(func, opts, ...)
     -- box.info is quite expensive. Avoid calling it again when the instance
     -- is finally loaded.
     if not M.is_loaded then
@@ -4045,7 +4046,8 @@ local function storage_api_call_unsafe(func, ...)
         local msg = 'storage is not configured'
         return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
     end
-    if not M.is_enabled then
+    local is_disabled_skip = opts and opts.is_disabled_skip
+    if not M.is_enabled and not is_disabled_skip then
         local msg = 'storage is disabled explicitly'
         return error(lerror.vshard(lerror.code.STORAGE_IS_DISABLED, msg))
     end
@@ -4053,9 +4055,9 @@ local function storage_api_call_unsafe(func, ...)
     return func(...)
 end
 
-local function storage_make_api(func)
+local function storage_make_api(func, opts)
     return function(...)
-        return M.api_call_cache(func, ...)
+        return M.api_call_cache(func, opts, ...)
     end
 end
 
@@ -4237,7 +4239,7 @@ return {
     -- Instance info.
     --
     is_locked = storage_make_api(is_this_replicaset_locked),
-    info = storage_make_api(storage_info),
+    info = storage_make_api(storage_info, {is_disabled_skip = true}),
     sharded_spaces = storage_make_api(storage_sharded_spaces),
     _sharded_spaces = storage_sharded_spaces,
     module_version = function() return M.module_version end,
