@@ -633,3 +633,44 @@ test_group.test_alerts_for_named_replica = function(g)
 
     test_alerts_for_non_vshard_config_template(g, non_config_replica)
 end
+
+test_group.test_info_disable_consistency = function(g)
+    -- Make storage unconfigured.
+    g.replica_1_a:restart()
+    g.replica_1_a:exec(function(cfg)
+        ivtest.clear_test_cfg_options(cfg)
+        -- Imitate unconfigured box.
+        local old_box_cfg = box.cfg
+        box.cfg = function(...) return old_box_cfg(...) end
+        local _, err = pcall(ivshard.storage.info)
+        ilt.assert_not_equals(err, nil)
+        ilt.assert_str_contains(err.message, 'box seems not to be configured')
+        box.cfg = old_box_cfg
+
+        local old_box_info = box.info
+        box.info = {status = 'loading'}
+        _, err = pcall(ivshard.storage.info)
+        ilt.assert_not_equals(err, nil)
+        ilt.assert_str_contains(err.message, 'instance status is "loading"')
+        box.info = old_box_info
+
+        _, err = pcall(ivshard.storage.info)
+        ilt.assert_not_equals(err, nil)
+        ilt.assert_str_contains(err.message, 'storage is not configured')
+
+        ivshard.storage.cfg(cfg, _G.get_uuid())
+        local res = ivshard.storage.info()
+        ilt.assert_not_equals(res, nil)
+        ilt.assert(res.is_enabled)
+
+        ivshard.storage.disable()
+        res = ivshard.storage.info()
+        ilt.assert_not_equals(res, nil)
+        ilt.assert_not(res.is_enabled)
+
+        ivshard.storage.enable()
+        res = ivshard.storage.info()
+        ilt.assert_not_equals(res, nil)
+        ilt.assert(res.is_enabled)
+    end, {global_cfg})
+end
