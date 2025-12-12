@@ -596,3 +596,45 @@ test_group.test_gc_with_non_anon_replica_in_cluster = function(g)
         box.space.test:drop()
     end)
 end
+
+--
+-- gh-626: on_commit trigger on `_bucket` space didn't allow to write to
+-- other spaces in the same transaction (e.g. from `on_replace` triggers).
+--
+test_group.test_on_replace_trigger_on_bucket_space = function(g)
+    --
+    -- Test that on_replace trigger on storage, FROM which bucket is
+    -- sent, doesn't break sending bucket.
+    --
+    local bid = g.replica_1_a:exec(function(uuid)
+        box.schema.space.create('test'):create_index('pk')
+        rawset(_G, 'on_replace_trigger', function()
+            box.space.test:replace{1}
+        end)
+        box.space._bucket:on_replace(_G.on_replace_trigger)
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(
+            bid, uuid, {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+        return bid
+    end, {g.replica_2_a:replicaset_uuid()})
+    --
+    -- Test that on_replace trigger on storage, TO which bucket is
+    -- sent, doesn't break sending bucket.
+    --
+    g.replica_2_a:exec(function(uuid, bid)
+        local ok, err = ivshard.storage.bucket_send(
+            bid, uuid, {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        ilt.assert(ok)
+        _G.bucket_gc_wait()
+    end, {g.replica_1_a:replicaset_uuid(), bid})
+    -- Cleanup.
+    g.replica_1_a:exec(function()
+        box.space._bucket:on_replace(nil, _G.on_replace_trigger)
+        box.space.test:drop()
+        _G.on_replace_trigger = nil
+    end)
+end
