@@ -558,18 +558,21 @@ end
 local function bucket_on_commit_or_rollback_f(row_pairs, is_commit)
     local bucket_space_id = box.space._bucket.id
     for _, t1, t2, space_id in row_pairs() do
+        if space_id ~= bucket_space_id then
+            goto continue
+        end
         local old, new
         if is_commit then
             old, new = t1, t2
         else
             old, new = t2, t1
         end
-        assert(space_id == bucket_space_id)
         if new ~= nil then
             bucket_commit_update(new)
         elseif old ~= nil then
             bucket_commit_delete(old)
         end
+::continue::
     end
     bucket_generation_increment()
 end
