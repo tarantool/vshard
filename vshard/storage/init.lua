@@ -260,6 +260,14 @@ else
     end
 end
 
+local function handle_results(status, ...)
+    if not status then
+        box.rollback()
+        return status, box.error.new(box.error.PROC_LUA, (...))
+    end
+    return status, ...
+end
+
 --
 -- Invoke a function on this instance. Arguments are unpacked into the function
 -- as arguments.
@@ -284,7 +292,12 @@ local_call = function(func_name, args)
     if not func then
         return pcall(netbox_self_call, netbox_self, func_name, args)
     end
-    return pcall(func.call, func, args)
+    -- If the function is called directly, fails, and leaves an uncommitted
+    -- transaction, then in Tarantool versions before 3.0.0-beta1-18,
+    -- the original error is replaced by the "Transaction is active" error.
+    -- We manually check if the function returned an error. If so, we
+    -- rollback the transaction to reveal the original error.
+    return handle_results(pcall(func.call, func, args))
 end
 
 end
