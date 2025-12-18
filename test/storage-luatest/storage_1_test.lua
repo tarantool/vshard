@@ -674,3 +674,28 @@ test_group.test_info_disable_consistency = function(g)
         ilt.assert(res.is_enabled)
     end, {global_cfg})
 end
+
+local function test_error_msg_is_preserved_template(g, add_to_schema)
+    g.replica_1_a:exec(function(add_to_schema)
+        rawset(_G, 'test_fail', function()
+            box.begin()
+            error('test_error')
+        end)
+        if add_to_schema then
+            box.schema.func.create('test_fail')
+        end
+        local status, err = ivshard.storage.call(1, 'read', 'test_fail', {})
+        ilt.assert_not(status)
+        ilt.assert_str_contains(err.message, 'test_error')
+        ilt.assert_not_str_contains(err.message, 'Transaction is active')
+        rawset(_G, 'test_fail', nil)
+        if add_to_schema then
+            box.schema.func.drop('test_fail')
+        end
+    end, {add_to_schema})
+end
+
+test_group.test_error_msg_is_preserved = function(g)
+    test_error_msg_is_preserved_template(g, false)
+    test_error_msg_is_preserved_template(g, true)
+end
