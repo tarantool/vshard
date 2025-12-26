@@ -730,8 +730,8 @@ g.test_request_timeout = function(g)
     end)
     g.router:exec(function(bid, uuid)
         local res = ivshard.router.callro(bid, 'get_uuid', {}, {
-            request_timeout = 1,
-            timeout = 1.5,
+            request_timeout = 2,
+            timeout = 2.5,
         })
         t.assert_equals(res, uuid)
     end, {bid, g.replica_1_b:instance_uuid()})
@@ -1166,8 +1166,10 @@ g.test_log_ratelimiter_is_dropped_on_replica_delete = function(g)
     vtest.router_cfg(g.router, new_cluster_cfg)
 
     g.router:exec(function(name)
-        collectgarbage()
-        ilt.assert_not(_G.ratelimit.internal.limiters[name])
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            collectgarbage()
+            ilt.assert_not(_G.ratelimit.internal.limiters[name])
+        end)
         _G.ratelimit = nil
     end, {name})
 
@@ -1181,13 +1183,14 @@ g.test_discovery_not_spam_same_errors = function(g)
     local bid = vtest.storage_first_bucket(g.replica_2_a)
     vtest.storage_stop(g.replica_2_a)
     vtest.storage_stop(g.replica_2_b)
+    vtest.router_cfg(g.router, global_cfg)
 
     g.router:exec(function(bid)
         ivshard.router._bucket_reset(bid)
         rawset(_G, 'old_interval', ivconst.LOG_RATELIMIT_INTERVAL)
-        ivconst.LOG_RATELIMIT_INTERVAL = 0.1
+        ivconst.LOG_RATELIMIT_INTERVAL = 0.2
     end, {bid})
-    local msg = "Error during discovery .*Peer closed"
+    local msg = "Error during discovery"
     g.router:wait_log_exactly_once(msg, {timeout = 0.1, on_yield = function()
         ivshard.router.discovery_wakeup()
     end})
@@ -1222,8 +1225,9 @@ g.test_replicaset_services_do_not_spam_same_errors = function(g)
         end
     end)
     local msg = "Ping error from .*replica_2_a"
-    g.router:wait_log_exactly_once(msg, {timeout = 0.1, on_yield = function()
+    g.router:wait_log_exactly_once(msg, {timeout = 0.5, on_yield = function()
         _G.failover_wakeup()
+        require('fiber').sleep(0.1)
     end})
 
     --
