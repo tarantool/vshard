@@ -19,7 +19,7 @@ cfg.sharding ~= nil
 util = require('util')
 
 -- gh-24: log all connnect/disconnect events.
-test_run:grep_log('router_1', 'connected to ')
+test_run:grep_log('router_1', 'connected to replica')
 rs1 = vshard.router.static.replicasets[util.replicasets[1]]
 rs2 = vshard.router.static.replicasets[util.replicasets[2]]
 fiber = require('fiber')
