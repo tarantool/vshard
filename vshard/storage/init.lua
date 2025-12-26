@@ -3230,7 +3230,7 @@ local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
     if #moved == #bucket_ids then
         -- If all the passed buckets are absent, there is no need to create a
         -- ref.
-        return {moved = moved}
+        return {moved = moved, bucket_count = bucket_count()}
     end
     local bucket_generation = M.bucket_generation
     local ok, err = storage_ref(rid, timeout)
@@ -3243,10 +3243,10 @@ local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
         moved = bucket_get_moved(bucket_ids)
         if #moved == #bucket_ids then
             storage_unref(rid)
-            return {moved = moved}
+            return {moved = moved, bucket_count = ok}
         end
     end
-    return {is_done = true, moved = moved}
+    return {is_done = true, moved = moved, bucket_count = ok}
 end
 
 --
