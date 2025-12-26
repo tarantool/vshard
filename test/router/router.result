@@ -47,9 +47,9 @@ util = require('util')
 ---
 ...
 -- gh-24: log all connnect/disconnect events.
-test_run:grep_log('router_1', 'connected to ')
+test_run:grep_log('router_1', 'connected to replica')
 ---
-- 'connected to '
+- connected to replica
 ...
 rs1 = vshard.router.static.replicasets[util.replicasets[1]]
 ---
