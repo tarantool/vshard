@@ -270,8 +270,8 @@ end
 -- on_connect() trigger for net.box
 --
 local function netbox_on_connect(conn)
-    log.info("connected to %s:%s", conn.host, conn.port)
     local replica = conn.replica
+    log.info("connected to %s", replica)
     assert(replica ~= nil)
     -- If a replica's connection has revived, then unset
     -- replica.down_ts - it is not down anymore.
@@ -303,11 +303,12 @@ end
 -- on_disconnect() trigger for net.box
 --
 local function netbox_on_disconnect(conn)
-    log.info("disconnected from %s:%s", conn.host, conn.port)
-    assert(conn.replica)
+    local replica = conn.replica
+    log.info("disconnected from %s", replica)
+    assert(replica ~= nil)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
-    conn.replica.down_ts = fiber_clock()
+    replica.down_ts = fiber_clock()
     -- Future object must be removed from the connection, otherwise
     -- the connection cannot be garbage collected (gh-517).
     -- Moreover, future object must be updated. Old result is irrelevant.
