@@ -260,6 +260,10 @@ else
     end
 end
 
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+
 --
 -- Invoke a function on this instance. Arguments are unpacked into the function
 -- as arguments.
@@ -287,6 +291,22 @@ local_call = function(func_name, args)
     return pcall(func.call, func, args)
 end
 
+end
+
+local function this_is_master()
+    return M.is_master
+end
+
+local function check_is_master()
+    if this_is_master() then
+        return true, nil
+    end
+    local master_id = M.this_replicaset.master
+    if master_id then
+        master_id = master_id.id
+    end
+    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
+                              M.this_replicaset.id, master_id)
 end
 
 local function master_call(replicaset, func, args, opts)
@@ -318,6 +338,10 @@ local function master_call(replicaset, func, args, opts)
         opts.timeout = timeout
     end
 end
+
+--------------------------------------------------------------------------------
+-- Buckets
+--------------------------------------------------------------------------------
 
 --
 -- Get number of buckets stored on this storage. Regardless of their state.
@@ -391,21 +415,6 @@ local function bucket_generation_increment()
     M.bucket_are_all_rw_cache = nil
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
-end
-
-local function bucket_transfer_start(bid)
-    if M.rebalancer_transfering_buckets[bid] then
-        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
-                                  'transfer is already in progress', nil)
-    end
-    M.rebalancer_transfering_buckets[bid] = true
-    return true
-end
-
-local function bucket_transfer_end(bid)
-    assert(M.rebalancer_transfering_buckets[bid])
-    M.rebalancer_transfering_buckets[bid] = nil
-    bucket_generation_increment()
 end
 
 --
@@ -708,533 +717,13 @@ local function bucket_receiving_quota_reset()
     M.rebalancer_receiving_quota = M.current_cfg.rebalancer_max_receiving
 end
 
---------------------------------------------------------------------------------
--- Schema
---------------------------------------------------------------------------------
-
-local function schema_install_triggers()
-    local _bucket = box.space._bucket
-    if M.bucket_on_replace then
-        local ok, err = pcall(_bucket.on_replace, _bucket, nil,
-                              M.bucket_on_replace)
-        if not ok then
-            log.warn('Could not drop old trigger from '..
-                     '_bucket: %s', err)
-        end
-    end
-    _bucket:on_replace(bucket_on_replace_f)
-    M.bucket_on_replace = bucket_on_replace_f
-
-    local _truncate = box.space._truncate
-    if M.bucket_on_truncate then
-        local ok, err = pcall(_truncate.on_replace, _truncate, nil,
-            M.bucket_on_truncate)
-        if not ok then
-            log.warn('Could not drop old trigger from '..
-                     '_truncate: %s', err)
-        end
-    end
-    _truncate:on_replace(bucket_on_truncate_f)
-    M.bucket_on_truncate = bucket_on_truncate_f
-end
-
-local function schema_install_on_replace(_, new)
-    -- Wait not just for _bucket to appear, but for the entire
-    -- schema. This might be important if the schema will ever
-    -- consist of more than just _bucket.
-    if new == nil or new[1] ~= 'vshard_version' then
-        return
-    end
-    schema_install_triggers()
-
-    local _schema = box.space._schema
-    local ok, err = pcall(_schema.on_replace, _schema, nil, M.schema_on_replace)
-    if not ok then
-        log.warn('Could not drop trigger from _schema inside of the '..
-                 'trigger: %s', err)
-    end
-    M.schema_on_replace = nil
-    -- Drop the caches which might have been created while the
-    -- schema was being replicated.
-    bucket_generation_increment()
-end
-
---
--- Install the triggers later when there is an actual schema to install them on.
--- On replicas it might happen that they are vshard-configured earlier than the
--- master and therefore don't have the schema right away.
---
-local function schema_install_triggers_delayed()
-    log.info('Could not find _bucket space to install triggers - delayed '..
-             'until the schema is replicated')
-    assert(not box.space._bucket)
-    local _schema = box.space._schema
-    if M.schema_on_replace then
-        local ok, err = pcall(_schema.on_replace, _schema, nil,
-                              M.schema_on_replace)
-        if not ok then
-            log.warn('Could not drop trigger from _schema: %s', err)
-        end
-    end
-    _schema:on_replace(schema_install_on_replace)
-    M.schema_on_replace = schema_install_on_replace
-end
-
-local function schema_upgrade_replica()
-    local version = lschema.current_version()
-    -- Replica can't do upgrade - it is read-only. And it
-    -- shouldn't anyway - that would conflict with master doing
-    -- the same. So the upgrade is either non-critical, and the
-    -- replica can work with the new code but old schema. Or it
-    -- it is critical, and need to wait the schema upgrade from
-    -- the master.
-    -- Or it may happen, that the upgrade just is not possible.
-    -- For example, when an auto-upgrade tries to change a too old
-    -- schema to the newest, skipping some intermediate versions.
-    -- For example, from 1.2.3.4 to 1.7.8.9, when it is assumed
-    -- that a safe upgrade should go 1.2.3.4 -> 1.2.4.1 ->
-    -- 1.3.1.1 and so on step by step.
-    if version ~= lschema.latest_version then
-        log.info('Replica\' vshard schema version is not latest - current '..
-                 '%s vs latest %s, but the replica still can work', version,
-                 lschema.latest_version)
-    end
-    -- In future for hard changes the replica may be suspended
-    -- until its schema is synced with master. Or it may
-    -- reject to upgrade in case of incompatible changes. Now
-    -- there are too few versions so as such problems could
-    -- appear.
-end
-
-local function this_is_master()
-    return M.is_master
-end
-
-local function check_is_master()
-    if this_is_master() then
-        return true, nil
-    end
-    local master_id = M.this_replicaset.master
-    if master_id then
-        master_id = master_id.id
-    end
-    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
-                              M.this_replicaset.id, master_id)
-end
-
-local function on_master_disable(new_func, old_func)
-    local func = M._on_master_disable(new_func, old_func)
-    -- If a trigger is set after storage.cfg(), then notify an
-    -- user, that the current instance is not master.
-    if old_func == nil and not this_is_master() then
-        M._on_master_disable:run()
-    end
-    return func
-end
-
-local function on_master_enable(new_func, old_func)
-    local func = M._on_master_enable(new_func, old_func)
-    -- Same as above, but notify, that the instance is master.
-    if old_func == nil and this_is_master() then
-        M._on_master_enable:run()
-    end
-    return func
-end
-
-local function on_bucket_event(new_func, old_func)
-    return M._on_bucket_event(new_func, old_func)
-end
-
---------------------------------------------------------------------------------
--- Recovery
---------------------------------------------------------------------------------
-
---
--- Check if a rebalancing is in progress. It is true, if the node
--- applies routes received from a rebalancer node in the special
--- fiber.
---
-local function rebalancing_is_in_progress()
-    local f = M.rebalancer_applier_fiber
-    return f ~= nil and f:status() ~= 'dead'
-end
-
-local function recovery_bucket_stat(bid)
-    local ok, err = check_is_master()
-    if not ok then
-        return nil, err
-    end
-    local b = box.space._bucket:get{bid}
-    if b == nil then
-        return
-    end
-    return {
-        id = bid,
-        status = b.status,
-        is_transfering = M.rebalancer_transfering_buckets[bid],
-    }
-end
-
---
--- Check if a local bucket which is SENDING has actually finished the transfer
--- and can be made SENT.
---
-local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
-    if local_bucket.status ~= BSENDING then
-        return false
-    end
-    if not remote_bucket then
-        return false
-    end
-    return bucket_status_is_writable(remote_bucket.status)
-end
-
---
--- Check if a local bucket is GARBAGE. Can be true only if it is RECEIVING and
--- apparently wasn't fully received before the transfer failed. Other buckets
--- can't turn to GARBAGE straight away because might have at least RO refs.
---
-local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
-    if local_bucket.status ~= BRECEIVING then
-        return false
-    end
-    if not remote_bucket then
-        return false
-    end
-    if bucket_status_is_writable(remote_bucket.status) then
-        return true
-    end
-    if remote_bucket.status == BSENDING then
-        assert(not remote_bucket.is_transfering)
-        assert(not M.rebalancer_transfering_buckets[local_bucket.id])
-        return true
-    end
-    return false
-end
-
---
--- Check if a local bucket can become active.
---
-local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
-    if M.rebalancer_transfering_buckets[local_bucket.id] then
-        return false
-    end
-    if not remote_bucket then
-        return true
-    end
-    local status = remote_bucket.status
-    return status == BSENT or status == BGARBAGE
-end
-
-local function recovery_save_recovered(dict, id, status)
-    local ids = dict[status] or {}
-    table.insert(ids, id)
-    dict[status] = ids
-end
-
---
--- Check status of each transferring bucket. Resolve status where
--- possible.
---
-local function recovery_step_by_type(type, limiter)
-    local _bucket = box.space._bucket
-    local is_step_empty = true
-    local recovered = 0
-    local total = 0
-    local start_format = 'Starting %s buckets recovery step'
-    local recovered_buckets = {}
-    for _, bucket in _bucket.index.status:pairs(type) do
-        lfiber.testcancel()
-        total = total + 1
-        local bucket_id = bucket.id
-        if M.rebalancer_transfering_buckets[bucket_id] then
-            goto continue
-        end
-        assert(bucket_status_is_transfer_in_progress(bucket.status))
-        local peer_id = bucket.destination
-        local destination = M.replicasets[peer_id]
-        if not destination then
-            -- No replicaset master for a bucket. Wait until it
-            -- appears.
-            if is_step_empty then
-                log.info(start_format, type)
-                log.warn('Can not find for bucket %s its peer %s', bucket_id,
-                         peer_id)
-                is_step_empty = false
-            end
-            goto continue
-        end
-        lfiber.testcancel()
-        local remote_bucket, err = master_call(
-            destination, 'vshard.storage._call',
-            {'recovery_bucket_stat', bucket_id},
-            {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
-        -- Check if it is not a bucket error, and this result can
-        -- not be used to recovery anything. Try later.
-        if remote_bucket == nil and err ~= nil then
-            if is_step_empty then
-                if err == nil then
-                    err = 'unknown'
-                end
-                log.info(start_format, type)
-                limiter:log_error(err,
-                    'Error during recovery of bucket %s on replicaset %s: %s',
-                    bucket_id, peer_id, err)
-                is_step_empty = false
-            end
-            goto continue
-        end
-        -- Do nothing until the bucket on both sides stopped
-        -- transferring.
-        if remote_bucket and remote_bucket.is_transfering then
-            goto continue
-        end
-        -- It is possible that during lookup a new request arrived
-        -- which finished the transfer.
-        bucket = _bucket:get{bucket_id}
-        if not bucket or
-           not bucket_status_is_transfer_in_progress(bucket.status) then
-            goto continue
-        end
-        if is_step_empty then
-            log.info(start_format, type)
-        end
-        lfiber.testcancel()
-        if recovery_local_bucket_is_sent(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, BSENT}})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BSENT)
-        elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BGARBAGE)
-        elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
-            _bucket:replace({bucket_id, BACTIVE})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BACTIVE)
-        elseif is_step_empty then
-            log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
-                     bucket_id, bucket.status, remote_bucket.status, peer_id)
-        end
-        is_step_empty = false
-::continue::
-    end
-    if recovered > 0 then
-        log.info('Finish bucket recovery step, %d %s buckets are recovered '..
-                 'among %d. Recovered buckets: %s', recovered, type, total,
-                 json_encode(recovered_buckets))
-    end
-    return total, recovered
-end
-
---
--- Infinite function to resolve status of buckets, whose 'sending'
--- has failed due to tarantool or network problems. Restarts on
--- reload.
---
-local function recovery_service_f(service, limiter)
-    local module_version = M.module_version
-    -- Change of _bucket increments bucket generation. Recovery has its own
-    -- bucket generation which is <= actual. Recovery is finished, when its
-    -- generation == bucket generation. In such a case the fiber does nothing
-    -- until next _bucket change.
-    local bucket_generation_recovered = -1
-    local bucket_generation_current = M.bucket_generation
-    local ok, sleep_time, is_all_recovered, total, recovered
-    -- Interrupt recovery if a module has been reloaded. Perhaps,
-    -- there was found a bug, and reload fixes it.
-    while module_version == M.module_version do
-        service:next_iter()
-        if M.errinj.ERRINJ_RECOVERY_PAUSE then
-            M.errinj.ERRINJ_RECOVERY_PAUSE = 1
-            lfiber.testcancel()
-            lfiber.sleep(0.01)
-            goto continue
-        end
-        is_all_recovered = true
-        if bucket_generation_recovered == bucket_generation_current then
-            goto sleep
-        end
-
-        service:set_activity('recovering sending')
-        lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BSENDING, limiter)
-        if not ok then
-            is_all_recovered = false
-            limiter:log_error(total, service:set_status_error(
-                       'Error during sending buckets recovery: %s', total))
-        elseif total ~= recovered then
-            is_all_recovered = false
-        end
-
-        service:set_activity('recovering receiving')
-        lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING, limiter)
-        if not ok then
-            is_all_recovered = false
-            limiter:log_error(total, service:set_status_error(
-                'Error during receiving buckets recovery: %s', total))
-        elseif total == 0 then
-            bucket_receiving_quota_reset()
-        else
-            bucket_receiving_quota_add(recovered)
-            if total ~= recovered then
-                is_all_recovered = false
-            end
-        end
-
-    ::sleep::
-        if not is_all_recovered then
-            service:set_status('recovering')
-            bucket_generation_recovered = -1
-        else
-            service:set_status_ok()
-            bucket_generation_recovered = bucket_generation_current
-        end
-        bucket_generation_current = M.bucket_generation
-
-        local sleep_activity = 'idling'
-        if not is_all_recovered then
-            -- One option - some buckets are not broken. Their transmission is
-            -- still in progress. Don't need to retry immediately. Another
-            -- option - network errors when tried to repair the buckets. Also no
-            -- need to retry often. It won't help.
-            sleep_time = consts.RECOVERY_BACKOFF_INTERVAL
-            sleep_activity = 'backoff'
-        elseif bucket_generation_recovered ~= bucket_generation_current then
-            sleep_time = 0
-        else
-            sleep_time = consts.TIMEOUT_INFINITY
-        end
-        if module_version == M.module_version then
-            service:set_activity(sleep_activity)
-            lfiber.testcancel()
-            bucket_generation_wait(sleep_time)
-        end
-    ::continue::
-    end
-end
-
-local function recovery_f()
-    local name = 'recovery'
-    local service = lservice_info.new(name)
-    M.recovery_service = service
-    local ratelimit = lratelimit.create{name = name}
-    local ok, err = pcall(recovery_service_f, service, ratelimit)
-    if M.recovery_service == service then
-        M.recovery_service = nil
-    end
-    if not ok then
-        error(err)
-    end
-end
-
---
--- Immediately wakeup recovery fiber, if exists.
---
-local function recovery_wakeup()
-    if M.recovery_fiber then
-        M.recovery_fiber:wakeup()
-    end
-end
-
---------------------------------------------------------------------------------
--- Replicaset
---------------------------------------------------------------------------------
-
--- Vclock comparing function
-local function vclock_lesseq(vc1, vc2)
-    local lesseq = true
-    for i, lsn in ipairs(vc1) do
-        if i == 0 then
-            -- Skip local component.
-            goto continue
-        end
-        lesseq = lesseq and lsn <= (vc2[i] or 0)
-        if not lesseq then
-            break
-        end
-        ::continue::
-    end
-    return lesseq
-end
-
-local function is_replica_in_configuration(replica)
-    local is_named = M.this_replica.id == M.this_replica.name
-    local id = is_named and replica.name or replica.uuid
-    if id ~= nil then
-        -- In most cases name or uuid are properly set.
-        return M.this_replicaset.replicas[id] ~= nil
-    end
-
-    -- When named identification is used it's possible, that names
-    -- have not been set yet: we're working on top of schema < 3.0.0.
-    -- If user passed uuid to the configuration, then we can validate
-    -- such replica by checking UUIDs of replicaset.replicas, but we
-    -- won't do that, since if user didn't specify the uuid, then it's
-    -- anyway better to check the downstream rather than fail immediately,
-    -- in most cases it'll pass.
-    return true
-end
-
-local function wait_lsn(timeout, interval)
-    local info = box.info
-    local current_id = info.id
-    local vclock = info.vclock
-    local deadline = fiber_clock() + timeout
-    repeat
-        local done = true
-        for _, replica in ipairs(box.info.replication) do
-            -- We should not check the current instance as there's
-            -- no downstream. Moreover, it's not guaranteed that the
-            -- first replica is the same as the current one, so ids
-            -- have to be compared.
-            if replica.id == current_id then
-                goto continue
-            end
-
-            -- We must validate, that we're checking downstream of the replica.
-            -- which was actually configured as vshard storage and not some CDC.
-            -- If we're not sure, then we'll anyway check it.
-            if not is_replica_in_configuration(replica) then
-                goto continue
-            end
-
-            local down = replica.downstream
-            if not down or (down.status == 'stopped' or
-                            not vclock_lesseq(vclock, down.vclock)) then
-                done = false
-                break
-            end
-            ::continue::
-        end
-        if done then
-            return true
-        end
-        lfiber.sleep(interval)
-    until fiber_clock() > deadline
-    return nil, lerror.timeout()
-end
-
-local function sync(timeout)
-    if timeout ~= nil and type(timeout) ~= 'number' then
-        error('Usage: vshard.storage.sync([timeout: number])')
-    end
-    return wait_lsn(timeout or M.sync_timeout, 0.001)
-end
-
---------------------------------------------------------------------------------
--- Buckets
---------------------------------------------------------------------------------
-
 --
 -- Check that an action of a specified mode can be applied to a
 -- bucket.
 -- @param bucket_id Bucket identifier.
 -- @param mode 'Read' or 'write' mode.
 --
--- @retval bucket Bucket that can accept an action of a specified
---         mode.
+-- @retval bucket The bucket, that can accept an action of a specified mode.
 -- @retval bucket and error object Bucket that can not accept the
 --         action, and a reason why.
 --
@@ -1403,6 +892,21 @@ local function bucket_unref(bucket_id, mode)
     end
 end
 
+local function bucket_transfer_start(bid)
+    if M.rebalancer_transfering_buckets[bid] then
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
+                                  'transfer is already in progress', nil)
+    end
+    M.rebalancer_transfering_buckets[bid] = true
+    return true
+end
+
+local function bucket_transfer_end(bid)
+    assert(M.rebalancer_transfering_buckets[bid])
+    M.rebalancer_transfering_buckets[bid] = nil
+    bucket_generation_increment()
+end
+
 --
 -- Return information about bucket
 --
@@ -1489,7 +993,7 @@ end
 --        It is set to true when the data portion is last and the
 --        bucket can be activated here.
 --
--- @retval nil, error Error occurred.
+-- @retval nil, error The error occurred.
 -- @retval true The data is received ok.
 --
 local function bucket_recv_xc(bucket_id, from, data, opts)
@@ -2001,6 +1505,505 @@ local function bucket_unpin(bucket_id)
         assert(bucket.status == BACTIVE)
     end
     return true
+end
+
+--------------------------------------------------------------------------------
+-- Schema
+--------------------------------------------------------------------------------
+
+local function schema_install_triggers()
+    local _bucket = box.space._bucket
+    if M.bucket_on_replace then
+        local ok, err = pcall(_bucket.on_replace, _bucket, nil,
+                              M.bucket_on_replace)
+        if not ok then
+            log.warn('Could not drop old trigger from '..
+                     '_bucket: %s', err)
+        end
+    end
+    _bucket:on_replace(bucket_on_replace_f)
+    M.bucket_on_replace = bucket_on_replace_f
+
+    local _truncate = box.space._truncate
+    if M.bucket_on_truncate then
+        local ok, err = pcall(_truncate.on_replace, _truncate, nil,
+            M.bucket_on_truncate)
+        if not ok then
+            log.warn('Could not drop old trigger from '..
+                     '_truncate: %s', err)
+        end
+    end
+    _truncate:on_replace(bucket_on_truncate_f)
+    M.bucket_on_truncate = bucket_on_truncate_f
+end
+
+local function schema_install_on_replace(_, new)
+    -- Wait not just for _bucket to appear, but for the entire
+    -- schema. This might be important if the schema will ever
+    -- consist of more than just _bucket.
+    if new == nil or new[1] ~= 'vshard_version' then
+        return
+    end
+    schema_install_triggers()
+
+    local _schema = box.space._schema
+    local ok, err = pcall(_schema.on_replace, _schema, nil, M.schema_on_replace)
+    if not ok then
+        log.warn('Could not drop trigger from _schema inside of the '..
+                 'trigger: %s', err)
+    end
+    M.schema_on_replace = nil
+    -- Drop the caches which might have been created while the
+    -- schema was being replicated.
+    bucket_generation_increment()
+end
+
+--
+-- Install the triggers later when there is an actual schema to install them on.
+-- On replicas it might happen that they are vshard-configured earlier than the
+-- master and therefore don't have the schema right away.
+--
+local function schema_install_triggers_delayed()
+    log.info('Could not find _bucket space to install triggers - delayed '..
+             'until the schema is replicated')
+    assert(not box.space._bucket)
+    local _schema = box.space._schema
+    if M.schema_on_replace then
+        local ok, err = pcall(_schema.on_replace, _schema, nil,
+                              M.schema_on_replace)
+        if not ok then
+            log.warn('Could not drop trigger from _schema: %s', err)
+        end
+    end
+    _schema:on_replace(schema_install_on_replace)
+    M.schema_on_replace = schema_install_on_replace
+end
+
+local function schema_upgrade_replica()
+    local version = lschema.current_version()
+    -- Replica can't do upgrade - it is read-only. And it
+    -- shouldn't anyway - that would conflict with master doing
+    -- the same. So the upgrade is either non-critical, and the
+    -- replica can work with the new code but old schema. Or it
+    -- it is critical, and need to wait the schema upgrade from
+    -- the master.
+    -- Or it may happen, that the upgrade just is not possible.
+    -- For example, when an auto-upgrade tries to change a too old
+    -- schema to the newest, skipping some intermediate versions.
+    -- For example, from 1.2.3.4 to 1.7.8.9, when it is assumed
+    -- that a safe upgrade should go 1.2.3.4 -> 1.2.4.1 ->
+    -- 1.3.1.1 and so on step by step.
+    if version ~= lschema.latest_version then
+        log.info('Replica\' vshard schema version is not latest - current '..
+                 '%s vs latest %s, but the replica still can work', version,
+                 lschema.latest_version)
+    end
+    -- In future for hard changes the replica may be suspended
+    -- until its schema is synced with master. Or it may
+    -- reject to upgrade in case of incompatible changes. Now
+    -- there are too few versions so as such problems could
+    -- appear.
+end
+
+local function on_master_disable(new_func, old_func)
+    local func = M._on_master_disable(new_func, old_func)
+    -- If a trigger is set after storage.cfg(), then notify an
+    -- user, that the current instance is not master.
+    if old_func == nil and not this_is_master() then
+        M._on_master_disable:run()
+    end
+    return func
+end
+
+local function on_master_enable(new_func, old_func)
+    local func = M._on_master_enable(new_func, old_func)
+    -- Same as above, but notify, that the instance is master.
+    if old_func == nil and this_is_master() then
+        M._on_master_enable:run()
+    end
+    return func
+end
+
+local function on_bucket_event(new_func, old_func)
+    return M._on_bucket_event(new_func, old_func)
+end
+
+--------------------------------------------------------------------------------
+-- Recovery
+--------------------------------------------------------------------------------
+
+--
+-- Check if a rebalancing is in progress. It is true, if the node
+-- applies routes received from a rebalancer node in the special
+-- fiber.
+--
+local function rebalancing_is_in_progress()
+    local f = M.rebalancer_applier_fiber
+    return f ~= nil and f:status() ~= 'dead'
+end
+
+local function recovery_bucket_stat(bid)
+    local ok, err = check_is_master()
+    if not ok then
+        return nil, err
+    end
+    local b = box.space._bucket:get{bid}
+    if b == nil then
+        return
+    end
+    return {
+        id = bid,
+        status = b.status,
+        is_transfering = M.rebalancer_transfering_buckets[bid],
+    }
+end
+
+--
+-- Check if a local bucket which is SENDING has actually finished the transfer
+-- and can be made SENT.
+--
+local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
+    if local_bucket.status ~= BSENDING then
+        return false
+    end
+    if not remote_bucket then
+        return false
+    end
+    return bucket_status_is_writable(remote_bucket.status)
+end
+
+--
+-- Check if a local bucket is GARBAGE. Can be true only if it is RECEIVING and
+-- apparently wasn't fully received before the transfer failed. Other buckets
+-- can't turn to GARBAGE straight away because might have at least RO refs.
+--
+local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
+    if local_bucket.status ~= BRECEIVING then
+        return false
+    end
+    if not remote_bucket then
+        return false
+    end
+    if bucket_status_is_writable(remote_bucket.status) then
+        return true
+    end
+    if remote_bucket.status == BSENDING then
+        assert(not remote_bucket.is_transfering)
+        assert(not M.rebalancer_transfering_buckets[local_bucket.id])
+        return true
+    end
+    return false
+end
+
+--
+-- Check if a local bucket can become active.
+--
+local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
+    if M.rebalancer_transfering_buckets[local_bucket.id] then
+        return false
+    end
+    if not remote_bucket then
+        return true
+    end
+    local status = remote_bucket.status
+    return status == BSENT or status == BGARBAGE
+end
+
+local function recovery_save_recovered(dict, id, status)
+    local ids = dict[status] or {}
+    table.insert(ids, id)
+    dict[status] = ids
+end
+
+--
+-- Check status of each transferring bucket. Resolve status where
+-- possible.
+--
+local function recovery_step_by_type(type, limiter)
+    local _bucket = box.space._bucket
+    local is_step_empty = true
+    local recovered = 0
+    local total = 0
+    local start_format = 'Starting %s buckets recovery step'
+    local recovered_buckets = {}
+    for _, bucket in _bucket.index.status:pairs(type) do
+        lfiber.testcancel()
+        total = total + 1
+        local bucket_id = bucket.id
+        if M.rebalancer_transfering_buckets[bucket_id] then
+            goto continue
+        end
+        assert(bucket_status_is_transfer_in_progress(bucket.status))
+        local peer_id = bucket.destination
+        local destination = M.replicasets[peer_id]
+        if not destination then
+            -- No replicaset master for a bucket. Wait until it
+            -- appears.
+            if is_step_empty then
+                log.info(start_format, type)
+                log.warn('Can not find for bucket %s its peer %s', bucket_id,
+                         peer_id)
+                is_step_empty = false
+            end
+            goto continue
+        end
+        lfiber.testcancel()
+        local remote_bucket, err = master_call(
+            destination, 'vshard.storage._call',
+            {'recovery_bucket_stat', bucket_id},
+            {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
+        -- Check if it is not a bucket error, and this result can
+        -- not be used to recovery anything. Try later.
+        if remote_bucket == nil and err ~= nil then
+            if is_step_empty then
+                if err == nil then
+                    err = 'unknown'
+                end
+                log.info(start_format, type)
+                limiter:log_error(err,
+                    'Error during recovery of bucket %s on replicaset %s: %s',
+                    bucket_id, peer_id, err)
+                is_step_empty = false
+            end
+            goto continue
+        end
+        -- Do nothing until the bucket on both sides stopped
+        -- transferring.
+        if remote_bucket and remote_bucket.is_transfering then
+            goto continue
+        end
+        -- It is possible that during lookup a new request arrived
+        -- which finished the transfer.
+        bucket = _bucket:get{bucket_id}
+        if not bucket or
+           not bucket_status_is_transfer_in_progress(bucket.status) then
+            goto continue
+        end
+        if is_step_empty then
+            log.info(start_format, type)
+        end
+        lfiber.testcancel()
+        if recovery_local_bucket_is_sent(bucket, remote_bucket) then
+            _bucket:update({bucket_id}, {{'=', 2, BSENT}})
+            recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BSENT)
+        elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
+            _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
+            recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BGARBAGE)
+        elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
+            _bucket:replace({bucket_id, BACTIVE})
+            recovered = recovered + 1
+            recovery_save_recovered(recovered_buckets, bucket_id, BACTIVE)
+        elseif is_step_empty then
+            log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
+                     bucket_id, bucket.status, remote_bucket.status, peer_id)
+        end
+        is_step_empty = false
+::continue::
+    end
+    if recovered > 0 then
+        log.info('Finish bucket recovery step, %d %s buckets are recovered '..
+                 'among %d. Recovered buckets: %s', recovered, type, total,
+                 json_encode(recovered_buckets))
+    end
+    return total, recovered
+end
+
+--
+-- Infinite function to resolve status of buckets, whose 'sending'
+-- has failed due to tarantool or network problems. Restarts on
+-- reload.
+--
+local function recovery_service_f(service, limiter)
+    local module_version = M.module_version
+    -- Change of _bucket increments bucket generation. Recovery has its own
+    -- bucket generation which is <= actual. Recovery is finished, when its
+    -- generation == bucket generation. In such a case the fiber does nothing
+    -- until next _bucket change.
+    local bucket_generation_recovered = -1
+    local bucket_generation_current = M.bucket_generation
+    local ok, sleep_time, is_all_recovered, total, recovered
+    -- Interrupt recovery if a module has been reloaded. Perhaps,
+    -- there was found a bug, and reload fixes it.
+    while module_version == M.module_version do
+        service:next_iter()
+        if M.errinj.ERRINJ_RECOVERY_PAUSE then
+            M.errinj.ERRINJ_RECOVERY_PAUSE = 1
+            lfiber.testcancel()
+            lfiber.sleep(0.01)
+            goto continue
+        end
+        is_all_recovered = true
+        if bucket_generation_recovered == bucket_generation_current then
+            goto sleep
+        end
+
+        service:set_activity('recovering sending')
+        lfiber.testcancel()
+        ok, total, recovered = pcall(recovery_step_by_type, BSENDING, limiter)
+        if not ok then
+            is_all_recovered = false
+            limiter:log_error(total, service:set_status_error(
+                       'Error during sending buckets recovery: %s', total))
+        elseif total ~= recovered then
+            is_all_recovered = false
+        end
+
+        service:set_activity('recovering receiving')
+        lfiber.testcancel()
+        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING, limiter)
+        if not ok then
+            is_all_recovered = false
+            limiter:log_error(total, service:set_status_error(
+                'Error during receiving buckets recovery: %s', total))
+        elseif total == 0 then
+            bucket_receiving_quota_reset()
+        else
+            bucket_receiving_quota_add(recovered)
+            if total ~= recovered then
+                is_all_recovered = false
+            end
+        end
+
+    ::sleep::
+        if not is_all_recovered then
+            service:set_status('recovering')
+            bucket_generation_recovered = -1
+        else
+            service:set_status_ok()
+            bucket_generation_recovered = bucket_generation_current
+        end
+        bucket_generation_current = M.bucket_generation
+
+        local sleep_activity = 'idling'
+        if not is_all_recovered then
+            -- One option - some buckets are not broken. Their transmission is
+            -- still in progress. Don't need to retry immediately. Another
+            -- option - network errors when tried to repair the buckets. Also no
+            -- need to retry often. It won't help.
+            sleep_time = consts.RECOVERY_BACKOFF_INTERVAL
+            sleep_activity = 'backoff'
+        elseif bucket_generation_recovered ~= bucket_generation_current then
+            sleep_time = 0
+        else
+            sleep_time = consts.TIMEOUT_INFINITY
+        end
+        if module_version == M.module_version then
+            service:set_activity(sleep_activity)
+            lfiber.testcancel()
+            bucket_generation_wait(sleep_time)
+        end
+    ::continue::
+    end
+end
+
+local function recovery_f()
+    local name = 'recovery'
+    local service = lservice_info.new(name)
+    M.recovery_service = service
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(recovery_service_f, service, ratelimit)
+    if M.recovery_service == service then
+        M.recovery_service = nil
+    end
+    if not ok then
+        error(err)
+    end
+end
+
+--
+-- Immediately wakeup recovery fiber, if exists.
+--
+local function recovery_wakeup()
+    if M.recovery_fiber then
+        M.recovery_fiber:wakeup()
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Replicaset
+--------------------------------------------------------------------------------
+
+-- Vclock comparing function
+local function vclock_lesseq(vc1, vc2)
+    local lesseq = true
+    for i, lsn in ipairs(vc1) do
+        if i == 0 then
+            -- Skip local component.
+            goto continue
+        end
+        lesseq = lesseq and lsn <= (vc2[i] or 0)
+        if not lesseq then
+            break
+        end
+        ::continue::
+    end
+    return lesseq
+end
+
+local function is_replica_in_configuration(replica)
+    local is_named = M.this_replica.id == M.this_replica.name
+    local id = is_named and replica.name or replica.uuid
+    if id ~= nil then
+        -- In most cases name or uuid are properly set.
+        return M.this_replicaset.replicas[id] ~= nil
+    end
+
+    -- When named identification is used it's possible, that names
+    -- have not been set yet: we're working on top of schema < 3.0.0.
+    -- If user passed uuid to the configuration, then we can validate
+    -- such replica by checking UUIDs of replicaset.replicas, but we
+    -- won't do that, since if user didn't specify the uuid, then it's
+    -- anyway better to check the downstream rather than fail immediately,
+    -- in most cases it'll pass.
+    return true
+end
+
+local function wait_lsn(timeout, interval)
+    local info = box.info
+    local current_id = info.id
+    local vclock = info.vclock
+    local deadline = fiber_clock() + timeout
+    repeat
+        local done = true
+        for _, replica in ipairs(box.info.replication) do
+            -- We should not check the current instance as there's
+            -- no downstream. Moreover, it's not guaranteed that the
+            -- first replica is the same as the current one, so ids
+            -- have to be compared.
+            if replica.id == current_id then
+                goto continue
+            end
+
+            -- We must validate, that we're checking downstream of the replica.
+            -- which was actually configured as vshard storage and not some CDC.
+            -- If we're not sure, then we'll anyway check it.
+            if not is_replica_in_configuration(replica) then
+                goto continue
+            end
+
+            local down = replica.downstream
+            if not down or (down.status == 'stopped' or
+                            not vclock_lesseq(vclock, down.vclock)) then
+                done = false
+                break
+            end
+            ::continue::
+        end
+        if done then
+            return true
+        end
+        lfiber.sleep(interval)
+    until fiber_clock() > deadline
+    return nil, lerror.timeout()
+end
+
+local function sync(timeout)
+    if timeout ~= nil and type(timeout) ~= 'number' then
+        error('Usage: vshard.storage.sync([timeout: number])')
+    end
+    return wait_lsn(timeout or M.sync_timeout, 0.001)
 end
 
 --------------------------------------------------------------------------------
