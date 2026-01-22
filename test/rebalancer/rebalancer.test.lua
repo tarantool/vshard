@@ -181,7 +181,7 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 --
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_disable()
-wait_bucket_is_collected(100)
+for i = 91, 100 do wait_bucket_is_collected(i) end
 vshard.storage.bucket_force_create(91, 10)
 space = box.space.test
 space:replace{1, 91}
