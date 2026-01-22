@@ -941,6 +941,27 @@ local function bucket_send_end(bid)
     bucket_transfer_end(bid)
 end
 
+local function bucket_batch_send_prepare(routes)
+    local ok, err
+    local prepared_buckets = {}
+    for _, bids in pairs(routes) do
+        for _, bid in ipairs(bids) do
+            ok, err = bucket_send_prepare(bid)
+            if not ok then
+                goto error
+            end
+            table.insert(prepared_buckets, bid)
+        end
+    end
+    do return true end
+
+::error::
+    for _, bid in ipairs(prepared_buckets) do
+        bucket_send_end(bid)
+    end
+    return nil, err
+end
+
 --
 -- Return information about bucket
 --
@@ -1537,6 +1558,25 @@ local function bucket_unpin(bucket_id)
         assert(bucket.status == BACTIVE)
     end
     return true
+end
+
+--
+-- Selects `opts.limit` buckets according to the `opts.filter_func()`.
+-- Returns the array of bucket ids.
+--
+local function bucket_id_select(key, opts)
+    assert(key and opts.limit and opts.filter_func)
+    local bucket_ids = {}
+    local _status = box.space._bucket.index.status
+    for _, bucket in _status:pairs(key) do
+        if opts.filter_func(bucket) then
+            table.insert(bucket_ids, bucket.id)
+            if #bucket_ids == opts.limit then
+                return bucket_ids
+            end
+        end
+    end
+    return bucket_ids
 end
 
 --------------------------------------------------------------------------------
@@ -2539,24 +2579,84 @@ local function rebalancer_build_routes(replicasets)
 end
 
 --
+-- Build a map with routes defining to which replicaset which bucket ids
+-- should be sent. Is evaluated on the node, which is going to send buckets.
+--
+-- @param routes. It is a map of type: {dst_id = number }
+-- @retval routes_with_buckets. Map of type: {dst_id = {array of bucket ids}}
+--
+local function rebalancer_build_routes_with_buckets(routes)
+    local new_routes = {}
+    local picked_buckets = {}
+    local key = {BACTIVE}
+    for rs_id, n in pairs(routes) do
+        -- Phase 1: select maxumum number of buckets without rw refs.
+        local bucket_ids = bucket_id_select(key, {limit = n, filter_func =
+            function(bucket)
+                local bucket_id = bucket.id
+                -- Skip transferring buckets, since it may be already locked
+                -- by a manual bucket_send() in another fiber.
+                if M.rebalancer_transfering_buckets[bucket_id] then
+                    return false
+                end
+                -- Skip buckets, which has already being picked.
+                if picked_buckets[bucket_id] then
+                    return false
+                end
+                -- Skip buckets, which has RW refs.
+                local ref = bucket_refrw_touch(bucket_id)
+                if not ref then
+                    return false
+                end
+                return ref.rw == 0
+            end
+        })
+        for _, bid in ipairs(bucket_ids) do
+            assert(not picked_buckets[bid])
+            picked_buckets[bid] = true
+        end
+        if #bucket_ids < n then
+            -- Phase 2: Select the remainings from the bucket with refs.
+            local ref_bucket_ids = bucket_id_select(key, {limit =
+                n - #bucket_ids, filter_func = function(bucket)
+                    local bucket_id = bucket.id
+                    return not picked_buckets[bucket_id] and
+                        not M.rebalancer_transfering_buckets[bucket_id]
+                end
+            })
+            for _, bid in ipairs(ref_bucket_ids) do
+                assert(not picked_buckets[bid])
+                picked_buckets[bid] = true
+            end
+            util.table_extend(bucket_ids, ref_bucket_ids)
+        end
+        assert(#bucket_ids <= n)
+        if #bucket_ids ~= n then
+            return nil, lerror.make('Not enough buckets')
+        end
+        new_routes[rs_id] = bucket_ids
+    end
+    return new_routes
+end
+
+--
 -- Dispenser is a container of routes received from the
 -- rebalancer. Its task is to hand out the routes to worker fibers
 -- in a round-robin manner so as any two sequential results are
 -- different. It allows to spread dispensing evenly over the
 -- receiver nodes.
 --
-local function route_dispenser_create(routes)
+local function route_dispenser_create(routes_with_bucket_ids)
     local rlist = rlist.new()
     local map = {}
-    for id, bucket_count in pairs(routes) do
+    for id, bucket_ids in pairs(routes_with_bucket_ids) do
         local new = {
             -- Receiver's ID.
             id = id,
-            -- Rest of buckets to send. The receiver will be
-            -- dispensed this number of times.
-            bucket_count = bucket_count,
+            -- The array of bucket_ids, which are waiting to be sent.
+            bucket_ids = bucket_ids,
             -- Constant value to be able to track progress.
-            need_to_send = bucket_count,
+            need_to_send = #bucket_ids,
             -- Number of *successfully* sent buckets.
             progress = 0,
             -- If a user set too long max number of receiving
@@ -2593,12 +2693,11 @@ end
 -- receives a throttle error. This is the only error that can be
 -- tolerated.
 --
-local function route_dispenser_put(dispenser, id)
+local function route_dispenser_put(dispenser, id, bucket_id)
     local dst = dispenser.map[id]
     if dst then
-        local bucket_count = dst.bucket_count + 1
-        dst.bucket_count = bucket_count
-        if bucket_count == 1 then
+        table.insert(dst.bucket_ids, bucket_id)
+        if #dst.bucket_ids == 1 then
             dispenser.rlist:add_tail(dst)
         end
     end
@@ -2615,7 +2714,9 @@ local function route_dispenser_skip(dispenser, id)
     local map = dispenser.map
     local dst = map[id]
     if dst then
-        map[id] = nil
+        -- During skip it's enough to drop from rlist only, we cannot drop
+        -- the entry from map, which is used later to clean the bucket after
+        -- unsuccessful sends.
         dispenser.rlist:remove(dst)
     end
 end
@@ -2657,13 +2758,13 @@ local function route_dispenser_pop(dispenser)
     local rlist = dispenser.rlist
     local dst = rlist.first
     if dst then
-        local bucket_count = dst.bucket_count - 1
-        dst.bucket_count = bucket_count
+        local bid = table.remove(dst.bucket_ids)
+        assert(bid)
         rlist:remove(dst)
-        if bucket_count > 0 then
+        if #dst.bucket_ids > 0 then
             rlist:add_tail(dst)
         end
-        return dst.id
+        return dst.id, bid
     end
     return nil
 end
@@ -2677,30 +2778,13 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
-    local active_key = {BACTIVE}
-    local id = route_dispenser_pop(dispenser)
+    local id, bucket_id = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
-    local bucket_id, is_found
     while id do
-        is_found = false
-        -- Can't just take a first active bucket. It may be
-        -- already locked by a manual bucket_send in another
-        -- fiber.
-        for _, bucket in _status:pairs(active_key) do
-            bucket_id = bucket.id
-            if not M.rebalancer_transfering_buckets[bucket_id] then
-                is_found = true
-                break
-            end
-        end
-        if not is_found then
-            log.error('Can not find active buckets')
-            break
-        end
-        local ret, err = bucket_send(bucket_id, id, opts)
+        local ret, err = bucket_send_perform(bucket_id, id, opts)
         if ret then
+            bucket_send_end(bucket_id)
             worker_throttle_count = 0
             local finished, total = route_dispenser_sent(dispenser, id)
             if finished then
@@ -2708,7 +2792,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             end
             goto continue
         end
-        route_dispenser_put(dispenser, id)
+        route_dispenser_put(dispenser, id, bucket_id)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
@@ -2734,7 +2818,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        id = route_dispenser_pop(dispenser)
+        id, bucket_id = route_dispenser_pop(dispenser)
     end
     quit_cond:broadcast()
 end
@@ -2750,7 +2834,6 @@ local function rebalancer_service_apply_routes_f(service, routes)
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
              yaml_encode(routes))
-    local dispenser = route_dispenser_create(routes)
     local _status = box.space._bucket.index.status
     assert(_status:count({BSENDING}) == 0)
     assert(_status:count({BRECEIVING}) == 0)
@@ -2761,6 +2844,20 @@ local function rebalancer_service_apply_routes_f(service, routes)
     M.rebalancer_applier_fiber = lfiber.self()
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
+    local new_routes, err, ok
+    new_routes, err = rebalancer_build_routes_with_buckets(routes)
+    if not new_routes then
+        log.error('Rebalancer applier could not pick buckets for send: %s', err)
+        return
+    end
+    ok, err = bucket_batch_send_prepare(new_routes)
+    if not ok then
+        -- It should not normally happen, since we select buckets, which can
+        -- be prepared, but be ready for anything.
+        log.error('Failed to prepare buckets for send: %s', err)
+        return
+    end
+    local dispenser = route_dispenser_create(new_routes)
     for i = 1, worker_count do
         local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
         f:set_joinable(true)
@@ -2793,6 +2890,11 @@ local function rebalancer_service_apply_routes_f(service, routes)
                  'buckets. Perhaps you need to increase '..
                  '"rebalancer_max_receiving" or decrease '..
                  '"rebalancer_worker_count"', table.concat(throttled, ', '))
+    end
+    for _, rs in pairs(dispenser.map) do
+        for _, bid in ipairs(rs.bucket_ids) do
+            bucket_send_end(bid)
+        end
     end
     service:set_activity('idling')
 end
