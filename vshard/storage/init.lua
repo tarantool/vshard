@@ -7,6 +7,7 @@ local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
+local msgpack = require('msgpack')
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
 local netbox_self = netbox.self
@@ -261,6 +262,23 @@ else
 end
 
 --
+-- This is copy-paste from the net_box.lua handle_eval_result.
+--
+local function handle_results(status, ...)
+    if not status then
+        box.rollback()
+        return status, box.error.new(box.error.PROC_LUA, (...))
+    end
+    local results = {...}
+    for i = 1, select('#', ...) do
+        if type(results[i]) == 'cdata' then
+            results[i] = msgpack.decode(msgpack.encode(results[i]))
+        end
+    end
+    return status, unpack(results)
+end
+
+--
 -- Invoke a function on this instance. Arguments are unpacked into the function
 -- as arguments.
 -- The function returns pcall() as is, because is used from places where
@@ -284,7 +302,12 @@ local_call = function(func_name, args)
     if not func then
         return pcall(netbox_self_call, netbox_self, func_name, args)
     end
-    return pcall(func.call, func, args)
+    -- If the function is called directly, fails, and leaves an uncommitted
+    -- transaction, then in Tarantool versions before 3.0.0-beta1-18,
+    -- the original error is replaced by the "Transaction is active" error.
+    -- We manually check if the function returned an error. If so, we
+    -- rollback the transaction to reveal the original error.
+    return handle_results(pcall(func.call, func, args))
 end
 
 end
