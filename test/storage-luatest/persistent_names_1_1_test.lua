@@ -144,7 +144,7 @@ test_group.test_alerts_for_named_replica = function(g)
     t.run_only_if(vutil.feature.persistent_names)
 
     local named_replica = server:new({
-        alias = 'named_replica_with_name_identification',
+        alias = 'named_replica',
         box_cfg = {
             replication = g.replica_1_a.net_box_uri,
             instance_name = 'named_replica'
