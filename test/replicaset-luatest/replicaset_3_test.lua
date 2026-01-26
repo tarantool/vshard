@@ -618,7 +618,7 @@ test_group.test_storage_info_fail_while_replica_has_master_name = function(g)
     t.run_only_if(vutil.feature.persistent_names)
 
     local replica = server:new({
-        alias = 'non_config_replica_with_master_name',
+        alias = 'non_cfg_replica_master_name',
         box_cfg = {
             replication = {
                 g.replica_1_a.net_box_uri,
