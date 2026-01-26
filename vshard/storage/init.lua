@@ -907,6 +907,40 @@ local function bucket_transfer_end(bid)
     bucket_generation_increment()
 end
 
+local function bucket_send_prepare(bid)
+    local ok, ref, err
+    -- Add bucket to the `M.rebalancer_transfering_buckets`. Nothing to do in
+    -- case of error.
+    ok, err = bucket_transfer_start(bid)
+    if not ok then
+        return nil, err
+    end
+    -- Set `rw_lock` in order to forbid new RW refs. In case of error drop from
+    -- transferring.
+    ref, err = bucket_refrw_touch(bid)
+    if not ref then
+        goto error
+    end
+    ref.rw_lock = true
+    do return true end
+
+::error::
+    bucket_transfer_end(bid)
+    return nil, err
+end
+
+local function bucket_send_end(bid)
+    local ref = M.bucket_refs[bid]
+    local bucket = box.space._bucket:get{bid}
+    if ref ~= nil and bucket ~= nil then
+        -- Reset the rw lock, if needed. The ref may be missing after
+        -- manual bucket_refs cleaning or `_bucket` space truncate, in that
+        -- case we have nothing to do.
+        ref.rw_lock = not bucket_status_is_writable(bucket.status)
+    end
+    bucket_transfer_end(bid)
+end
+
 --
 -- Return information about bucket
 --
@@ -1298,22 +1332,19 @@ end
 --
 -- Send a bucket to other replicaset.
 --
-local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
+local function bucket_send_xc(bucket_id, destination, opts)
     local id = M.this_replicaset.id
-    local status, ok
-    local ref, err = bucket_refrw_touch(bucket_id)
-    if not ref then
-        return nil, err
-    end
-    ref.rw_lock = true
-    exception_guard.ref = ref
-    exception_guard.drop_rw_lock = true
+    local status, ok, err
     if not opts or not opts.timeout then
         opts = opts and table.copy(opts) or {}
         opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
     end
     local timeout = opts.timeout
     local deadline = fiber_clock() + timeout
+    local ref = M.bucket_refs[bucket_id]
+    -- The bucket_send_xc should be called after bucket_transfer_start, which
+    -- creates the ref if it's missing, so it must always present at that point.
+    assert(ref ~= nil)
     while ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
         ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
@@ -1363,7 +1394,6 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         return nil, lerror.make(err)
     end
 
-    exception_guard.drop_rw_lock = false
     for _, space in pairs(spaces) do
         local index = space.index[idx]
         local space_data = {}
@@ -1426,28 +1456,11 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
 end
 
 --
--- Exception and recovery safe version of bucket_send_xc.
+-- Warning: `bucket_send_perform()` requires calling `bucket_send_prepare()`
+-- and `bucket_send_end()`, this function doesn't call them.
 --
-local function bucket_send(bucket_id, destination, opts)
-    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
-        error('Usage: bucket_send(bucket_id, destination)')
-    end
-    local status, ret, err
-    ret, err = check_is_master()
-    if not ret then
-        return nil, err
-    end
-    status, err = bucket_transfer_start(bucket_id)
-    if not status then
-        return nil, err
-    end
-    local exception_guard = {}
-    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
-                             exception_guard)
-    if exception_guard.drop_rw_lock then
-        exception_guard.ref.rw_lock = false
-    end
-    bucket_transfer_end(bucket_id)
+local function bucket_send_perform(bucket_id, destination, opts)
+    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
     if status then
         if ret then
             return ret
@@ -1457,6 +1470,25 @@ local function bucket_send(bucket_id, destination, opts)
         ret = status
     end
     return ret, err
+end
+
+--
+-- Exception and recovery safe version of bucket_send_xc.
+--
+local function bucket_send(bucket_id, destination, opts)
+    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
+        error('Usage: bucket_send(bucket_id, destination)')
+    end
+    local ret, err = bucket_send_prepare(bucket_id, opts and opts.timeout)
+    if err then
+        return ret, err
+    end
+    ret, err = bucket_send_perform(bucket_id, destination, opts)
+    bucket_send_end(bucket_id)
+    if err then
+        return ret, err
+    end
+    return ret
 end
 
 --
