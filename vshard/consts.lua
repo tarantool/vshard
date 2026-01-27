@@ -28,6 +28,11 @@ return {
         RED = 3,
     },
 
+    MAP_CALLRW_MODE = {
+        FULL = 'full',
+        PARTIAL = 'partial',
+    },
+
     REPLICATION_THRESHOLD_SOFT = 1,
     REPLICATION_THRESHOLD_HARD = 5,
     REPLICATION_THRESHOLD_FAIL = 10,

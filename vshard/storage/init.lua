@@ -3177,6 +3177,14 @@ local function storage_ref(rid, timeout)
     return bucket_count()
 end
 
+local function storage_ref_check(rid)
+    local ok, err = lref.check(rid, box.session.id())
+    if not ok then
+        return nil, err
+    end
+    return bucket_count()
+end
+
 --
 -- Lookup buckets which are definitely not going to recover into ACTIVE state
 -- under any circumstances.
@@ -3367,6 +3375,7 @@ service_call_api = setmetatable({
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
     storage_ref = storage_ref,
+    storage_ref_check = storage_ref_check,
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
