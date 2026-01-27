@@ -260,6 +260,10 @@ else
     end
 end
 
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+
 --
 -- Invoke a function on this instance. Arguments are unpacked into the function
 -- as arguments.
@@ -287,6 +291,22 @@ local_call = function(func_name, args)
     return pcall(func.call, func, args)
 end
 
+end
+
+local function this_is_master()
+    return M.is_master
+end
+
+local function check_is_master()
+    if this_is_master() then
+        return true, nil
+    end
+    local master_id = M.this_replicaset.master
+    if master_id then
+        master_id = master_id.id
+    end
+    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
+                              M.this_replicaset.id, master_id)
 end
 
 local function master_call(replicaset, func, args, opts)
@@ -318,6 +338,10 @@ local function master_call(replicaset, func, args, opts)
         opts.timeout = timeout
     end
 end
+
+--------------------------------------------------------------------------------
+-- Buckets
+--------------------------------------------------------------------------------
 
 --
 -- Get number of buckets stored on this storage. Regardless of their state.
@@ -391,21 +415,6 @@ local function bucket_generation_increment()
     M.bucket_are_all_rw_cache = nil
     M.bucket_generation = M.bucket_generation + 1
     M.bucket_generation_cond:broadcast()
-end
-
-local function bucket_transfer_start(bid)
-    if M.rebalancer_transfering_buckets[bid] then
-        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
-                                  'transfer is already in progress', nil)
-    end
-    M.rebalancer_transfering_buckets[bid] = true
-    return true
-end
-
-local function bucket_transfer_end(bid)
-    assert(M.rebalancer_transfering_buckets[bid])
-    M.rebalancer_transfering_buckets[bid] = nil
-    bucket_generation_increment()
 end
 
 --
@@ -708,6 +717,868 @@ local function bucket_receiving_quota_reset()
     M.rebalancer_receiving_quota = M.current_cfg.rebalancer_max_receiving
 end
 
+--
+-- Check that an action of a specified mode can be applied to a
+-- bucket.
+-- @param bucket_id Bucket identifier.
+-- @param mode 'Read' or 'write' mode.
+--
+-- @retval bucket The bucket, that can accept an action of a specified mode.
+-- @retval bucket and error object Bucket that can not accept the
+--         action, and a reason why.
+--
+local function bucket_check_state(bucket_id, mode)
+    assert(type(bucket_id) == 'number')
+    assert(mode == 'read' or mode == 'write')
+    local bucket = box.space._bucket:get({bucket_id})
+    local reason
+    if not bucket then
+        reason = 'Not found'
+    elseif mode == 'read' then
+        if bucket_status_is_readable(bucket.status) then
+            return bucket
+        end
+        reason = 'read is prohibited'
+    elseif not bucket_status_is_writable(bucket.status) then
+        if bucket_status_is_transfer_in_progress(bucket.status) then
+            return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
+                                         bucket_id, bucket.destination)
+        end
+        reason = 'write is prohibited'
+    else
+        local _, err = check_is_master()
+        return bucket, err
+    end
+    local dst = bucket and bucket.destination or M.route_map[bucket_id]
+    return bucket, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, reason,
+                                 dst)
+end
+
+--
+-- Take Read-Only reference on the bucket identified by
+-- @a bucket_id. Under such reference a bucket can not be deleted
+-- from the storage. Its transfer still can start, but can not
+-- finish until ref == 0.
+-- @param bucket_id Identifier of a bucket to ref.
+--
+-- @retval true The bucket is referenced ok.
+-- @retval nil, error Can not ref the bucket. An error object is
+--         returned via the second value.
+--
+local function bucket_refro(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref then
+        local _, err = bucket_check_state(bucket_id, 'read')
+        if err then
+            return nil, err
+        end
+        ref = bucket_ref_new()
+        ref.ro = 1
+        M.bucket_refs[bucket_id] = ref
+    elseif ref.ro_lock then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
+    else
+        ref.ro = ref.ro + 1
+    end
+    return true
+end
+
+--
+-- Remove one RO reference.
+--
+local function bucket_unrefro(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    local count = ref and ref.ro or 0
+    if count == 0 then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
+                                  "no ro refs on unref")
+    end
+    if count == 1 then
+        ref.ro = 0
+        if ref.ro_lock then
+            -- Garbage collector is waiting for the bucket if RO
+            -- is locked. Let it know it has one more bucket to
+            -- collect. It relies on generation, so its increment
+            -- is enough.
+            bucket_generation_increment()
+        end
+        return true
+    end
+    ref.ro = count - 1
+    return true
+end
+
+--
+-- Same as bucket_refro, but more strict - the bucket transfer
+-- can not start until a bucket has such refs. And if the bucket
+-- is already scheduled for transfer then it can not take new RW
+-- refs. The rebalancer waits until all RW refs gone and starts
+-- transfer.
+--
+local function bucket_refrw(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref then
+        local _, err = bucket_check_state(bucket_id, 'write')
+        if err then
+            return nil, err
+        end
+        ref = bucket_ref_new()
+        ref.rw = 1
+        M.bucket_refs[bucket_id] = ref
+    elseif ref.rw_lock then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
+    else
+        local _, err = check_is_master()
+        if err then
+            return nil, err
+        end
+        ref.rw = ref.rw + 1
+    end
+    return true
+end
+
+--
+-- Remove one RW reference.
+--
+local function bucket_unrefrw(bucket_id)
+    local ref = M.bucket_refs[bucket_id]
+    if not ref or ref.rw == 0 then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
+                                  "no rw refs on unref")
+    end
+    if ref.rw == 1 and ref.rw_lock then
+        ref.rw = 0
+        M.bucket_rw_lock_is_ready_cond:broadcast()
+    else
+        ref.rw = ref.rw - 1
+    end
+    return true
+end
+
+--
+-- Ensure that a bucket ref exists and can be referenced for an RW
+-- request.
+--
+local function bucket_refrw_touch(bucket_id)
+    local status, err = bucket_refrw(bucket_id)
+    if not status then
+        return nil, err
+    end
+    bucket_unrefrw(bucket_id)
+    return M.bucket_refs[bucket_id]
+end
+
+--
+-- Ref/unref shortcuts for an obscure mode.
+--
+
+local function bucket_ref(bucket_id, mode)
+    if mode == 'read' then
+        return bucket_refro(bucket_id)
+    elseif mode == 'write' then
+        return bucket_refrw(bucket_id)
+    else
+        error('Unknown mode')
+    end
+end
+
+local function bucket_unref(bucket_id, mode)
+    if mode == 'read' then
+        return bucket_unrefro(bucket_id)
+    elseif mode == 'write' then
+        return bucket_unrefrw(bucket_id)
+    else
+        error('Unknown mode')
+    end
+end
+
+local function bucket_transfer_start(bid)
+    if M.rebalancer_transfering_buckets[bid] then
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bid,
+                                  'transfer is already in progress', nil)
+    end
+    M.rebalancer_transfering_buckets[bid] = true
+    return true
+end
+
+local function bucket_transfer_end(bid)
+    assert(M.rebalancer_transfering_buckets[bid])
+    M.rebalancer_transfering_buckets[bid] = nil
+    bucket_generation_increment()
+end
+
+local function bucket_send_prepare(bid)
+    local ok, ref, err
+    -- Add bucket to the `M.rebalancer_transfering_buckets`. Nothing to do in
+    -- case of error.
+    ok, err = bucket_transfer_start(bid)
+    if not ok then
+        return nil, err
+    end
+    -- Set `rw_lock` in order to forbid new RW refs. In case of error drop from
+    -- transferring.
+    ref, err = bucket_refrw_touch(bid)
+    if not ref then
+        goto error
+    end
+    ref.rw_lock = true
+    do return true end
+
+::error::
+    bucket_transfer_end(bid)
+    return nil, err
+end
+
+local function bucket_send_end(bid)
+    local ref = M.bucket_refs[bid]
+    local bucket = box.space._bucket:get{bid}
+    if ref ~= nil and bucket ~= nil then
+        -- Reset the rw lock, if needed. The ref may be missing after
+        -- manual bucket_refs cleaning or `_bucket` space truncate, in that
+        -- case we have nothing to do.
+        ref.rw_lock = not bucket_status_is_writable(bucket.status)
+    end
+    bucket_transfer_end(bid)
+end
+
+local function bucket_batch_send_prepare(routes)
+    local ok, err
+    local prepared_buckets = {}
+    for _, bids in pairs(routes) do
+        for _, bid in ipairs(bids) do
+            ok, err = bucket_send_prepare(bid)
+            if not ok then
+                goto error
+            end
+            table.insert(prepared_buckets, bid)
+        end
+    end
+    do return true end
+
+::error::
+    for _, bid in ipairs(prepared_buckets) do
+        bucket_send_end(bid)
+    end
+    return nil, err
+end
+
+--
+-- Return information about bucket
+--
+local function bucket_stat(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_stat(bucket_id)')
+    end
+    local stat, err = bucket_check_state(bucket_id, 'read')
+    if stat then
+        stat = stat:tomap()
+        if M.rebalancer_transfering_buckets[bucket_id] then
+            stat.is_transfering = true
+        end
+    end
+    return stat, err
+end
+
+--
+-- Create bucket range manually for initial bootstrap, tests or
+-- emergency cases. Buckets id, id + 1, id + 2, ..., id + count
+-- are inserted.
+-- @param first_bucket_id Identifier of a first bucket in a range.
+-- @param count Bucket range length to insert. By default is 1.
+--
+local function bucket_force_create_impl(first_bucket_id, count)
+    local _bucket = box.space._bucket
+    box.begin()
+    local limit = consts.BUCKET_CHUNK_SIZE
+    for i = first_bucket_id, first_bucket_id + count - 1 do
+        -- Buckets are protected with on_replace trigger, which
+        -- prohibits the creation of the ACTIVE buckets from nowhere,
+        -- as this is done only for bootstrap and not during the normal
+        -- work of vshard. So, as we don't want to disable the protection
+        -- of the buckets for the whole replicaset for bootstrap, a bucket's
+        -- status must go the following way: none -> RECEIVING -> ACTIVE.
+        _bucket:insert({i, BRECEIVING})
+        _bucket:replace({i, BACTIVE})
+        limit = limit - 1
+        if limit == 0 then
+            box.commit()
+            box.begin()
+            limit = consts.BUCKET_CHUNK_SIZE
+        end
+    end
+    box.commit()
+end
+
+local function bucket_force_create(first_bucket_id, count)
+    if type(first_bucket_id) ~= 'number' or
+       (count ~= nil and (type(count) ~= 'number' or
+                          math.floor(count) ~= count)) then
+        error('Usage: bucket_force_create(first_bucket_id, count)')
+    end
+    count = count or 1
+    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
+    if not ok then
+        box.rollback()
+        return nil, err
+    end
+    return true
+end
+
+--
+-- Drop bucket manually for tests or emergency cases
+--
+local function bucket_force_drop(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_force_drop(bucket_id)')
+    end
+
+    box.space._bucket:delete({bucket_id})
+    return true
+end
+
+
+--
+-- Receive bucket data. If the bucket is not presented here, it is
+-- created as RECEIVING.
+-- @param bucket_id Bucket to receive.
+-- @param from Source ID (UUID or name).
+-- @param data Bucket data in the format:
+--        [{space_name, [space_tuples]}, ...].
+-- @param opts Options. Now the only possible option is 'is_last'.
+--        It is set to true when the data portion is last and the
+--        bucket can be activated here.
+--
+-- @retval nil, error The error occurred.
+-- @retval true The data is received ok.
+--
+local function bucket_recv_xc(bucket_id, from, data, opts)
+    if not from or not M.replicasets[from] then
+        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, from)
+    end
+    local _bucket = box.space._bucket
+    local b = _bucket:get{bucket_id}
+    local recvg = BRECEIVING
+    local is_last = opts and opts.is_last
+    if not b then
+        if is_last then
+            local msg = 'last message is received, but the bucket does not '..
+                        'exist anymore'
+            return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
+                                      from)
+        end
+        if is_this_replicaset_locked() then
+            return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
+        end
+        if not bucket_receiving_quota_add(-1) then
+            return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
+        end
+        local timeout = opts and opts.timeout or
+                        consts.DEFAULT_BUCKET_SEND_TIMEOUT
+        local ok, err = lsched.move_start(timeout)
+        if not ok then
+            return nil, err
+        end
+        assert(lref.count == 0)
+        -- Move schedule is done only for the time of _bucket update.
+        -- The reason is that one bucket_send() calls bucket_recv() on the
+        -- remote storage multiple times. If the latter would schedule new moves
+        -- on each call, it could happen that the scheduler would block it in
+        -- favor of refs right in the middle of bucket_send().
+        -- It would lead to a deadlock, because refs won't be able to start -
+        -- the bucket won't be writable.
+        -- This way still provides fair scheduling, but does not have the
+        -- described issue.
+        ok, err = pcall(_bucket.insert, _bucket, {bucket_id, recvg, from})
+        lsched.move_end(1)
+        if not ok then
+            return nil, lerror.make(err)
+        end
+    elseif b.status ~= recvg then
+        local msg = string.format("bucket state is changed: was receiving, "..
+                                  "became %s", b.status)
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
+                                  from)
+    end
+    local bucket_generation = M.bucket_generation
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local event_type = consts.BUCKET_EVENT.RECV
+    for _, row in ipairs(data) do
+        local space_name, space_data = row[1], row[2]
+        local space = box.space[space_name]
+        if space == nil then
+            local err = box.error.new(box.error.NO_SUCH_SPACE, space_name)
+            return nil, lerror.box(err)
+        end
+        box.begin()
+        M._on_bucket_event:run(event_type, bucket_id, {spaces = {space_name}})
+        for _, tuple in ipairs(space_data) do
+            local ok, err = pcall(space.insert, space, tuple)
+            if not ok then
+                box.rollback()
+                return nil, lerror.vshard(lerror.code.BUCKET_RECV_DATA_ERROR,
+                                          bucket_id, space.name,
+                                          box.tuple.new(tuple), err)
+            end
+            limit = limit - 1
+            if limit == 0 then
+                box.commit()
+                if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
+                    box.error(box.error.INJECTION,
+                              "the bucket is received partially")
+                end
+                bucket_generation =
+                    bucket_guard_xc(bucket_generation, bucket_id, recvg)
+                box.begin()
+                M._on_bucket_event:run(event_type, bucket_id,
+                                       {spaces = {space_name}})
+                limit = consts.BUCKET_CHUNK_SIZE
+            end
+        end
+        box.commit()
+        if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
+            box.error(box.error.INJECTION, "the bucket is received partially")
+        end
+        bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
+    end
+    if is_last then
+        _bucket:replace({bucket_id, BACTIVE})
+        bucket_receiving_quota_add(1)
+        if M.errinj.ERRINJ_LONG_RECEIVE then
+            box.error(box.error.TIMEOUT)
+        end
+    end
+    return true
+end
+
+--
+-- Extract bucket_recv() args from an msgpack object. Only the tuples remain as
+-- msgpack objects to preserve their original content which could otherwise be
+-- altered by Lua.
+--
+local function bucket_recv_parse_raw_args(raw)
+    local it = raw:iterator()
+    local arg_count = it:decode_array_header()
+    local bucket_id = it:decode()
+    local from = it:decode()
+    local data_size = it:decode_array_header()
+    local data = table.new(data_size, 0)
+    for i = 1, data_size do
+        it:decode_array_header()
+        local space_name = it:decode()
+        local space_size = it:decode_array_header()
+        local space_data = table.new(space_size, 0)
+        for j = 1, space_size do
+            space_data[j] = it:take()
+        end
+        data[i] = {space_name, space_data}
+    end
+    local opts = arg_count >= 4 and it:decode() or nil
+    return bucket_id, from, data, opts
+end
+
+--
+-- Exception safe version of bucket_recv_xc.
+--
+local function bucket_recv(bucket_id, from, data, opts)
+    local status, ret, err
+    ret, err = check_is_master()
+    if not ret then
+        return nil, err
+    end
+    -- Can understand both msgpack and normal args. That is done because having
+    -- a separate bucket_recv_raw() function would mean the new vshard storages
+    -- wouldn't be able to send buckets to the old ones which have only
+    -- bucket_recv(). Or it would require some work on bucket_send() to try
+    -- bucket_recv_raw() and fallback to bucket_recv().
+    if util.feature.msgpack_object and lmsgpack.is_object(bucket_id) then
+        bucket_id, from, data, opts = bucket_recv_parse_raw_args(bucket_id)
+    end
+    while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
+        lfiber.sleep(0.01)
+    end
+    status, err = bucket_transfer_start(bucket_id)
+    if not status then
+        return nil, err
+    end
+    status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
+    bucket_transfer_end(bucket_id)
+    if status then
+        if ret then
+            return ret
+        end
+    else
+        err = ret
+    end
+    box.rollback()
+    return nil, err
+end
+
+--
+-- Test which of the passed bucket IDs can be safely garbage collected.
+--
+local function bucket_test_gc(bids)
+    local refs = M.bucket_refs
+    local bids_not_ok = table.new(consts.BUCKET_CHUNK_SIZE, 0)
+    -- +1 because the expected max count is exactly the chunk size. No need to
+    -- yield on the last one. But if somewhy more is received, then do the
+    -- yields.
+    local limit = consts.BUCKET_CHUNK_SIZE + 1
+    local _bucket = box.space._bucket
+    local ref, bucket, status
+    for i, bid in ipairs(bids) do
+        if M.rebalancer_transfering_buckets[bid] then
+            goto not_ok_bid
+        end
+        bucket = _bucket:get(bid)
+        status = bucket ~= nil and bucket.status or BGARBAGE
+        if status ~= BGARBAGE and status ~= BSENT then
+            goto not_ok_bid
+        end
+        ref = refs[bid]
+        if ref == nil then
+            goto next_bid
+        end
+        if ref.ro ~= 0 then
+            goto not_ok_bid
+        end
+        assert(ref.rw == 0)
+        assert(ref.ro_lock)
+        goto next_bid
+    ::not_ok_bid::
+        table.insert(bids_not_ok, bid)
+    ::next_bid::
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    return {bids_not_ok = bids_not_ok}
+end
+
+--
+-- Public wrapper for sharded spaces list getter.
+--
+local function storage_sharded_spaces()
+    return table.deepcopy(lschema.find_sharded_spaces())
+end
+
+if M.errinj.ERRINJ_RELOAD then
+    error('Error injection: reload')
+end
+
+--
+-- Collect content of the readable bucket.
+--
+local function bucket_collect(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_collect(bucket_id)')
+    end
+    local _, err = bucket_check_state(bucket_id, 'read')
+    if err then
+        return nil, err
+    end
+    local data = {}
+    local spaces = lschema.find_sharded_spaces()
+    local idx = lschema.shard_index
+    for _, space in pairs(spaces) do
+        assert(space.index[idx] ~= nil)
+        local space_data = space.index[idx]:select({bucket_id})
+        table.insert(data, {space.name, space_data})
+    end
+    return data
+end
+
+-- Discovery used by routers. It returns limited number of
+-- buckets to avoid stalls when _bucket is huge.
+local function buckets_discovery_extended(opts)
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local buckets = table.new(limit, 0)
+    local active = BACTIVE
+    local pinned = BPINNED
+    local next_from
+    local errcnt = M.errinj.ERRINJ_DISCOVERY
+    if errcnt then
+        if errcnt > 0 then
+            M.errinj.ERRINJ_DISCOVERY = errcnt - 1
+            if errcnt % 2 == 0 then
+                box.error(box.error.INJECTION, 'discovery')
+            end
+        else
+            M.errinj.ERRINJ_DISCOVERY = false
+        end
+    end
+    -- No way to select by {status, id}, because there are two
+    -- statuses to select. A router would need to maintain a
+    -- separate iterator for each status it wants to get. This may
+    -- be implemented in future. But _bucket space anyway 99% of
+    -- time contains only active and pinned buckets. So there is
+    -- no big benefit in optimizing that. Perhaps a compound index
+    -- {status, id} could help too.
+    for _, bucket in box.space._bucket:pairs({opts.from},
+                                             {iterator = box.index.GE}) do
+        local status = bucket.status
+        if status == active or status == pinned then
+            table.insert(buckets, bucket.id)
+        end
+        limit = limit - 1
+        if limit == 0 then
+            next_from = bucket.id + 1
+            break
+        end
+    end
+    -- Buckets list can even be empty, if all buckets in the
+    -- scanned chunk are not active/pinned. But next_from still
+    -- should be returned. So as the router could request more.
+    return {buckets = buckets, next_from = next_from}
+end
+
+--
+-- Collect array of active bucket identifiers for discovery.
+--
+local function buckets_discovery(opts)
+    if opts then
+        -- Private method. Is not documented intentionally.
+        return buckets_discovery_extended(opts)
+    end
+    local ret = {}
+    local status = box.space._bucket.index.status
+    for _, bucket in status:pairs({BACTIVE}) do
+        table.insert(ret, bucket.id)
+    end
+    for _, bucket in status:pairs({BPINNED}) do
+        table.insert(ret, bucket.id)
+    end
+    return ret
+end
+
+--
+-- Send a bucket to other replicaset.
+--
+local function bucket_send_xc(bucket_id, destination, opts)
+    local id = M.this_replicaset.id
+    local status, ok, err
+    if not opts or not opts.timeout then
+        opts = opts and table.copy(opts) or {}
+        opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    end
+    local timeout = opts.timeout
+    local deadline = fiber_clock() + timeout
+    local ref = M.bucket_refs[bucket_id]
+    -- The bucket_send_xc should be called after bucket_transfer_start, which
+    -- creates the ref if it's missing, so it must always present at that point.
+    assert(ref ~= nil)
+    while ref.rw ~= 0 do
+        timeout = deadline - fiber_clock()
+        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
+        if not ok then
+            return nil, err
+        end
+        lfiber.testcancel()
+    end
+
+    local _bucket = box.space._bucket
+    local bucket = _bucket:get({bucket_id})
+    if is_this_replicaset_locked() then
+        return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
+    end
+    if bucket.status == BPINNED then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
+    end
+    local replicaset = M.replicasets[destination]
+    if replicaset == nil then
+        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
+    end
+    if destination == id then
+        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, id)
+    end
+    local data = {}
+    local spaces = lschema.find_sharded_spaces()
+    local limit = consts.BUCKET_CHUNK_SIZE
+    local idx = lschema.shard_index
+    local bucket_generation = M.bucket_generation
+    local sendg = BSENDING
+
+    ok, err = lsched.move_start(timeout)
+    if not ok then
+        return nil, err
+    end
+    assert(lref.count == 0)
+    -- Move is scheduled only for the time of _bucket update because:
+    --
+    -- * it is consistent with bucket_recv() (see its comments);
+    --
+    -- * gives the same effect as if move was in the scheduler for the whole
+    --   bucket_send() time, because refs won't be able to start anyway - the
+    --   bucket is not writable.
+    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
+    lsched.move_end(1)
+    if not ok then
+        return nil, lerror.make(err)
+    end
+
+    for _, space in pairs(spaces) do
+        local index = space.index[idx]
+        local space_data = {}
+        for _, t in index:pairs({bucket_id}) do
+            table.insert(space_data, t)
+            limit = limit - 1
+            if limit == 0 then
+                table.insert(data, {space.name, space_data})
+                status, err = master_call(
+                    replicaset, 'vshard.storage.bucket_recv',
+                    {bucket_id, id, data}, opts)
+                bucket_generation =
+                    bucket_guard_xc(bucket_generation, bucket_id, sendg)
+                if not status then
+                    return status, lerror.make(err)
+                end
+                limit = consts.BUCKET_CHUNK_SIZE
+                data = {}
+                space_data = {}
+            end
+        end
+        table.insert(data, {space.name, space_data})
+    end
+    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
+                              {bucket_id, id, data}, opts)
+    if not status then
+        return status, lerror.make(err)
+    end
+    while M.errinj.ERRINJ_LAST_SEND_DELAY do
+        lfiber.sleep(0.01)
+    end
+    -- It is safe to turn bucket to SENT as it has already been fully
+    -- sent to the destination and can be garbade collected regardless of
+    -- receiving is_last message by the destination, as out there it will be
+    -- converted to ACTIVE status by recovery process. Moreover, it's preferable
+    -- to turn it into SENT at the source before turning to ACTIVE at the
+    -- destination, as it allows to avoid doubled buckets problem caused by
+    -- manual vshard.storage.bucket_send() call. The following example
+    -- illustrates how it can happen.
+    --
+    -- Storage S1 has bucket B, which is sent to S2, but then connection breaks.
+    -- The bucket is in the state S1 {B: sending-to-s2}, S2 {B: active}. Now if
+    -- the user will do vshard.storage.bucket_send(S2 -> S3), then we will get
+    -- this: S1 {B: sending-to-s2}, S2: {}, S3: {B: active}. Now when recovery
+    -- fiber will wakeup on S1, it will see that B is sending-to-s2 but S2
+    -- doesn't have the bucket. Recovery will then assume that S2 already
+    -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
+    -- S3 {B: active}, doubled buckets situation (gh-414)
+    _bucket:replace({bucket_id, BSENT, destination})
+    -- Always send at least two messages to prevent the case, when
+    -- a bucket is sent, hung in the network. Then it is recovered
+    -- to active on the source, and then the message arrives and
+    -- the same bucket is activated on the destination.
+    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
+                              {bucket_id, id, {}, {is_last = true}}, opts)
+    if not status then
+        return status, lerror.make(err)
+    end
+    return true
+end
+
+--
+-- Warning: `bucket_send_perform()` requires calling `bucket_send_prepare()`
+-- and `bucket_send_end()`, this function doesn't call them.
+--
+local function bucket_send_perform(bucket_id, destination, opts)
+    local status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
+    if status then
+        if ret then
+            return ret
+        end
+    else
+        err = ret
+        ret = status
+    end
+    return ret, err
+end
+
+--
+-- Exception and recovery safe version of bucket_send_xc.
+--
+local function bucket_send(bucket_id, destination, opts)
+    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
+        error('Usage: bucket_send(bucket_id, destination)')
+    end
+    local ret, err = bucket_send_prepare(bucket_id, opts and opts.timeout)
+    if err then
+        return ret, err
+    end
+    ret, err = bucket_send_perform(bucket_id, destination, opts)
+    bucket_send_end(bucket_id)
+    if err then
+        return ret, err
+    end
+    return ret
+end
+
+--
+-- Pin a bucket to a replicaset. Pinned bucket can not be sent
+-- even if is breaks the cluster balance.
+-- @param bucket_id Bucket identifier to pin.
+-- @retval true A bucket is pinned.
+-- @retval nil, err A bucket can not be pinned. @A err is the
+--         reason why.
+--
+local function bucket_pin(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_pin(bucket_id)')
+    end
+    local bucket, err = bucket_check_state(bucket_id, 'write')
+    if err then
+        return nil, err
+    end
+    assert(bucket)
+    if bucket.status ~= BPINNED then
+        assert(bucket.status == BACTIVE)
+        box.space._bucket:update({bucket_id}, {{'=', 2, BPINNED}})
+    end
+    return true
+end
+
+--
+-- Return a pinned bucket back into active state.
+-- @param bucket_id Bucket identifier to unpin.
+-- @retval true A bucket is unpinned.
+-- @retval nil, err A bucket can not be unpinned. @A err is the
+--         reason why.
+--
+local function bucket_unpin(bucket_id)
+    if type(bucket_id) ~= 'number' then
+        error('Usage: bucket_unpin(bucket_id)')
+    end
+    local bucket, err = bucket_check_state(bucket_id, 'write')
+    if err then
+        return nil, err
+    end
+    assert(bucket)
+    if bucket.status == BPINNED then
+        box.space._bucket:update({bucket_id}, {{'=', 2, BACTIVE}})
+    else
+        assert(bucket.status == BACTIVE)
+    end
+    return true
+end
+
+--
+-- Selects `opts.limit` buckets according to the `opts.filter_func()`.
+-- Returns the array of bucket ids.
+--
+local function bucket_id_select(key, opts)
+    assert(key and opts.limit and opts.filter_func)
+    local bucket_ids = {}
+    local _status = box.space._bucket.index.status
+    for _, bucket in _status:pairs(key) do
+        if opts.filter_func(bucket) then
+            table.insert(bucket_ids, bucket.id)
+            if #bucket_ids == opts.limit then
+                return bucket_ids
+            end
+        end
+    end
+    return bucket_ids
+end
+
 --------------------------------------------------------------------------------
 -- Schema
 --------------------------------------------------------------------------------
@@ -804,22 +1675,6 @@ local function schema_upgrade_replica()
     -- reject to upgrade in case of incompatible changes. Now
     -- there are too few versions so as such problems could
     -- appear.
-end
-
-local function this_is_master()
-    return M.is_master
-end
-
-local function check_is_master()
-    if this_is_master() then
-        return true, nil
-    end
-    local master_id = M.this_replicaset.master
-    if master_id then
-        master_id = master_id.id
-    end
-    return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
-                              M.this_replicaset.id, master_id)
 end
 
 local function on_master_disable(new_func, old_func)
@@ -1221,786 +2076,6 @@ local function sync(timeout)
         error('Usage: vshard.storage.sync([timeout: number])')
     end
     return wait_lsn(timeout or M.sync_timeout, 0.001)
-end
-
---------------------------------------------------------------------------------
--- Buckets
---------------------------------------------------------------------------------
-
---
--- Check that an action of a specified mode can be applied to a
--- bucket.
--- @param bucket_id Bucket identifier.
--- @param mode 'Read' or 'write' mode.
---
--- @retval bucket Bucket that can accept an action of a specified
---         mode.
--- @retval bucket and error object Bucket that can not accept the
---         action, and a reason why.
---
-local function bucket_check_state(bucket_id, mode)
-    assert(type(bucket_id) == 'number')
-    assert(mode == 'read' or mode == 'write')
-    local bucket = box.space._bucket:get({bucket_id})
-    local reason
-    if not bucket then
-        reason = 'Not found'
-    elseif mode == 'read' then
-        if bucket_status_is_readable(bucket.status) then
-            return bucket
-        end
-        reason = 'read is prohibited'
-    elseif not bucket_status_is_writable(bucket.status) then
-        if bucket_status_is_transfer_in_progress(bucket.status) then
-            return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
-                                         bucket_id, bucket.destination)
-        end
-        reason = 'write is prohibited'
-    else
-        local _, err = check_is_master()
-        return bucket, err
-    end
-    local dst = bucket and bucket.destination or M.route_map[bucket_id]
-    return bucket, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, reason,
-                                 dst)
-end
-
---
--- Take Read-Only reference on the bucket identified by
--- @a bucket_id. Under such reference a bucket can not be deleted
--- from the storage. Its transfer still can start, but can not
--- finish until ref == 0.
--- @param bucket_id Identifier of a bucket to ref.
---
--- @retval true The bucket is referenced ok.
--- @retval nil, error Can not ref the bucket. An error object is
---         returned via the second value.
---
-local function bucket_refro(bucket_id)
-    local ref = M.bucket_refs[bucket_id]
-    if not ref then
-        local _, err = bucket_check_state(bucket_id, 'read')
-        if err then
-            return nil, err
-        end
-        ref = bucket_ref_new()
-        ref.ro = 1
-        M.bucket_refs[bucket_id] = ref
-    elseif ref.ro_lock then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    else
-        ref.ro = ref.ro + 1
-    end
-    return true
-end
-
---
--- Remove one RO reference.
---
-local function bucket_unrefro(bucket_id)
-    local ref = M.bucket_refs[bucket_id]
-    local count = ref and ref.ro or 0
-    if count == 0 then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
-                                  "no ro refs on unref")
-    end
-    if count == 1 then
-        ref.ro = 0
-        if ref.ro_lock then
-            -- Garbage collector is waiting for the bucket if RO
-            -- is locked. Let it know it has one more bucket to
-            -- collect. It relies on generation, so its increment
-            -- is enough.
-            bucket_generation_increment()
-        end
-        return true
-    end
-    ref.ro = count - 1
-    return true
-end
-
---
--- Same as bucket_refro, but more strict - the bucket transfer
--- can not start until a bucket has such refs. And if the bucket
--- is already scheduled for transfer then it can not take new RW
--- refs. The rebalancer waits until all RW refs gone and starts
--- transfer.
---
-local function bucket_refrw(bucket_id)
-    local ref = M.bucket_refs[bucket_id]
-    if not ref then
-        local _, err = bucket_check_state(bucket_id, 'write')
-        if err then
-            return nil, err
-        end
-        ref = bucket_ref_new()
-        ref.rw = 1
-        M.bucket_refs[bucket_id] = ref
-    elseif ref.rw_lock then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
-    else
-        local _, err = check_is_master()
-        if err then
-            return nil, err
-        end
-        ref.rw = ref.rw + 1
-    end
-    return true
-end
-
---
--- Remove one RW reference.
---
-local function bucket_unrefrw(bucket_id)
-    local ref = M.bucket_refs[bucket_id]
-    if not ref or ref.rw == 0 then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_CORRUPTED, bucket_id,
-                                  "no rw refs on unref")
-    end
-    if ref.rw == 1 and ref.rw_lock then
-        ref.rw = 0
-        M.bucket_rw_lock_is_ready_cond:broadcast()
-    else
-        ref.rw = ref.rw - 1
-    end
-    return true
-end
-
---
--- Ensure that a bucket ref exists and can be referenced for an RW
--- request.
---
-local function bucket_refrw_touch(bucket_id)
-    local status, err = bucket_refrw(bucket_id)
-    if not status then
-        return nil, err
-    end
-    bucket_unrefrw(bucket_id)
-    return M.bucket_refs[bucket_id]
-end
-
---
--- Ref/unref shortcuts for an obscure mode.
---
-
-local function bucket_ref(bucket_id, mode)
-    if mode == 'read' then
-        return bucket_refro(bucket_id)
-    elseif mode == 'write' then
-        return bucket_refrw(bucket_id)
-    else
-        error('Unknown mode')
-    end
-end
-
-local function bucket_unref(bucket_id, mode)
-    if mode == 'read' then
-        return bucket_unrefro(bucket_id)
-    elseif mode == 'write' then
-        return bucket_unrefrw(bucket_id)
-    else
-        error('Unknown mode')
-    end
-end
-
---
--- Return information about bucket
---
-local function bucket_stat(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_stat(bucket_id)')
-    end
-    local stat, err = bucket_check_state(bucket_id, 'read')
-    if stat then
-        stat = stat:tomap()
-        if M.rebalancer_transfering_buckets[bucket_id] then
-            stat.is_transfering = true
-        end
-    end
-    return stat, err
-end
-
---
--- Create bucket range manually for initial bootstrap, tests or
--- emergency cases. Buckets id, id + 1, id + 2, ..., id + count
--- are inserted.
--- @param first_bucket_id Identifier of a first bucket in a range.
--- @param count Bucket range length to insert. By default is 1.
---
-local function bucket_force_create_impl(first_bucket_id, count)
-    local _bucket = box.space._bucket
-    box.begin()
-    local limit = consts.BUCKET_CHUNK_SIZE
-    for i = first_bucket_id, first_bucket_id + count - 1 do
-        -- Buckets are protected with on_replace trigger, which
-        -- prohibits the creation of the ACTIVE buckets from nowhere,
-        -- as this is done only for bootstrap and not during the normal
-        -- work of vshard. So, as we don't want to disable the protection
-        -- of the buckets for the whole replicaset for bootstrap, a bucket's
-        -- status must go the following way: none -> RECEIVING -> ACTIVE.
-        _bucket:insert({i, BRECEIVING})
-        _bucket:replace({i, BACTIVE})
-        limit = limit - 1
-        if limit == 0 then
-            box.commit()
-            box.begin()
-            limit = consts.BUCKET_CHUNK_SIZE
-        end
-    end
-    box.commit()
-end
-
-local function bucket_force_create(first_bucket_id, count)
-    if type(first_bucket_id) ~= 'number' or
-       (count ~= nil and (type(count) ~= 'number' or
-                          math.floor(count) ~= count)) then
-        error('Usage: bucket_force_create(first_bucket_id, count)')
-    end
-    count = count or 1
-    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
-    if not ok then
-        box.rollback()
-        return nil, err
-    end
-    return true
-end
-
---
--- Drop bucket manually for tests or emergency cases
---
-local function bucket_force_drop(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_force_drop(bucket_id)')
-    end
-
-    box.space._bucket:delete({bucket_id})
-    return true
-end
-
-
---
--- Receive bucket data. If the bucket is not presented here, it is
--- created as RECEIVING.
--- @param bucket_id Bucket to receive.
--- @param from Source ID (UUID or name).
--- @param data Bucket data in the format:
---        [{space_name, [space_tuples]}, ...].
--- @param opts Options. Now the only possible option is 'is_last'.
---        It is set to true when the data portion is last and the
---        bucket can be activated here.
---
--- @retval nil, error Error occurred.
--- @retval true The data is received ok.
---
-local function bucket_recv_xc(bucket_id, from, data, opts)
-    if not from or not M.replicasets[from] then
-        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, from)
-    end
-    local _bucket = box.space._bucket
-    local b = _bucket:get{bucket_id}
-    local recvg = BRECEIVING
-    local is_last = opts and opts.is_last
-    if not b then
-        if is_last then
-            local msg = 'last message is received, but the bucket does not '..
-                        'exist anymore'
-            return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
-                                      from)
-        end
-        if is_this_replicaset_locked() then
-            return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
-        end
-        if not bucket_receiving_quota_add(-1) then
-            return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
-        end
-        local timeout = opts and opts.timeout or
-                        consts.DEFAULT_BUCKET_SEND_TIMEOUT
-        local ok, err = lsched.move_start(timeout)
-        if not ok then
-            return nil, err
-        end
-        assert(lref.count == 0)
-        -- Move schedule is done only for the time of _bucket update.
-        -- The reason is that one bucket_send() calls bucket_recv() on the
-        -- remote storage multiple times. If the latter would schedule new moves
-        -- on each call, it could happen that the scheduler would block it in
-        -- favor of refs right in the middle of bucket_send().
-        -- It would lead to a deadlock, because refs won't be able to start -
-        -- the bucket won't be writable.
-        -- This way still provides fair scheduling, but does not have the
-        -- described issue.
-        ok, err = pcall(_bucket.insert, _bucket, {bucket_id, recvg, from})
-        lsched.move_end(1)
-        if not ok then
-            return nil, lerror.make(err)
-        end
-    elseif b.status ~= recvg then
-        local msg = string.format("bucket state is changed: was receiving, "..
-                                  "became %s", b.status)
-        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
-                                  from)
-    end
-    local bucket_generation = M.bucket_generation
-    local limit = consts.BUCKET_CHUNK_SIZE
-    local event_type = consts.BUCKET_EVENT.RECV
-    for _, row in ipairs(data) do
-        local space_name, space_data = row[1], row[2]
-        local space = box.space[space_name]
-        if space == nil then
-            local err = box.error.new(box.error.NO_SUCH_SPACE, space_name)
-            return nil, lerror.box(err)
-        end
-        box.begin()
-        M._on_bucket_event:run(event_type, bucket_id, {spaces = {space_name}})
-        for _, tuple in ipairs(space_data) do
-            local ok, err = pcall(space.insert, space, tuple)
-            if not ok then
-                box.rollback()
-                return nil, lerror.vshard(lerror.code.BUCKET_RECV_DATA_ERROR,
-                                          bucket_id, space.name,
-                                          box.tuple.new(tuple), err)
-            end
-            limit = limit - 1
-            if limit == 0 then
-                box.commit()
-                if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
-                    box.error(box.error.INJECTION,
-                              "the bucket is received partially")
-                end
-                bucket_generation =
-                    bucket_guard_xc(bucket_generation, bucket_id, recvg)
-                box.begin()
-                M._on_bucket_event:run(event_type, bucket_id,
-                                       {spaces = {space_name}})
-                limit = consts.BUCKET_CHUNK_SIZE
-            end
-        end
-        box.commit()
-        if M.errinj.ERRINJ_RECEIVE_PARTIALLY then
-            box.error(box.error.INJECTION, "the bucket is received partially")
-        end
-        bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
-    end
-    if is_last then
-        _bucket:replace({bucket_id, BACTIVE})
-        bucket_receiving_quota_add(1)
-        if M.errinj.ERRINJ_LONG_RECEIVE then
-            box.error(box.error.TIMEOUT)
-        end
-    end
-    return true
-end
-
---
--- Extract bucket_recv() args from an msgpack object. Only the tuples remain as
--- msgpack objects to preserve their original content which could otherwise be
--- altered by Lua.
---
-local function bucket_recv_parse_raw_args(raw)
-    local it = raw:iterator()
-    local arg_count = it:decode_array_header()
-    local bucket_id = it:decode()
-    local from = it:decode()
-    local data_size = it:decode_array_header()
-    local data = table.new(data_size, 0)
-    for i = 1, data_size do
-        it:decode_array_header()
-        local space_name = it:decode()
-        local space_size = it:decode_array_header()
-        local space_data = table.new(space_size, 0)
-        for j = 1, space_size do
-            space_data[j] = it:take()
-        end
-        data[i] = {space_name, space_data}
-    end
-    local opts = arg_count >= 4 and it:decode() or nil
-    return bucket_id, from, data, opts
-end
-
---
--- Exception safe version of bucket_recv_xc.
---
-local function bucket_recv(bucket_id, from, data, opts)
-    local status, ret, err
-    ret, err = check_is_master()
-    if not ret then
-        return nil, err
-    end
-    -- Can understand both msgpack and normal args. That is done because having
-    -- a separate bucket_recv_raw() function would mean the new vshard storages
-    -- wouldn't be able to send buckets to the old ones which have only
-    -- bucket_recv(). Or it would require some work on bucket_send() to try
-    -- bucket_recv_raw() and fallback to bucket_recv().
-    if util.feature.msgpack_object and lmsgpack.is_object(bucket_id) then
-        bucket_id, from, data, opts = bucket_recv_parse_raw_args(bucket_id)
-    end
-    while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
-        lfiber.sleep(0.01)
-    end
-    status, err = bucket_transfer_start(bucket_id)
-    if not status then
-        return nil, err
-    end
-    status, ret, err = pcall(bucket_recv_xc, bucket_id, from, data, opts)
-    bucket_transfer_end(bucket_id)
-    if status then
-        if ret then
-            return ret
-        end
-    else
-        err = ret
-    end
-    box.rollback()
-    return nil, err
-end
-
---
--- Test which of the passed bucket IDs can be safely garbage collected.
---
-local function bucket_test_gc(bids)
-    local refs = M.bucket_refs
-    local bids_not_ok = table.new(consts.BUCKET_CHUNK_SIZE, 0)
-    -- +1 because the expected max count is exactly the chunk size. No need to
-    -- yield on the last one. But if somewhy more is received, then do the
-    -- yields.
-    local limit = consts.BUCKET_CHUNK_SIZE + 1
-    local _bucket = box.space._bucket
-    local ref, bucket, status
-    for i, bid in ipairs(bids) do
-        if M.rebalancer_transfering_buckets[bid] then
-            goto not_ok_bid
-        end
-        bucket = _bucket:get(bid)
-        status = bucket ~= nil and bucket.status or BGARBAGE
-        if status ~= BGARBAGE and status ~= BSENT then
-            goto not_ok_bid
-        end
-        ref = refs[bid]
-        if ref == nil then
-            goto next_bid
-        end
-        if ref.ro ~= 0 then
-            goto not_ok_bid
-        end
-        assert(ref.rw == 0)
-        assert(ref.ro_lock)
-        goto next_bid
-    ::not_ok_bid::
-        table.insert(bids_not_ok, bid)
-    ::next_bid::
-        if i % limit == 0 then
-            fiber_yield()
-        end
-    end
-    return {bids_not_ok = bids_not_ok}
-end
-
---
--- Public wrapper for sharded spaces list getter.
---
-local function storage_sharded_spaces()
-    return table.deepcopy(lschema.find_sharded_spaces())
-end
-
-if M.errinj.ERRINJ_RELOAD then
-    error('Error injection: reload')
-end
-
---
--- Collect content of the readable bucket.
---
-local function bucket_collect(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_collect(bucket_id)')
-    end
-    local _, err = bucket_check_state(bucket_id, 'read')
-    if err then
-        return nil, err
-    end
-    local data = {}
-    local spaces = lschema.find_sharded_spaces()
-    local idx = lschema.shard_index
-    for _, space in pairs(spaces) do
-        assert(space.index[idx] ~= nil)
-        local space_data = space.index[idx]:select({bucket_id})
-        table.insert(data, {space.name, space_data})
-    end
-    return data
-end
-
--- Discovery used by routers. It returns limited number of
--- buckets to avoid stalls when _bucket is huge.
-local function buckets_discovery_extended(opts)
-    local limit = consts.BUCKET_CHUNK_SIZE
-    local buckets = table.new(limit, 0)
-    local active = BACTIVE
-    local pinned = BPINNED
-    local next_from
-    local errcnt = M.errinj.ERRINJ_DISCOVERY
-    if errcnt then
-        if errcnt > 0 then
-            M.errinj.ERRINJ_DISCOVERY = errcnt - 1
-            if errcnt % 2 == 0 then
-                box.error(box.error.INJECTION, 'discovery')
-            end
-        else
-            M.errinj.ERRINJ_DISCOVERY = false
-        end
-    end
-    -- No way to select by {status, id}, because there are two
-    -- statuses to select. A router would need to maintain a
-    -- separate iterator for each status it wants to get. This may
-    -- be implemented in future. But _bucket space anyway 99% of
-    -- time contains only active and pinned buckets. So there is
-    -- no big benefit in optimizing that. Perhaps a compound index
-    -- {status, id} could help too.
-    for _, bucket in box.space._bucket:pairs({opts.from},
-                                             {iterator = box.index.GE}) do
-        local status = bucket.status
-        if status == active or status == pinned then
-            table.insert(buckets, bucket.id)
-        end
-        limit = limit - 1
-        if limit == 0 then
-            next_from = bucket.id + 1
-            break
-        end
-    end
-    -- Buckets list can even be empty, if all buckets in the
-    -- scanned chunk are not active/pinned. But next_from still
-    -- should be returned. So as the router could request more.
-    return {buckets = buckets, next_from = next_from}
-end
-
---
--- Collect array of active bucket identifiers for discovery.
---
-local function buckets_discovery(opts)
-    if opts then
-        -- Private method. Is not documented intentionally.
-        return buckets_discovery_extended(opts)
-    end
-    local ret = {}
-    local status = box.space._bucket.index.status
-    for _, bucket in status:pairs({BACTIVE}) do
-        table.insert(ret, bucket.id)
-    end
-    for _, bucket in status:pairs({BPINNED}) do
-        table.insert(ret, bucket.id)
-    end
-    return ret
-end
-
---
--- Send a bucket to other replicaset.
---
-local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
-    local id = M.this_replicaset.id
-    local status, ok
-    local ref, err = bucket_refrw_touch(bucket_id)
-    if not ref then
-        return nil, err
-    end
-    ref.rw_lock = true
-    exception_guard.ref = ref
-    exception_guard.drop_rw_lock = true
-    if not opts or not opts.timeout then
-        opts = opts and table.copy(opts) or {}
-        opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
-    end
-    local timeout = opts.timeout
-    local deadline = fiber_clock() + timeout
-    while ref.rw ~= 0 do
-        timeout = deadline - fiber_clock()
-        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
-        if not ok then
-            return nil, err
-        end
-        lfiber.testcancel()
-    end
-
-    local _bucket = box.space._bucket
-    local bucket = _bucket:get({bucket_id})
-    if is_this_replicaset_locked() then
-        return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
-    end
-    if bucket.status == BPINNED then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
-    end
-    local replicaset = M.replicasets[destination]
-    if replicaset == nil then
-        return nil, lerror.vshard(lerror.code.NO_SUCH_REPLICASET, destination)
-    end
-    if destination == id then
-        return nil, lerror.vshard(lerror.code.MOVE_TO_SELF, bucket_id, id)
-    end
-    local data = {}
-    local spaces = lschema.find_sharded_spaces()
-    local limit = consts.BUCKET_CHUNK_SIZE
-    local idx = lschema.shard_index
-    local bucket_generation = M.bucket_generation
-    local sendg = BSENDING
-
-    ok, err = lsched.move_start(timeout)
-    if not ok then
-        return nil, err
-    end
-    assert(lref.count == 0)
-    -- Move is scheduled only for the time of _bucket update because:
-    --
-    -- * it is consistent with bucket_recv() (see its comments);
-    --
-    -- * gives the same effect as if move was in the scheduler for the whole
-    --   bucket_send() time, because refs won't be able to start anyway - the
-    --   bucket is not writable.
-    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
-    lsched.move_end(1)
-    if not ok then
-        return nil, lerror.make(err)
-    end
-
-    exception_guard.drop_rw_lock = false
-    for _, space in pairs(spaces) do
-        local index = space.index[idx]
-        local space_data = {}
-        for _, t in index:pairs({bucket_id}) do
-            table.insert(space_data, t)
-            limit = limit - 1
-            if limit == 0 then
-                table.insert(data, {space.name, space_data})
-                status, err = master_call(
-                    replicaset, 'vshard.storage.bucket_recv',
-                    {bucket_id, id, data}, opts)
-                bucket_generation =
-                    bucket_guard_xc(bucket_generation, bucket_id, sendg)
-                if not status then
-                    return status, lerror.make(err)
-                end
-                limit = consts.BUCKET_CHUNK_SIZE
-                data = {}
-                space_data = {}
-            end
-        end
-        table.insert(data, {space.name, space_data})
-    end
-    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, data}, opts)
-    if not status then
-        return status, lerror.make(err)
-    end
-    while M.errinj.ERRINJ_LAST_SEND_DELAY do
-        lfiber.sleep(0.01)
-    end
-    -- It is safe to turn bucket to SENT as it has already been fully
-    -- sent to the destination and can be garbade collected regardless of
-    -- receiving is_last message by the destination, as out there it will be
-    -- converted to ACTIVE status by recovery process. Moreover, it's preferable
-    -- to turn it into SENT at the source before turning to ACTIVE at the
-    -- destination, as it allows to avoid doubled buckets problem caused by
-    -- manual vshard.storage.bucket_send() call. The following example
-    -- illustrates how it can happen.
-    --
-    -- Storage S1 has bucket B, which is sent to S2, but then connection breaks.
-    -- The bucket is in the state S1 {B: sending-to-s2}, S2 {B: active}. Now if
-    -- the user will do vshard.storage.bucket_send(S2 -> S3), then we will get
-    -- this: S1 {B: sending-to-s2}, S2: {}, S3: {B: active}. Now when recovery
-    -- fiber will wakeup on S1, it will see that B is sending-to-s2 but S2
-    -- doesn't have the bucket. Recovery will then assume that S2 already
-    -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
-    -- S3 {B: active}, doubled buckets situation (gh-414)
-    _bucket:replace({bucket_id, BSENT, destination})
-    -- Always send at least two messages to prevent the case, when
-    -- a bucket is sent, hung in the network. Then it is recovered
-    -- to active on the source, and then the message arrives and
-    -- the same bucket is activated on the destination.
-    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, {}, {is_last = true}}, opts)
-    if not status then
-        return status, lerror.make(err)
-    end
-    return true
-end
-
---
--- Exception and recovery safe version of bucket_send_xc.
---
-local function bucket_send(bucket_id, destination, opts)
-    if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
-        error('Usage: bucket_send(bucket_id, destination)')
-    end
-    local status, ret, err
-    ret, err = check_is_master()
-    if not ret then
-        return nil, err
-    end
-    status, err = bucket_transfer_start(bucket_id)
-    if not status then
-        return nil, err
-    end
-    local exception_guard = {}
-    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
-                             exception_guard)
-    if exception_guard.drop_rw_lock then
-        exception_guard.ref.rw_lock = false
-    end
-    bucket_transfer_end(bucket_id)
-    if status then
-        if ret then
-            return ret
-        end
-    else
-        err = ret
-        ret = status
-    end
-    return ret, err
-end
-
---
--- Pin a bucket to a replicaset. Pinned bucket can not be sent
--- even if is breaks the cluster balance.
--- @param bucket_id Bucket identifier to pin.
--- @retval true A bucket is pinned.
--- @retval nil, err A bucket can not be pinned. @A err is the
---         reason why.
---
-local function bucket_pin(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_pin(bucket_id)')
-    end
-    local bucket, err = bucket_check_state(bucket_id, 'write')
-    if err then
-        return nil, err
-    end
-    assert(bucket)
-    if bucket.status ~= BPINNED then
-        assert(bucket.status == BACTIVE)
-        box.space._bucket:update({bucket_id}, {{'=', 2, BPINNED}})
-    end
-    return true
-end
-
---
--- Return a pinned bucket back into active state.
--- @param bucket_id Bucket identifier to unpin.
--- @retval true A bucket is unpinned.
--- @retval nil, err A bucket can not be unpinned. @A err is the
---         reason why.
---
-local function bucket_unpin(bucket_id)
-    if type(bucket_id) ~= 'number' then
-        error('Usage: bucket_unpin(bucket_id)')
-    end
-    local bucket, err = bucket_check_state(bucket_id, 'write')
-    if err then
-        return nil, err
-    end
-    assert(bucket)
-    if bucket.status == BPINNED then
-        box.space._bucket:update({bucket_id}, {{'=', 2, BACTIVE}})
-    else
-        assert(bucket.status == BACTIVE)
-    end
-    return true
 end
 
 --------------------------------------------------------------------------------
@@ -2504,24 +2579,84 @@ local function rebalancer_build_routes(replicasets)
 end
 
 --
+-- Build a map with routes defining to which replicaset which bucket ids
+-- should be sent. Is evaluated on the node, which is going to send buckets.
+--
+-- @param routes. It is a map of type: {dst_id = number }
+-- @retval routes_with_buckets. Map of type: {dst_id = {array of bucket ids}}
+--
+local function rebalancer_build_routes_with_buckets(routes)
+    local new_routes = {}
+    local picked_buckets = {}
+    local key = {BACTIVE}
+    for rs_id, n in pairs(routes) do
+        -- Phase 1: select maxumum number of buckets without rw refs.
+        local bucket_ids = bucket_id_select(key, {limit = n, filter_func =
+            function(bucket)
+                local bucket_id = bucket.id
+                -- Skip transferring buckets, since it may be already locked
+                -- by a manual bucket_send() in another fiber.
+                if M.rebalancer_transfering_buckets[bucket_id] then
+                    return false
+                end
+                -- Skip buckets, which has already being picked.
+                if picked_buckets[bucket_id] then
+                    return false
+                end
+                -- Skip buckets, which has RW refs.
+                local ref = bucket_refrw_touch(bucket_id)
+                if not ref then
+                    return false
+                end
+                return ref.rw == 0
+            end
+        })
+        for _, bid in ipairs(bucket_ids) do
+            assert(not picked_buckets[bid])
+            picked_buckets[bid] = true
+        end
+        if #bucket_ids < n then
+            -- Phase 2: Select the remainings from the bucket with refs.
+            local ref_bucket_ids = bucket_id_select(key, {limit =
+                n - #bucket_ids, filter_func = function(bucket)
+                    local bucket_id = bucket.id
+                    return not picked_buckets[bucket_id] and
+                        not M.rebalancer_transfering_buckets[bucket_id]
+                end
+            })
+            for _, bid in ipairs(ref_bucket_ids) do
+                assert(not picked_buckets[bid])
+                picked_buckets[bid] = true
+            end
+            util.table_extend(bucket_ids, ref_bucket_ids)
+        end
+        assert(#bucket_ids <= n)
+        if #bucket_ids ~= n then
+            return nil, lerror.make('Not enough buckets')
+        end
+        new_routes[rs_id] = bucket_ids
+    end
+    return new_routes
+end
+
+--
 -- Dispenser is a container of routes received from the
 -- rebalancer. Its task is to hand out the routes to worker fibers
 -- in a round-robin manner so as any two sequential results are
 -- different. It allows to spread dispensing evenly over the
 -- receiver nodes.
 --
-local function route_dispenser_create(routes)
+local function route_dispenser_create(routes_with_bucket_ids)
     local rlist = rlist.new()
     local map = {}
-    for id, bucket_count in pairs(routes) do
+    for id, bucket_ids in pairs(routes_with_bucket_ids) do
         local new = {
             -- Receiver's ID.
             id = id,
-            -- Rest of buckets to send. The receiver will be
-            -- dispensed this number of times.
-            bucket_count = bucket_count,
+            -- The array of bucket_ids, which are waiting to be sent.
+            bucket_ids = bucket_ids,
             -- Constant value to be able to track progress.
-            need_to_send = bucket_count,
+            need_to_send = #bucket_ids,
             -- Number of *successfully* sent buckets.
             progress = 0,
             -- If a user set too long max number of receiving
@@ -2558,12 +2693,11 @@ end
 -- receives a throttle error. This is the only error that can be
 -- tolerated.
 --
-local function route_dispenser_put(dispenser, id)
+local function route_dispenser_put(dispenser, id, bucket_id)
     local dst = dispenser.map[id]
     if dst then
-        local bucket_count = dst.bucket_count + 1
-        dst.bucket_count = bucket_count
-        if bucket_count == 1 then
+        table.insert(dst.bucket_ids, bucket_id)
+        if #dst.bucket_ids == 1 then
             dispenser.rlist:add_tail(dst)
         end
     end
@@ -2580,7 +2714,9 @@ local function route_dispenser_skip(dispenser, id)
     local map = dispenser.map
     local dst = map[id]
     if dst then
-        map[id] = nil
+        -- During skip it's enough to drop from rlist only, we cannot drop
+        -- the entry from map, which is used later to clean the bucket after
+        -- unsuccessful sends.
         dispenser.rlist:remove(dst)
     end
 end
@@ -2622,13 +2758,13 @@ local function route_dispenser_pop(dispenser)
     local rlist = dispenser.rlist
     local dst = rlist.first
     if dst then
-        local bucket_count = dst.bucket_count - 1
-        dst.bucket_count = bucket_count
+        local bid = table.remove(dst.bucket_ids)
+        assert(bid)
         rlist:remove(dst)
-        if bucket_count > 0 then
+        if #dst.bucket_ids > 0 then
             rlist:add_tail(dst)
         end
-        return dst.id
+        return dst.id, bid
     end
     return nil
 end
@@ -2642,30 +2778,13 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
-    local active_key = {BACTIVE}
-    local id = route_dispenser_pop(dispenser)
+    local id, bucket_id = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
-    local bucket_id, is_found
     while id do
-        is_found = false
-        -- Can't just take a first active bucket. It may be
-        -- already locked by a manual bucket_send in another
-        -- fiber.
-        for _, bucket in _status:pairs(active_key) do
-            bucket_id = bucket.id
-            if not M.rebalancer_transfering_buckets[bucket_id] then
-                is_found = true
-                break
-            end
-        end
-        if not is_found then
-            log.error('Can not find active buckets')
-            break
-        end
-        local ret, err = bucket_send(bucket_id, id, opts)
+        local ret, err = bucket_send_perform(bucket_id, id, opts)
         if ret then
+            bucket_send_end(bucket_id)
             worker_throttle_count = 0
             local finished, total = route_dispenser_sent(dispenser, id)
             if finished then
@@ -2673,7 +2792,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             end
             goto continue
         end
-        route_dispenser_put(dispenser, id)
+        route_dispenser_put(dispenser, id, bucket_id)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
@@ -2699,7 +2818,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        id = route_dispenser_pop(dispenser)
+        id, bucket_id = route_dispenser_pop(dispenser)
     end
     quit_cond:broadcast()
 end
@@ -2715,7 +2834,6 @@ local function rebalancer_service_apply_routes_f(service, routes)
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
              yaml_encode(routes))
-    local dispenser = route_dispenser_create(routes)
     local _status = box.space._bucket.index.status
     assert(_status:count({BSENDING}) == 0)
     assert(_status:count({BRECEIVING}) == 0)
@@ -2726,6 +2844,20 @@ local function rebalancer_service_apply_routes_f(service, routes)
     M.rebalancer_applier_fiber = lfiber.self()
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
+    local new_routes, err, ok
+    new_routes, err = rebalancer_build_routes_with_buckets(routes)
+    if not new_routes then
+        log.error('Rebalancer applier could not pick buckets for send: %s', err)
+        return
+    end
+    ok, err = bucket_batch_send_prepare(new_routes)
+    if not ok then
+        -- It should not normally happen, since we select buckets, which can
+        -- be prepared, but be ready for anything.
+        log.error('Failed to prepare buckets for send: %s', err)
+        return
+    end
+    local dispenser = route_dispenser_create(new_routes)
     for i = 1, worker_count do
         local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
         f:set_joinable(true)
@@ -2758,6 +2890,11 @@ local function rebalancer_service_apply_routes_f(service, routes)
                  'buckets. Perhaps you need to increase '..
                  '"rebalancer_max_receiving" or decrease '..
                  '"rebalancer_worker_count"', table.concat(throttled, ', '))
+    end
+    for _, rs in pairs(dispenser.map) do
+        for _, bid in ipairs(rs.bucket_ids) do
+            bucket_send_end(bid)
+        end
     end
     service:set_activity('idling')
 end

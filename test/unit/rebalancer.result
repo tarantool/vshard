@@ -1074,12 +1074,19 @@ build_routes(replicasets)
 -- the latter is a dispenser. It is a structure which hands out
 -- destination UUIDs in a round-robin manner to worker fibers.
 --
-d = dispenser.create({uuid = 15})
+routes = {uuid = {}}
+---
+...
+for i = 1, 15 do table.insert(routes.uuid, i) end
+---
+...
+d = dispenser.create(routes)
 ---
 ...
 dispenser.pop(d)
 ---
 - uuid
+- 15
 ...
 for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end
 ---
@@ -1106,42 +1113,52 @@ d
     count: 0
   map:
     uuid:
-      bucket_count: 0
       id: uuid
       progress: 0
       is_throttle_warned: false
       need_to_send: 15
+      bucket_ids: []
 ...
-d = dispenser.create({uuid1 = 5, uuid2 = 5})
+d = dispenser.create({uuid1 = {1, 2, 3, 4, 5}, uuid2 = {6, 7, 8, 9, 10}})
 ---
 ...
-u = dispenser.pop(d)
+u, b  = dispenser.pop(d)
 ---
 ...
-u, d
+u, b, d
 ---
 - uuid2
+- 10
 - rlist:
     count: 2
     last: &0
-      bucket_count: 4
       prev: &1
-        bucket_count: 5
         next: *0
         id: uuid1
         progress: 0
         is_throttle_warned: false
         need_to_send: 5
+        bucket_ids:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
       id: uuid2
       progress: 0
       is_throttle_warned: false
       need_to_send: 5
+      bucket_ids:
+      - 6
+      - 7
+      - 8
+      - 9
     first: *1
   map:
     uuid1: *1
     uuid2: *0
 ...
-dispenser.put(d, u)
+dispenser.put(d, u, b)
 ---
 ...
 d
@@ -1149,18 +1166,28 @@ d
 - rlist:
     count: 2
     last: &0
-      bucket_count: 5
       prev: &1
-        bucket_count: 5
         next: *0
         id: uuid1
         progress: 0
         is_throttle_warned: false
         need_to_send: 5
+        bucket_ids:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
       id: uuid2
       progress: 0
       is_throttle_warned: false
       need_to_send: 5
+      bucket_ids:
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
     first: *1
   map:
     uuid1: *1
@@ -1175,18 +1202,28 @@ d
 - rlist:
     count: 2
     last: &0
-      bucket_count: 5
       prev: &1
-        bucket_count: 5
         next: *0
         id: uuid1
         progress: 0
         is_throttle_warned: false
         need_to_send: 5
+        bucket_ids:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
       id: uuid2
       progress: 0
       is_throttle_warned: true
       need_to_send: 5
+      bucket_ids:
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
     first: *1
   map:
     uuid1: *1
@@ -1215,7 +1252,7 @@ end
 ...
 -- Double skip should be ok. It happens, if there were several
 -- workers on one destination, and all of them received an error.
-d = dispenser.create({uuid1 = 1})
+d = dispenser.create({uuid1 = {1}})
 ---
 ...
 dispenser.skip(d, 'uuid1')
