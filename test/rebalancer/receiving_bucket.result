@@ -308,7 +308,7 @@ while f1:status() ~= 'suspended' do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
 ---
 - 1:
-    status: active
+    status: readonly
     rw_lock: true
     id: 1
     ref_rw: 1

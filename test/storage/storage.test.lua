@@ -162,8 +162,10 @@ assert(box.space.test:get{9} == nil and box.space.test:get{10} == nil)
 
 -- Transfer to unknown replicaset.
 vshard.storage.bucket_send(1, 'unknown uuid')
+util.bucket_recovery_wait()
 -- gh-217: transfer to self.
 vshard.storage.bucket_send(1, util.replicasets[1])
+util.bucket_recovery_wait()
 
 -- Successful transfer.
 vshard.storage.bucket_send(1, util.replicasets[2])
