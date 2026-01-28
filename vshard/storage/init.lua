@@ -863,19 +863,6 @@ local function bucket_unrefrw(bucket_id)
 end
 
 --
--- Ensure that a bucket ref exists and can be referenced for an RW
--- request.
---
-local function bucket_refrw_touch(bucket_id)
-    local status, err = bucket_refrw(bucket_id)
-    if not status then
-        return nil, err
-    end
-    bucket_unrefrw(bucket_id)
-    return M.bucket_refs[bucket_id]
-end
-
---
 -- Ref/unref shortcuts for an obscure mode.
 --
 
@@ -915,7 +902,7 @@ local function bucket_transfer_end(bid)
 end
 
 local function bucket_send_prepare(bid)
-    local ok, err, bucket, ref
+    local ok, err, bucket
     local _bucket = box.space._bucket
     -- Add bucket to the `M.rebalancer_transfering_buckets`. Nothing to do in
     -- case of error.
@@ -923,13 +910,11 @@ local function bucket_send_prepare(bid)
     if not ok then
         return nil, err
     end
-    -- Set `rw_lock` in order to forbid new RW refs. In case of error drop from
-    -- transferring.
-    ref, err = bucket_refrw_touch(bid)
-    if not ref then
+    -- Check, whether the bucket is writable and the node is master.
+    bucket, err = bucket_check_state(bid, 'write')
+    if err then
         goto error
     end
-    bucket = box.space._bucket:get({bid})
     assert(bucket)
     if bucket.status == BPINNED then
         err = lerror.vshard(lerror.code.BUCKET_IS_PINNED, bid)
@@ -1373,10 +1358,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
     local timeout = opts.timeout
     local deadline = fiber_clock() + timeout
     local ref = M.bucket_refs[bucket_id]
-    -- The bucket_send_xc should be called after bucket_transfer_start, which
-    -- creates the ref if it's missing, so it must always present at that point.
-    assert(ref ~= nil)
-    while ref.rw ~= 0 do
+    while ref and ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
         ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
         if not ok then
@@ -2621,11 +2603,8 @@ local function rebalancer_build_routes_with_buckets(routes)
                     return false
                 end
                 -- Skip buckets, which has RW refs.
-                local ref = bucket_refrw_touch(bucket_id)
-                if not ref then
-                    return false
-                end
-                return ref.rw == 0
+                local ref = M.bucket_refs[bucket_id]
+                return not ref or ref.rw == 0
             end
         })
         for _, bid in ipairs(bucket_ids) do
