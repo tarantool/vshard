@@ -178,6 +178,16 @@ local function conn_vconnect_start(conn)
     vconn.future_cond:broadcast()
 end
 
+local function conn_vconnect_reset(conn)
+    -- Future object must be removed from the connection, otherwise
+    -- the connection cannot be garbage collected (gh-517).
+    -- Moreover, future object must be updated. Old result is irrelevant.
+    if conn.vconnect and conn.vconnect.future then
+        conn.vconnect.future:discard()
+        conn.vconnect.future = nil
+    end
+end
+
 --
 -- Check, that future is ready, and its result is expected.
 -- The function doesn't yield.
@@ -309,13 +319,7 @@ local function netbox_on_disconnect(conn)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
     replica.down_ts = fiber_clock()
-    -- Future object must be removed from the connection, otherwise
-    -- the connection cannot be garbage collected (gh-517).
-    -- Moreover, future object must be updated. Old result is irrelevant.
-    if conn.vconnect and conn.vconnect.future then
-        conn.vconnect.future:discard()
-        conn.vconnect.future = nil
-    end
+    conn_vconnect_reset(conn)
 end
 
 --
