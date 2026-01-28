@@ -387,3 +387,42 @@ test_group.test_send_more_buckets_than_has = function(g)
         ivshard.storage.bucket_unrefrw(bid)
     end, {bid})
 end
+
+test_group.test_readonly_bucket = function(g)
+    --
+    -- Test, that if bucket send ends unsuccessfully, recovery makes it
+    -- active again after some time.
+    --
+    g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        ilt.assert(ivshard.storage.bucket_refrw(bid))
+
+        -- Unsuccessful send.
+        local _, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 0.01})
+        ilt.assert(iverror.is_timeout(err))
+        local bucket = ivshard.storage.bucket_stat(bid)
+        ilt.assert_not(bucket.is_transfering)
+        ilt.assert_equals(bucket.status, ivconst.BUCKET.READONLY)
+        -- Recovery restores the bucket to ACTIVE.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.recovery_wakeup()
+            local b = ivshard.storage.bucket_stat(bid)
+            ilt.assert_equals(b.status, ivconst.BUCKET.ACTIVE)
+        end)
+
+        ilt.assert(ivshard.storage.bucket_unrefrw(bid))
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    --
+    -- Test, that it's impossible to prepare PINNED bucket for sending.
+    --
+    g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        ilt.assert(ivshard.storage.bucket_pin(bid))
+
+        local _, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 0.1})
+        ilt.assert_equals(err.code, iverror.code.BUCKET_IS_PINNED)
+
+        ilt.assert(ivshard.storage.bucket_unpin(bid))
+    end, {g.replica_2_a:replicaset_uuid()})
+end

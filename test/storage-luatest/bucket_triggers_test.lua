@@ -493,7 +493,7 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
         _bucket:replace{bid, ivconst.BUCKET.ACTIVE}
         internal.is_bucket_protected = true
         -- To be sure that the loops above didn't somehow skip everything.
-        ilt.assert_equals(count, 42, 'transition count')
+        ilt.assert_equals(count, 56, 'transition count')
         _G.bucket_gc_continue()
     end)
     rep_b:wait_vclock_of(rep_a)

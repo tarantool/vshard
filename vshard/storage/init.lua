@@ -44,6 +44,7 @@ local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
 local BACTIVE = consts.BUCKET.ACTIVE
 local BPINNED = consts.BUCKET.PINNED
+local BREADONLY = consts.BUCKET.READONLY
 local BSENDING = consts.BUCKET.SENDING
 local BSENT = consts.BUCKET.SENT
 local BRECEIVING = consts.BUCKET.RECEIVING
@@ -430,13 +431,14 @@ end
 --
 local function bucket_status_is_readable(status)
     return bucket_status_is_writable(status) or status == BSENDING
+        or status == BREADONLY
 end
 
 --
 -- Check if a bucket is sending or receiving.
 --
 local function bucket_status_is_transfer_in_progress(status)
-    return status == BSENDING or status == BRECEIVING
+    return status == BSENDING or status == BRECEIVING or status == BREADONLY
 end
 
 --
@@ -481,8 +483,13 @@ end
 local bucket_state_edges = {
     -- From nothing. Have to cast nil to box.NULL explicitly then.
     [box.NULL] = {BRECEIVING},
-    [BACTIVE] = {BPINNED, BSENDING},
+    -- In the current code ACTIVE cannot become SENDING, only the transition
+    -- ACTIVE -> READONLY -> SENDING is allowed. However, it must be keeped,
+    -- since if master works on top of an old version, it may make ACTIVE
+    -- bucket SENDING, and the replication should not be broken in such case.
+    [BACTIVE] = {BPINNED, BSENDING, BREADONLY},
     [BPINNED] = {BACTIVE},
+    [BREADONLY] = {BACTIVE, BSENDING},
     [BSENDING] = {BACTIVE, BSENT},
     [BSENT] = {BGARBAGE},
     [BRECEIVING] = {BGARBAGE, BACTIVE},
@@ -908,7 +915,8 @@ local function bucket_transfer_end(bid)
 end
 
 local function bucket_send_prepare(bid)
-    local ok, ref, err
+    local ok, err, bucket, ref
+    local _bucket = box.space._bucket
     -- Add bucket to the `M.rebalancer_transfering_buckets`. Nothing to do in
     -- case of error.
     ok, err = bucket_transfer_start(bid)
@@ -921,7 +929,17 @@ local function bucket_send_prepare(bid)
     if not ref then
         goto error
     end
-    ref.rw_lock = true
+    bucket = box.space._bucket:get({bid})
+    assert(bucket)
+    if bucket.status == BPINNED then
+        err = lerror.vshard(lerror.code.BUCKET_IS_PINNED, bid)
+        goto error
+    end
+    -- Set `rw_lock` by making bucket READONLY in order to forbid new RW refs.
+    ok, err = pcall(_bucket.replace, _bucket, {bid, BREADONLY})
+    if not ok then
+        goto error
+    end
     do return true end
 
 ::error::
@@ -930,14 +948,6 @@ local function bucket_send_prepare(bid)
 end
 
 local function bucket_send_end(bid)
-    local ref = M.bucket_refs[bid]
-    local bucket = box.space._bucket:get{bid}
-    if ref ~= nil and bucket ~= nil then
-        -- Reset the rw lock, if needed. The ref may be missing after
-        -- manual bucket_refs cleaning or `_bucket` space truncate, in that
-        -- case we have nothing to do.
-        ref.rw_lock = not bucket_status_is_writable(bucket.status)
-    end
     bucket_transfer_end(bid)
 end
 
@@ -1380,8 +1390,11 @@ local function bucket_send_xc(bucket_id, destination, opts)
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
-    if bucket.status == BPINNED then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
+    if bucket.status ~= BREADONLY then
+        -- Better safe, than sorry. Should not happen.
+        local reason = string.format('bucket is in %s state', bucket.status)
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id,
+                                  reason, destination)
     end
     local replicaset = M.replicasets[destination]
     if replicaset == nil then
@@ -1808,40 +1821,41 @@ local function recovery_step_by_type(type, limiter)
         assert(bucket_status_is_transfer_in_progress(bucket.status))
         local peer_id = bucket.destination
         local destination = M.replicasets[peer_id]
-        if not destination then
-            -- No replicaset master for a bucket. Wait until it
-            -- appears.
+        local remote_bucket
+        if destination then
+            local err
+            lfiber.testcancel()
+            remote_bucket, err = master_call(
+                destination, 'vshard.storage._call',
+                {'recovery_bucket_stat', bucket_id},
+                {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
+            -- Check if it is not a bucket error, and this result can
+            -- not be used to recovery anything. Try later.
+            if remote_bucket == nil and err ~= nil then
+                if is_step_empty then
+                    if err == nil then
+                        err = 'unknown'
+                    end
+                    log.info(start_format, type)
+                    limiter:log_error(err, 'Error during recovery of bucket ' ..
+                        '%s on replicaset %s: %s', bucket_id, peer_id, err)
+                    is_step_empty = false
+                end
+                goto continue
+            end
+            -- Do nothing until the bucket on both sides stopped
+            -- transferring.
+            if remote_bucket and remote_bucket.is_transfering then
+                goto continue
+            end
+        elseif type ~= BREADONLY then
+            -- No replicaset master for a bucket. Wait until it appears.
             if is_step_empty then
                 log.info(start_format, type)
                 log.warn('Can not find for bucket %s its peer %s', bucket_id,
                          peer_id)
                 is_step_empty = false
             end
-            goto continue
-        end
-        lfiber.testcancel()
-        local remote_bucket, err = master_call(
-            destination, 'vshard.storage._call',
-            {'recovery_bucket_stat', bucket_id},
-            {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
-        -- Check if it is not a bucket error, and this result can
-        -- not be used to recovery anything. Try later.
-        if remote_bucket == nil and err ~= nil then
-            if is_step_empty then
-                if err == nil then
-                    err = 'unknown'
-                end
-                log.info(start_format, type)
-                limiter:log_error(err,
-                    'Error during recovery of bucket %s on replicaset %s: %s',
-                    bucket_id, peer_id, err)
-                is_step_empty = false
-            end
-            goto continue
-        end
-        -- Do nothing until the bucket on both sides stopped
-        -- transferring.
-        if remote_bucket and remote_bucket.is_transfering then
             goto continue
         end
         -- It is possible that during lookup a new request arrived
@@ -1911,15 +1925,18 @@ local function recovery_service_f(service, limiter)
             goto sleep
         end
 
-        service:set_activity('recovering sending')
-        lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BSENDING, limiter)
-        if not ok then
-            is_all_recovered = false
-            limiter:log_error(total, service:set_status_error(
-                       'Error during sending buckets recovery: %s', total))
-        elseif total ~= recovered then
-            is_all_recovered = false
+        for _, status in pairs({BREADONLY, BSENDING}) do
+            lfiber.testcancel()
+            service:set_activity(string.format('recovering %s', status))
+            ok, total, recovered = pcall(recovery_step_by_type, status, limiter)
+            if not ok then
+                is_all_recovered = false
+                limiter:log_error(total, service:set_status_error(
+                           'Error during %s buckets recovery: %s',
+                           status, total))
+            elseif total ~= recovered then
+                is_all_recovered = false
+            end
         end
 
         service:set_activity('recovering receiving')
@@ -3095,7 +3112,7 @@ local function rebalancer_request_state()
     local _bucket = box.space._bucket
     local status_index = _bucket.index.status
     local repl_id = M.this_replica.id
-    for _, status in pairs({BSENDING, BRECEIVING, BGARBAGE}) do
+    for _, status in pairs({BSENDING, BRECEIVING, BGARBAGE, BREADONLY}) do
         if #status_index:select({status}, {limit = 1}) > 0 then
             local err = string.format('Replica %s has %s buckets during ' ..
                                       'rebalancing', repl_id, status)

@@ -41,11 +41,13 @@ lref.add(rid, sid, big_timeout)
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
                                      {timeout = timeout})
 assert(not ok and err.message)
+util.bucket_recovery_wait()
 lref.use(rid, sid)
 -- Still fails - use only makes ref undead until it is deleted explicitly.
 ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    \
                                      {timeout = timeout})
 assert(not ok and err.message)
+util.bucket_recovery_wait()
 
 _ = test_run:switch('storage_2_a')
 -- Receive (from another replicaset) also fails.

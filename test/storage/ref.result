@@ -98,6 +98,9 @@ assert(not ok and err.message)
  | ---
  | - Timeout exceeded
  | ...
+util.bucket_recovery_wait()
+ | ---
+ | ...
 lref.use(rid, sid)
  | ---
  | - true
@@ -110,6 +113,9 @@ ok, err = vshard.storage.bucket_send(1, util.replicasets[2],                    
 assert(not ok and err.message)
  | ---
  | - Timeout exceeded
+ | ...
+util.bucket_recovery_wait()
+ | ---
  | ...
 
 _ = test_run:switch('storage_2_a')
