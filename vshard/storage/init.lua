@@ -936,8 +936,8 @@ local function bucket_send_end(bid)
     bucket_transfer_end(bid)
 end
 
-local function bucket_batch_send_prepare(routes)
-    local ok, err
+local function bucket_batch_send_prepare_and_wait_no_rw_refs(routes, timeout)
+    local ok, err, deadline
     local prepared_buckets = {}
     for _, bids in pairs(routes) do
         for _, bid in ipairs(bids) do
@@ -948,7 +948,22 @@ local function bucket_batch_send_prepare(routes)
             table.insert(prepared_buckets, bid)
         end
     end
-    do return true end
+    deadline = fiber_clock() + timeout
+    for _, bids in pairs(routes) do
+        for _, bid in ipairs(bids) do
+            local ref = M.bucket_refs[bid]
+            while ref and ref.rw ~= 0 do
+                timeout = deadline - fiber_clock()
+                ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond,
+                                          timeout)
+                if not ok then
+                    return nil, err
+                end
+                lfiber.testcancel()
+            end
+        end
+    end
+    do return timeout end
 
 ::error::
     for _, bid in ipairs(prepared_buckets) do
@@ -1351,21 +1366,8 @@ end
 local function bucket_send_xc(bucket_id, destination, opts)
     local id = M.this_replicaset.id
     local status, ok, err
-    if not opts or not opts.timeout then
-        opts = opts and table.copy(opts) or {}
-        opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
-    end
+    assert(opts and opts.timeout)
     local timeout = opts.timeout
-    local deadline = fiber_clock() + timeout
-    local ref = M.bucket_refs[bucket_id]
-    while ref and ref.rw ~= 0 do
-        timeout = deadline - fiber_clock()
-        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
-        if not ok then
-            return nil, err
-        end
-        lfiber.testcancel()
-    end
 
     local _bucket = box.space._bucket
     local bucket = _bucket:get({bucket_id})
@@ -1495,11 +1497,15 @@ local function bucket_send(bucket_id, destination, opts)
     if type(bucket_id) ~= 'number' or type(destination) ~= 'string' then
         error('Usage: bucket_send(bucket_id, destination)')
     end
-    local ret, err = bucket_send_prepare(bucket_id, opts and opts.timeout)
+    local ret, err
+    local opts_copy = opts and table.copy(opts) or {}
+    opts_copy.timeout = opts_copy.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    opts_copy.timeout, err = bucket_batch_send_prepare_and_wait_no_rw_refs(
+        {[destination] = {bucket_id}}, opts_copy.timeout)
     if err then
-        return ret, err
+        return nil, err
     end
-    ret, err = bucket_send_perform(bucket_id, destination, opts)
+    ret, err = bucket_send_perform(bucket_id, destination, opts_copy)
     bucket_send_end(bucket_id)
     if err then
         return ret, err
@@ -2772,9 +2778,9 @@ end
 -- no more buckets are stored, and others took a nap because of
 -- throttling.
 --
-local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
+local function rebalancer_worker_f(worker_id, dispenser, quit_cond, timeout)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
+    local opts = {timeout = timeout}
     local id, bucket_id = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
     while id do
@@ -2840,14 +2846,16 @@ local function rebalancer_service_apply_routes_f(service, routes)
     M.rebalancer_applier_fiber = lfiber.self()
     local quit_cond = lfiber.cond()
     local workers = table.new(worker_count, 0)
-    local new_routes, err, ok
+    local new_routes, err
     new_routes, err = rebalancer_build_routes_with_buckets(routes)
     if not new_routes then
         log.error('Rebalancer applier could not pick buckets for send: %s', err)
         return
     end
-    ok, err = bucket_batch_send_prepare(new_routes)
-    if not ok then
+    local timeout = consts.REBALANCER_CHUNK_TIMEOUT
+    timeout, err = bucket_batch_send_prepare_and_wait_no_rw_refs(
+        new_routes, timeout)
+    if not timeout then
         -- It should not normally happen, since we select buckets, which can
         -- be prepared, but be ready for anything.
         log.error('Failed to prepare buckets for send: %s', err)
@@ -2855,7 +2863,8 @@ local function rebalancer_service_apply_routes_f(service, routes)
     end
     local dispenser = route_dispenser_create(new_routes)
     for i = 1, worker_count do
-        local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond)
+        local f = lfiber.new(rebalancer_worker_f, i, dispenser, quit_cond,
+                             timeout)
         f:set_joinable(true)
         workers[i] = f
     end
