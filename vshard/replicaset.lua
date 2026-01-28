@@ -178,6 +178,51 @@ local function conn_vconnect_start(conn)
     vconn.future_cond:broadcast()
 end
 
+local function conn_vconnect_reset(conn)
+    -- Future object must be removed from the connection, otherwise
+    -- the connection cannot be garbage collected (gh-517).
+    -- Moreover, future object must be updated. Old result is irrelevant.
+    if conn.vconnect and conn.vconnect.future then
+        conn.vconnect.future:discard()
+        conn.vconnect.future = nil
+    end
+end
+
+local function conn_vconnect_is_retryable_error(error)
+    -- ClientError is sent for all errors by old Tarantool versions which
+    -- didn't keep error type. New versions preserve the original error type.
+    if error.type == 'ClientError' or error.type == 'AccessDeniedError' then
+        if error.code == box.error.ACCESS_DENIED then
+            return error.message:startswith("Execute access to function " ..
+                                            "'vshard.")
+        end
+        if error.code == box.error.NO_SUCH_PROC then
+            return error.message:startswith("Procedure 'vshard.")
+        end
+    end
+
+    if error.type == 'LuajitError' then
+        -- The vshard error returned from storage_api_call_unsafe is wrapped
+        -- into error(...) internal lua function. As a result the original
+        -- error is hiding into error.message. We need to extract the message
+        -- and construct the original error. It is important only in case of
+        -- disabled storage.
+        return lerror.from_string(error.message).code ==
+            lerror.code.STORAGE_IS_DISABLED
+    end
+    return false
+end
+
+local function conn_vconnect_try_to_restart(conn, res, err)
+    if not res and err and conn_vconnect_is_retryable_error(err) then
+        conn_vconnect_reset(conn)
+        conn_vconnect_set(conn)
+        conn_vconnect_start(conn)
+        return true
+    end
+    return false
+end
+
 --
 -- Check, that future is ready, and its result is expected.
 -- The function doesn't yield.
@@ -218,10 +263,14 @@ end
 
 local function conn_vconnect_check_or_close(conn)
     local ok, err = conn_vconnect_check(conn)
-    -- Close the connection, if error happened, but it is not
-    -- VSHANDSHAKE_NOT_COMPLETE.
+    if conn_vconnect_try_to_restart(conn, ok, err) then
+        return ok, err
+    end
+    -- Close the connection, if error happened, but it is not retryable
+    -- and not VSHANDSHAKE_NOT_COMPLETE.
     if not ok and err and not (err.type == 'ShardingError' and
        err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+        log.warn('Closing the connection because of %s (check_or_close)', err)
         conn:close()
     end
     return ok, err
@@ -260,7 +309,11 @@ end
 
 local function conn_vconnect_wait_or_close(conn, timeout)
     local ok, err = conn_vconnect_wait(conn, timeout)
+    if conn_vconnect_try_to_restart(conn, ok, err) then
+        return ok, err
+    end
     if not ok and not lerror.is_timeout(err) then
+        log.warn('Closing the connection because of %s (wait_or_close)', err)
         conn:close()
     end
     return ok, err
@@ -309,13 +362,7 @@ local function netbox_on_disconnect(conn)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
     replica.down_ts = fiber_clock()
-    -- Future object must be removed from the connection, otherwise
-    -- the connection cannot be garbage collected (gh-517).
-    -- Moreover, future object must be updated. Old result is irrelevant.
-    if conn.vconnect and conn.vconnect.future then
-        conn.vconnect.future:discard()
-        conn.vconnect.future = nil
-    end
+    conn_vconnect_reset(conn)
 end
 
 --

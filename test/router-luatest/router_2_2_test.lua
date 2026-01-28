@@ -1303,3 +1303,86 @@ g.test_info_disable_consistency = function(g)
     end, {global_cfg})
     vtest.drop_instance(g, router)
 end
+
+--
+-- gh-632: Connection is closed during name check on initial connection,
+-- when retryable error happens.
+--
+local function test_router_alerts_on_initial_conn_template(g, err_func,
+                                                           recovery_func)
+    t.run_only_if(vutil.feature.persistent_names)
+    -- We reconfigure the cluster with name_as_key identification
+    -- mode because without it the vconnect won't work.
+    local new_cfg_template = router_named_cfg_template()
+    local new_cfg = vtest.config_new(new_cfg_template)
+    local rs_2 = table.deepcopy(new_cfg_template.sharding.replicaset_2)
+    vtest.cluster_cfg(g, new_cfg)
+    vtest.router_cfg(g.router, new_cfg)
+    g.router:exec(function()
+        ivshard.router.discovery_wakeup()
+        t.helpers.retrying({}, function()
+            t.assert_equals(ivshard.router.info().alerts, {})
+        end)
+    end)
+    -- To initiate the vshard greeting (vconnect) we should reconnect one
+    -- replicaset. Also we need to check that just after retryable error
+    -- router has alert.
+    new_cfg_template.sharding.replicaset_2 = nil
+    vtest.router_cfg(g.router, vtest.config_new(new_cfg_template))
+    g.replica_2_a:exec(err_func)
+    new_cfg_template.sharding.replicaset_2 = rs_2
+    vtest.router_cfg(g.router, vtest.config_new(new_cfg_template))
+    g.router:exec(function()
+        ivshard.router.discovery_wakeup()
+        t.helpers.retrying({}, function()
+            local alert = {{'SUBOPTIMAL_REPLICA', 'A current read replica ' ..
+                'in replicaset replicaset_2 is not optimal'}}
+            t.assert_items_include(ivshard.router.info().alerts, alert)
+        end)
+    end)
+    -- In the end of this template-test we recover the whole cluster and
+    -- check that there are no alerts in router anymore.
+    g.replica_2_a:exec(recovery_func)
+    g.router:exec(function()
+        ivshard.router.discovery_wakeup()
+        t.helpers.retrying({}, function()
+            t.assert_equals(ivshard.router.info().alerts, {})
+        end)
+    end)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.router_cfg(g.router, global_cfg)
+end
+
+g.test_router_alerts_on_initial_conn_with_disabled_storage = function(g)
+    local disable_replica = function() ivshard.storage.disable() end
+    local enable_replica = function() ivshard.storage.enable() end
+    test_router_alerts_on_initial_conn_template(g, disable_replica,
+                                                enable_replica)
+end
+
+g.test_router_alerts_on_initial_conn_with_undefined_storage_func = function(g)
+    local nullify_func = function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = nil
+    end
+    local restore_func = function() ivshard.storage._call = _G.old_call end
+    test_router_alerts_on_initial_conn_template(g, nullify_func, restore_func)
+end
+
+g.test_router_alerts_on_initial_conn_with_denial_of_access = function(g)
+    local revoke_perms = function()
+        box.session.su('admin')
+        box.schema.user.revoke('storage', 'super')
+        box.schema.user.revoke('storage', 'execute', 'function',
+                               'vshard.storage._call')
+        box.session.su('guest')
+    end
+    local grant_perms = function()
+        box.session.su('admin')
+        box.schema.user.grant('storage', 'super')
+        box.schema.user.grant('storage', 'execute', 'function',
+                              'vshard.storage._call')
+        box.session.su('guest')
+    end
+    test_router_alerts_on_initial_conn_template(g, revoke_perms, grant_perms)
+end
