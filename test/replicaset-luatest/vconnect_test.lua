@@ -71,33 +71,6 @@ test_group.test_vconnect_no_future = function(g)
 end
 
 --
--- Test, that conn_vconnect_check fails, when future's result is nil.
---
-test_group.test_vconnect_check_no_future = function(g)
-    local _, rs = next(vreplicaset.buildall(global_cfg))
-    g.replica:exec(function()
-        rawset(_G, '_call', ivshard.storage._call)
-        ivshard.storage._call = function() error('Non retryable error') end
-    end)
-
-    rs.master.conn = nil
-    local opts = table.deepcopy(timeout_opts)
-    opts.is_async = true
-    t.helpers.retrying({}, function()
-        -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
-        -- is not ready. But at the end it must be the actual error.
-        local ret, err = rs:callrw('get_uuid', {}, opts)
-        t.assert_str_contains(err.message, "Non retryable error")
-        t.assert_equals(ret, nil)
-        t.assert_equals(rs.master.conn.state, 'closed')
-    end)
-
-    g.replica:exec(function()
-        ivshard.storage._call = _G._call
-    end)
-end
-
---
 -- 1. Change name and stop replica.
 -- 2. Wait for error_reconnect timeout.
 -- 3. Assert, that on reconnect name change is noticed.
@@ -366,4 +339,37 @@ test_group.test_conn_not_closed_during_denial_of_access = function(g)
                                             revoke_perms, grant_perms)
     test_conn_with_retryable_error_template(g, async_opts, err_msg,
                                             revoke_perms, grant_perms)
+end
+
+local function test_conn_with_non_retryable_error_template(g, opts)
+    g.replica:exec(function(global_cfg, opts)
+        rawset(_G, '_call', ivshard.storage._call)
+        ivshard.storage._call = function() error('Non retryable error') end
+        -- We build a replicaset inside the replica so that we can grep logs
+        -- of replicaset module.
+        local _, rs = next(require('vshard.replicaset').buildall(global_cfg))
+        t.assert_not_equals(rs:connect_master(), nil)
+        t.helpers.retrying({}, function()
+            -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
+            -- is not ready. But at the end it must be the actual error.
+            local status, res, err = rs.replicas.replica:call('echo', {123},
+                                                              opts)
+            t.assert_not(status)
+            t.assert_not(res)
+            t.assert_str_contains(err.message, 'Non retryable error')
+            t.assert_equals(rs.master.conn.state, 'closed')
+        end)
+        ivshard.storage._call = _G._call
+    end, {global_cfg, opts})
+
+    if opts.is_async then
+        t.assert(g.replica:grep_log('Closing the connection'))
+    else
+        t.assert(g.replica:grep_log('Closing the connection.*after waiting'))
+    end
+end
+
+test_group.test_conn_close_with_non_retryable_error = function(g)
+    test_conn_with_non_retryable_error_template(g, sync_opts)
+    test_conn_with_non_retryable_error_template(g, async_opts)
 end

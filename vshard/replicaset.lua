@@ -245,6 +245,8 @@ local function conn_vconnect_check_or_close(conn)
                 err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
         -- Close the connection, if error happened, but it is not retryable
         -- and not VSHANDSHAKE_NOT_COMPLETE.
+        log.warn('Closing the connection to %s due to failed initial ' ..
+                 'handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err
@@ -291,6 +293,8 @@ local function conn_vconnect_wait_or_close(conn, timeout)
     if lerror.is_vshard_not_ready(err) then
         conn_vconnect_restart(conn)
     elseif not lerror.is_timeout(err) then
+        log.warn('Closing the connection to %s after waiting due to failed ' ..
+                 'initial handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err
