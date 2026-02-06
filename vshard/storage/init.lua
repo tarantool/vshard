@@ -2,15 +2,12 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local lmsgpack = require('msgpack')
-local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local json_encode = require('json').encode
 local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
-local netbox_self = netbox.self
-local netbox_self_call = netbox_self.call
 
 local MODULE_INTERNALS = '__module_vshard_storage'
 -- Reload requirements, in case this module is reloaded manually.
@@ -269,37 +266,28 @@ local function handle_results(status, ...)
 end
 
 --
--- Invoke a function on this instance. Arguments are unpacked into the function
--- as arguments.
--- The function returns pcall() as is, because is used from places where
--- exceptions are not allowed.
+-- Reimplementation of the net.box.self.call(), but without encoding/decoding
+-- of the arguments. Invoke a function on this instance. Arguments are unpacked
+-- into the function as arguments. The function returns pcall() as is, because
+-- is used from places where exceptions are not allowed.
 --
-local local_call
-
-if util.version_is_at_least(3, 0, 0, 'beta', 1, 18) then
-
-local_call = function(func_name, args)
-    return pcall(netbox_self_call, netbox_self, func_name, args)
-end
-
-else -- < 3.0.0-beta1-18
-
--- net_box.self.call() doesn't work with C stored and Lua persistent
--- functions before 3.0.0-beta1-18, so we try to call it via func.call
--- API prior to using net_box.self API.
-local_call = function(func_name, args)
-    local func = box.func and box.func[func_name]
-    if not func then
-        return pcall(netbox_self_call, netbox_self, func_name, args)
+local function local_call(name, args)
+    args = args or {}
+    name = tostring(name)
+    local status, func, obj
+    func = box.func and box.func[name]
+    if func then
+        return handle_results(pcall(func.call, func, args))
     end
-    -- If the function is called directly, fails, and leaves an uncommitted
-    -- transaction, then in Tarantool versions before 3.0.0-beta1-18,
-    -- the original error is replaced by the "Transaction is active" error.
-    -- We manually check if the function returned an error. If so, we
-    -- rollback the transaction to reveal the original error.
-    return handle_results(pcall(func.call, func, args))
-end
-
+    status, func, obj = handle_results(pcall(box.internal.call_loadproc, name))
+    if not status then
+        return status, func
+    end
+    if obj ~= nil then
+        return handle_results(pcall(func, obj, unpack(args)))
+    else
+        return handle_results(pcall(func, unpack(args)))
+    end
 end
 
 local function master_call(replicaset, func, args, opts)
