@@ -188,6 +188,12 @@ local function conn_vconnect_reset(conn)
     end
 end
 
+local function conn_vconnect_restart(conn)
+    conn_vconnect_reset(conn)
+    conn_vconnect_set(conn)
+    conn_vconnect_start(conn)
+end
+
 --
 -- Check, that future is ready, and its result is expected.
 -- The function doesn't yield.
@@ -211,6 +217,7 @@ local function conn_vconnect_check(conn)
     -- Critical errors. Connection should be closed after these ones.
     local result, err = vconn.future:result()
     if not result then
+        err = lerror.unwrap_vshard_error(err)
         -- Failed to get response. E.g. access error.
         return nil, lerror.make(err)
     end
@@ -228,10 +235,16 @@ end
 
 local function conn_vconnect_check_or_close(conn)
     local ok, err = conn_vconnect_check(conn)
-    -- Close the connection, if error happened, but it is not
-    -- VSHANDSHAKE_NOT_COMPLETE.
-    if not ok and err and not (err.type == 'ShardingError' and
-       err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+    if ok then
+        return ok, err
+    end
+    assert(err)
+    if lerror.is_vshard_not_ready(err) then
+        conn_vconnect_restart(conn)
+    elseif not (err.type == 'ShardingError' and
+                err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+        -- Close the connection, if error happened, but it is not retryable
+        -- and not VSHANDSHAKE_NOT_COMPLETE.
         conn:close()
     end
     return ok, err
@@ -261,6 +274,7 @@ local function conn_vconnect_wait(conn, timeout)
     -- Wait for async call to return.
     local res, err = future_wait(vconn.future, timeout)
     if res == nil then
+        err = lerror.unwrap_vshard_error(err)
         -- Either timeout error or any other. If it's not a timeout error,
         -- then conn must be recteated, handshake must be retried.
         return nil, lerror.make(err)
@@ -270,7 +284,13 @@ end
 
 local function conn_vconnect_wait_or_close(conn, timeout)
     local ok, err = conn_vconnect_wait(conn, timeout)
-    if not ok and not lerror.is_timeout(err) then
+    if ok then
+        return ok, err
+    end
+    assert(err)
+    if lerror.is_vshard_not_ready(err) then
+        conn_vconnect_restart(conn)
+    elseif not lerror.is_timeout(err) then
         conn:close()
     end
     return ok, err
