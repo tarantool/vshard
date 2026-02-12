@@ -1291,6 +1291,7 @@ local function router_cfg(router, cfg, is_reload)
         replicaset.worker:add_service('replicaset_failover')
         for _, replica in pairs(replicaset.replicas) do
             replica.worker:add_service('replica_failover')
+            replica.worker:add_service('replica_conn_recovery')
         end
     end
     discovery_set(router, vshard_cfg.discovery_mode)
