@@ -1113,3 +1113,56 @@ test_group.test_replica_conn_gc_after_rebind = function()
 
     vconsts.REPLICA_NOACTIVITY_TIMEOUT = old_timeout
 end
+
+local function wait_for_replica_connection_state(replica, state)
+    t.helpers.retrying({}, function()
+        t.assert_equals(replica.conn.state, state)
+    end)
+end
+
+local function wait_conn_recovery_service_activity(rs, replica_id, actvity)
+    -- We should wrap the receiving of replicaset services info in retrying
+    -- block because the service may not have time to update its state. It can
+    -- lead to situation when vtest waiting functions hang forever as rs_info
+    -- won't be updated.
+    t.helpers.retrying({timeout = 10}, function()
+        local rs_info = rs:service_info('conn_recovery')
+        vtest.service_wait_for_activity(rs_info.replicas[replica_id], actvity,
+                                        {timeout = 1})
+    end)
+end
+
+test_group.test_replica_connection_recovery_service = function(g)
+    local replicasets = vreplicaset.buildall(global_cfg)
+    local _, rs = next(replicasets)
+    rs:wait_connected_all(timeout_opts)
+    vreplicaset.create_workers(replicasets)
+    for _, replica in pairs(rs.replicas) do
+        replica.worker:add_service('replica_conn_recovery')
+        replica.worker:wakeup_service('replica_conn_recovery')
+        fiber.yield()
+    end
+    -- Part #1: Test that just after replicaset's bootstrap, the connection
+    -- recovery services idle with infinite timeout (all replicas' connections
+    -- are healthy).
+    for id, _ in pairs(rs.replicas) do
+        wait_conn_recovery_service_activity(rs, id, 'idling')
+    end
+    -- Part #2: Test that manually closed netbox connection is restarted
+    -- immediately by the connection recovery service.
+    local uuid_1_b = g.replica_1_b:instance_uuid()
+    wait_for_replica_connection_state(rs.replicas[uuid_1_b], 'active')
+    rs.replicas[uuid_1_b].conn:close()
+    wait_for_replica_connection_state(rs.replicas[uuid_1_b], 'active')
+    wait_conn_recovery_service_activity(rs, uuid_1_b, 'idling')
+    -- Part #3: Test that the connection recovery service tries to recreate a
+    -- connection to stopped replica until replica starts again.
+    local uuid_1_c = g.replica_1_c:instance_uuid()
+    vtest.storage_stop(g.replica_1_c)
+    wait_conn_recovery_service_activity(rs, uuid_1_c, 'reconnecting')
+    vtest.storage_start(g.replica_1_c, global_cfg)
+    wait_for_replica_connection_state(rs.replicas[uuid_1_c], 'active')
+    for id, _ in pairs(rs.replicas) do
+        wait_conn_recovery_service_activity(rs, id, 'idling')
+    end
+end

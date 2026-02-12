@@ -1303,3 +1303,84 @@ g.test_info_disable_consistency = function(g)
     end, {global_cfg})
     vtest.drop_instance(g, router)
 end
+
+local function assert_router_connection_state(router, rs_id, state)
+    router:exec(function(rs_id, state)
+        local router = ivshard.router.internal.static_router
+        local rs = router.replicasets[rs_id]
+        t.helpers.retrying({}, function()
+            t.assert_equals(rs.master.conn.state, state)
+        end)
+    end, {rs_id, state})
+end
+
+local function assert_no_alerts_in_router(router)
+    router:exec(function()
+        ivshard.router.discovery_wakeup()
+        t.helpers.retrying({}, function()
+            t.assert_equals(ivshard.router.info().alerts, {})
+        end)
+    end)
+end
+
+local function set_errinj_to_replicas(router, errinj_name, errinj_value)
+    router:exec(function(errinj_name, errinj_value)
+        local replicasets = ivshard.router.internal.static_router.replicasets
+        for _, rs in pairs(replicasets) do
+            for _, r in pairs(rs.replicas) do
+                r.errinj[errinj_name] = errinj_value
+            end
+        end
+    end, {errinj_name, errinj_value})
+end
+
+--
+-- gh-632: Connection is closed during name check on initial connection,
+-- when retryable error happens.
+--
+g.test_no_router_alerts_on_initial_conn_during_storage_error = function(g)
+    t.run_only_if(vutil.feature.persistent_names)
+    -- Stage #1: We reconfigure the cluster with "name_as_key" identification
+    -- mode because without it we can't test the initial handshake due to
+    -- non-working vconnect.
+    local new_cfg_template = router_named_cfg_template()
+    local new_cfg = vtest.config_new(new_cfg_template)
+    local rs_2 = table.deepcopy(new_cfg_template.sharding.replicaset_2)
+    vtest.cluster_cfg(g, new_cfg)
+    vtest.router_cfg(g.router, new_cfg)
+    assert_router_connection_state(g.router, 'replicaset_2', 'active')
+    assert_no_alerts_in_router(g.router)
+    -- Stage #2: To initiate the vshard greeting (vconnect) we should reconnect
+    -- one replicaset. Also we need to check that just after error the router
+    -- has alerts and its connection is closed.
+    new_cfg_template.sharding.replicaset_2 = nil
+    vtest.router_cfg(g.router, vtest.config_new(new_cfg_template))
+    g.replica_2_a:exec(function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = function() error('Non retryable error') end
+    end)
+    new_cfg_template.sharding.replicaset_2 = rs_2
+    vtest.router_cfg(g.router, vtest.config_new(new_cfg_template))
+    -- It is important to stop "replica_conn_recovery" service because without
+    -- it the connection will be recreated immediately. We need to check that
+    -- after storage error the vconnect kills connection.
+    set_errinj_to_replicas(g.router, 'ERRINJ_CONN_RECOVERY_DELAY', true)
+    assert_router_connection_state(g.router, 'replicaset_2', 'closed')
+    g.router:exec(function()
+        ivshard.router.discovery_wakeup()
+        t.helpers.retrying({}, function()
+            local alert = {{'SUBOPTIMAL_REPLICA', 'A current read replica ' ..
+                'in replicaset replicaset_2 is not optimal'}}
+            t.assert_items_include(ivshard.router.info().alerts, alert)
+        end)
+    end)
+    -- Stage #3: In the end of the test we recover the whole cluster, unpause
+    -- "replica_conn_recovery" service and check that there are no alerts in
+    -- router anymore.
+    g.replica_2_a:exec(function() ivshard.storage._call = _G.old_call end)
+    set_errinj_to_replicas(g.router, 'ERRINJ_CONN_RECOVERY_DELAY', false)
+    assert_router_connection_state(g.router, 'replicaset_2', 'active')
+    assert_no_alerts_in_router(g.router)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.router_cfg(g.router, global_cfg)
+end

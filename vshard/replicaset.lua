@@ -116,6 +116,7 @@ local replicaset_errinj = {
 
 local replica_errinj = {
     ERRINJ_REPLICASET_FAILOVER_DELAY = false,
+    ERRINJ_CONN_RECOVERY_DELAY = false,
 }
 
 --
@@ -315,6 +316,9 @@ local function netbox_on_disconnect(conn)
     if conn.vconnect and conn.vconnect.future then
         conn.vconnect.future:discard()
         conn.vconnect.future = nil
+    end
+    if replica.worker then
+        replica.worker:wakeup_service('replica_conn_recovery')
     end
 end
 
@@ -1999,6 +2003,28 @@ local function replica_collect_idle_conns_service_step(replica, data)
     return consts.MASTER_SEARCH_IDLE_INTERVAL
 end
 
+local function replica_conn_recovery_service_step(replica, data)
+    while replica.errinj.ERRINJ_CONN_RECOVERY_DELAY do
+        fiber.sleep(0.001)
+    end
+    if not data.info then
+        local name = 'replica_conn_recovery'
+        -- Service info is recreated on every reload.
+        data.info = lservice_info.new(name)
+    end
+    if not replica.down_ts then
+        data.info:set_status_ok()
+        data.info:set_activity('idling')
+        return consts.TIMEOUT_INFINITY
+    end
+    data.info:set_activity('reconnecting')
+    local timeout = consts.RECONNECT_TIMEOUT
+    if replica.down_ts + timeout < fiber_clock() then
+        replica_connect(replica)
+    end
+    return timeout
+end
+
 --------------------------------------------------------------------------------
 -- Master search
 --------------------------------------------------------------------------------
@@ -2146,6 +2172,7 @@ local worker_service_to_func = {
     replica_failover = replica_failover_service_step,
     replicaset_failover = replicaset_failover_service_step,
     replica_collect_idle_conns = replica_collect_idle_conns_service_step,
+    replica_conn_recovery = replica_conn_recovery_service_step,
     replicaset_master_search = replicaset_master_search_service_step,
 }
 
