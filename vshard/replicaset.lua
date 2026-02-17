@@ -836,7 +836,8 @@ local function can_backoff_after_error(e, func)
         end
     end
     if e.type == 'ShardingError' then
-        return e.code == lerror.code.STORAGE_IS_DISABLED
+        return e.code == lerror.code.STORAGE_IS_DISABLED or
+               e.code == lerror.code.INSTANCE_NAME_MISMATCH
     end
     return false
 end
@@ -2018,11 +2019,13 @@ local function replica_conn_recovery_service_step(replica, data)
         return consts.TIMEOUT_INFINITY
     end
     data.info:set_activity('reconnecting')
-    local timeout = consts.RECONNECT_TIMEOUT
-    if replica.down_ts + timeout < fiber_clock() then
+    local now = fiber_clock()
+    if replica_check_backoff(replica, now) then
         replica_connect(replica)
+        return consts.RECONNECT_TIMEOUT
     end
-    return timeout
+    data.info:set_activity('backoff')
+    return replica.backoff_ts + consts.REPLICA_BACKOFF_INTERVAL - now
 end
 
 --------------------------------------------------------------------------------
