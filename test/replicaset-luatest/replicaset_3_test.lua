@@ -1166,3 +1166,23 @@ test_group.test_replica_connection_recovery_service = function(g)
         wait_conn_recovery_service_activity(rs, id, 'idling')
     end
 end
+
+test_group.test_conn_recovery_service_during_replica_backoff = function(g)
+    local rs = prepare_stateless_balancing_rs()
+    local uuid_1_b = g.replica_1_b:instance_uuid()
+    rs:wait_connected_all(timeout_opts)
+    vreplicaset.create_workers({rs})
+    for id, replica in pairs(rs.replicas) do
+        replica.worker:add_service('replica_conn_recovery')
+        replica.worker:wakeup_service('replica_conn_recovery')
+        fiber.yield()
+        wait_conn_recovery_service_activity(rs, id, 'idling')
+    end
+    g.replica_1_b:exec(function() ivshard.storage.disable() end)
+    rs:callro('vshard.storage.call', {'info'},
+              {is_async = false, timeout = 0.3})
+    rs.replicas[uuid_1_b].conn:close()
+    wait_conn_recovery_service_activity(rs, uuid_1_b, 'backoff')
+    g.replica_1_b:exec(function() ivshard.storage.enable() end)
+    wait_conn_recovery_service_activity(rs, uuid_1_b, 'idling')
+end
