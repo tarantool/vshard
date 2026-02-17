@@ -413,7 +413,7 @@ end
 
 --
 -- Check if replica can be considered healthy. It's connection wasn't down
--- for FAILOVER_FOWN_TIMEOUT, the requests didn't fail sequentially for
+-- for FAILOVER_DOWN_TIMEOUT, the requests didn't fail sequentially for
 -- failover_sequential_fail_count (cfg option).
 --
 local function replica_check_health(replica, now)
