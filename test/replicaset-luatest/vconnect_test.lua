@@ -45,20 +45,18 @@ end)
 -- result. Connection should be closed.
 --
 test_group.test_vconnect_no_result = function(g)
-    local _, rs = next(vreplicaset.buildall(global_cfg))
-    g.replica:exec(function()
+    g.replica:exec(function(global_cfg, timeout_opts)
+        local _, rs = next(require('vshard.replicaset').buildall(global_cfg))
         rawset(_G, '_call', ivshard.storage._call)
         ivshard.storage._call = nil
-    end)
-
-    -- Drop connection in order to make replicaset to recreate it.
-    rs.master.conn = nil
-    local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
-    t.assert_str_contains(err.message, "_call' is not defined")
-    t.assert_equals(ret, nil)
-    -- Critical error, connection should be closed.
-    t.assert_equals(rs.master.conn.state, 'closed')
-
+        -- Drop connection in order to make replicaset to recreate it.
+        rs.master.conn = nil
+        local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
+        t.assert_str_contains(err.message, "_call' is not defined")
+        t.assert_equals(ret, nil)
+        -- Critical error, connection should be closed.
+        t.assert_equals(rs.master.conn.state, 'closed')
+    end, {global_cfg, timeout_opts})
     g.replica:exec(function()
         ivshard.storage._call = _G._call
     end)
@@ -96,24 +94,22 @@ end
 -- Test, that conn_vconnect_check fails, when future's result is nil.
 --
 test_group.test_vconnect_check_no_future = function(g)
-    local _, rs = next(vreplicaset.buildall(global_cfg))
-    g.replica:exec(function()
+    g.replica:exec(function(global_cfg, timeout_opts)
+        local _, rs = next(require('vshard.replicaset').buildall(global_cfg))
         rawset(_G, '_call', ivshard.storage._call)
         ivshard.storage._call = nil
-    end)
-
-    rs.master.conn = nil
-    local opts = table.deepcopy(timeout_opts)
-    opts.is_async = true
-    t.helpers.retrying({}, function()
-        -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
-        -- is not ready. But at the end it must be the actual error.
-        local ret, err = rs:callrw('get_uuid', {}, opts)
-        t.assert_str_contains(err.message, "_call' is not defined")
-        t.assert_equals(ret, nil)
-        t.assert_equals(rs.master.conn.state, 'closed')
-    end)
-
+        rs.master.conn = nil
+        local opts = table.deepcopy(timeout_opts)
+        opts.is_async = true
+        t.helpers.retrying({}, function()
+            -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
+            -- is not ready. But at the end it must be the actual error.
+            local ret, err = rs:callrw('get_uuid', {}, opts)
+            t.assert_str_contains(err.message, "_call' is not defined")
+            t.assert_equals(ret, nil)
+            t.assert_equals(rs.master.conn.state, 'closed')
+        end)
+    end, {global_cfg, timeout_opts})
     g.replica:exec(function()
         ivshard.storage._call = _G._call
     end)
