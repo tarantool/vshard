@@ -223,6 +223,8 @@ local function conn_vconnect_check_or_close(conn)
     -- VSHANDSHAKE_NOT_COMPLETE.
     if not ok and err and not (err.type == 'ShardingError' and
        err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+        log.warn('Closing the connection to %s due to failed initial ' ..
+                 'handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err
@@ -262,6 +264,8 @@ end
 local function conn_vconnect_wait_or_close(conn, timeout)
     local ok, err = conn_vconnect_wait(conn, timeout)
     if not ok and not lerror.is_timeout(err) then
+        log.warn('Closing the connection to %s after waiting due to failed ' ..
+                 'initial handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err

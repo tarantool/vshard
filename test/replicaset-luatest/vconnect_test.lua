@@ -57,6 +57,7 @@ test_group.test_vconnect_no_result = function(g)
         -- Critical error, connection should be closed.
         t.assert_equals(rs.master.conn.state, 'closed')
     end, {global_cfg, timeout_opts})
+    t.assert(g.replica:grep_log('Closing the connection.*after waiting'))
     g.replica:exec(function()
         ivshard.storage._call = _G._call
     end)
@@ -110,6 +111,7 @@ test_group.test_vconnect_check_no_future = function(g)
             t.assert_equals(rs.master.conn.state, 'closed')
         end)
     end, {global_cfg, timeout_opts})
+    t.assert(g.replica:grep_log('Closing the connection'))
     g.replica:exec(function()
         ivshard.storage._call = _G._call
     end)
