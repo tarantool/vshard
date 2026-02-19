@@ -8,6 +8,8 @@ local verror = require('vshard.error')
 
 local small_timeout_opts = {timeout = 0.01}
 local timeout_opts = {timeout = vtest.wait_timeout}
+local sync_opts = {timeout = 1, is_async = false}
+local async_opts = {timeout = 1, is_async = true}
 
 local test_group = t.group('vconnect')
 
@@ -41,30 +43,6 @@ test_group.after_all(function(g)
 end)
 
 --
--- Test, that conn_vconnect_wait fails to get correct
--- result. Connection should be closed.
---
-test_group.test_vconnect_no_result = function(g)
-    local _, rs = next(vreplicaset.buildall(global_cfg))
-    g.replica:exec(function()
-        rawset(_G, '_call', ivshard.storage._call)
-        ivshard.storage._call = nil
-    end)
-
-    -- Drop connection in order to make replicaset to recreate it.
-    rs.master.conn = nil
-    local ret, err = rs:callrw('get_uuid', {}, timeout_opts)
-    t.assert_str_contains(err.message, "_call' is not defined")
-    t.assert_equals(ret, nil)
-    -- Critical error, connection should be closed.
-    t.assert_equals(rs.master.conn.state, 'closed')
-
-    g.replica:exec(function()
-        ivshard.storage._call = _G._call
-    end)
-end
-
---
 -- Test, that conn_vconnect_wait fails, when future is nil.
 --
 test_group.test_vconnect_no_future = function(g)
@@ -88,33 +66,6 @@ test_group.test_vconnect_no_future = function(g)
 
     g.replica:exec(function()
         _G.do_sleep = false
-        ivshard.storage._call = _G._call
-    end)
-end
-
---
--- Test, that conn_vconnect_check fails, when future's result is nil.
---
-test_group.test_vconnect_check_no_future = function(g)
-    local _, rs = next(vreplicaset.buildall(global_cfg))
-    g.replica:exec(function()
-        rawset(_G, '_call', ivshard.storage._call)
-        ivshard.storage._call = nil
-    end)
-
-    rs.master.conn = nil
-    local opts = table.deepcopy(timeout_opts)
-    opts.is_async = true
-    t.helpers.retrying({}, function()
-        -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
-        -- is not ready. But at the end it must be the actual error.
-        local ret, err = rs:callrw('get_uuid', {}, opts)
-        t.assert_str_contains(err.message, "_call' is not defined")
-        t.assert_equals(ret, nil)
-        t.assert_equals(rs.master.conn.state, 'closed')
-    end)
-
-    g.replica:exec(function()
         ivshard.storage._call = _G._call
     end)
 end
@@ -319,4 +270,106 @@ test_group.test_conn_not_leaks_on_rebind = function(g)
     g.replica:exec(function()
         ivshard.storage._call = _G.old_call
     end)
+end
+
+--
+-- gh-632: Connection is closed during name check on initial connection,
+-- when retryable error happens.
+--
+local function test_conn_with_retryable_error_template(g, opts, err_msg,
+                                                       err_func, recovery_func)
+    local _, rs = next(vreplicaset.buildall(global_cfg))
+    t.assert_not_equals(rs:connect_master(), nil)
+    t.assert_equals(rs.master.conn.state, 'initial')
+    g.replica:exec(err_func)
+    t.helpers.retrying({}, function()
+        local net_status, res, err = rs.replicas.replica:call('echo', {123},
+                                                              opts)
+        t.assert_not(net_status)
+        t.assert_not(res)
+        t.assert_str_contains(err.message, err_msg)
+        t.assert_equals(rs.master.conn.state, 'active')
+    end)
+    g.replica:exec(recovery_func)
+end
+
+test_group.test_conn_not_closed_during_disabled_storage = function(g)
+    local disable_replica = function() ivshard.storage.disable() end
+    local enable_replica = function() ivshard.storage.enable() end
+    local err_msg = 'Storage is disabled'
+
+    test_conn_with_retryable_error_template(g, sync_opts, err_msg,
+                                            disable_replica, enable_replica)
+    test_conn_with_retryable_error_template(g, async_opts, err_msg,
+                                            disable_replica, enable_replica)
+end
+
+test_group.test_conn_not_closed_during_undefined_storage_func = function(g)
+    local nullify_func = function()
+        rawset(_G, 'old_call', ivshard.storage._call)
+        ivshard.storage._call = nil
+    end
+    local restore_func = function() ivshard.storage._call = _G.old_call end
+    local err_msg = 'Procedure \'vshard.storage._call\' is not defined'
+
+    test_conn_with_retryable_error_template(g, sync_opts, err_msg,
+                                            nullify_func, restore_func)
+    test_conn_with_retryable_error_template(g, async_opts, err_msg,
+                                            nullify_func, restore_func)
+end
+
+test_group.test_conn_not_closed_during_denial_of_access = function(g)
+    local revoke_perms = function()
+        box.session.su('admin')
+        box.schema.user.revoke('storage', 'super')
+        box.schema.user.revoke('storage', 'execute', 'function',
+                            'vshard.storage._call')
+        box.session.su('guest')
+    end
+    local grant_perms = function()
+        box.session.su('admin')
+        box.schema.user.grant('storage', 'super')
+        box.schema.user.grant('storage', 'execute', 'function',
+                            'vshard.storage._call')
+        box.session.su('guest')
+    end
+    local err_msg = 'Execute access to function \'vshard.storage._call\' ' ..
+                    'is denied'
+    test_conn_with_retryable_error_template(g, sync_opts, err_msg,
+                                            revoke_perms, grant_perms)
+    test_conn_with_retryable_error_template(g, async_opts, err_msg,
+                                            revoke_perms, grant_perms)
+end
+
+local function test_conn_with_non_retryable_error_template(g, opts)
+    g.replica:exec(function(global_cfg, opts)
+        rawset(_G, '_call', ivshard.storage._call)
+        ivshard.storage._call = function() error('Non retryable error') end
+        -- We build a replicaset inside the replica so that we can grep logs
+        -- of replicaset module.
+        local _, rs = next(require('vshard.replicaset').buildall(global_cfg))
+        t.assert_not_equals(rs:connect_master(), nil)
+        t.helpers.retrying({}, function()
+            -- It may be VHANDSHAKE_NOT_COMPLETE error, when future
+            -- is not ready. But at the end it must be the actual error.
+            local status, res, err = rs.replicas.replica:call('echo', {123},
+                                                              opts)
+            t.assert_not(status)
+            t.assert_not(res)
+            t.assert_str_contains(err.message, 'Non retryable error')
+            t.assert_equals(rs.master.conn.state, 'closed')
+        end)
+        ivshard.storage._call = _G._call
+    end, {global_cfg, opts})
+
+    if opts.is_async then
+        t.assert(g.replica:grep_log('Closing the connection'))
+    else
+        t.assert(g.replica:grep_log('Closing the connection.*after waiting'))
+    end
+end
+
+test_group.test_conn_close_with_non_retryable_error = function(g)
+    test_conn_with_non_retryable_error_template(g, sync_opts)
+    test_conn_with_non_retryable_error_template(g, async_opts)
 end

@@ -178,6 +178,22 @@ local function conn_vconnect_start(conn)
     vconn.future_cond:broadcast()
 end
 
+local function conn_vconnect_reset(conn)
+    -- Future object must be removed from the connection, otherwise
+    -- the connection cannot be garbage collected (gh-517).
+    -- Moreover, future object must be updated. Old result is irrelevant.
+    if conn.vconnect and conn.vconnect.future then
+        conn.vconnect.future:discard()
+        conn.vconnect.future = nil
+    end
+end
+
+local function conn_vconnect_restart(conn)
+    conn_vconnect_reset(conn)
+    conn_vconnect_set(conn)
+    conn_vconnect_start(conn)
+end
+
 --
 -- Check, that future is ready, and its result is expected.
 -- The function doesn't yield.
@@ -201,6 +217,7 @@ local function conn_vconnect_check(conn)
     -- Critical errors. Connection should be closed after these ones.
     local result, err = vconn.future:result()
     if not result then
+        err = lerror.unwrap_vshard_error(err)
         -- Failed to get response. E.g. access error.
         return nil, lerror.make(err)
     end
@@ -218,10 +235,18 @@ end
 
 local function conn_vconnect_check_or_close(conn)
     local ok, err = conn_vconnect_check(conn)
-    -- Close the connection, if error happened, but it is not
-    -- VSHANDSHAKE_NOT_COMPLETE.
-    if not ok and err and not (err.type == 'ShardingError' and
-       err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+    if ok then
+        return ok, err
+    end
+    assert(err)
+    if lerror.is_vshard_not_ready(err) then
+        conn_vconnect_restart(conn)
+    elseif not (err.type == 'ShardingError' and
+                err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
+        -- Close the connection, if error happened, but it is not retryable
+        -- and not VSHANDSHAKE_NOT_COMPLETE.
+        log.warn('Closing the connection to %s due to failed initial ' ..
+                 'handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err
@@ -251,6 +276,7 @@ local function conn_vconnect_wait(conn, timeout)
     -- Wait for async call to return.
     local res, err = future_wait(vconn.future, timeout)
     if res == nil then
+        err = lerror.unwrap_vshard_error(err)
         -- Either timeout error or any other. If it's not a timeout error,
         -- then conn must be recteated, handshake must be retried.
         return nil, lerror.make(err)
@@ -260,7 +286,15 @@ end
 
 local function conn_vconnect_wait_or_close(conn, timeout)
     local ok, err = conn_vconnect_wait(conn, timeout)
-    if not ok and not lerror.is_timeout(err) then
+    if ok then
+        return ok, err
+    end
+    assert(err)
+    if lerror.is_vshard_not_ready(err) then
+        conn_vconnect_restart(conn)
+    elseif not lerror.is_timeout(err) then
+        log.warn('Closing the connection to %s after waiting due to failed ' ..
+                 'initial handshake: %s', conn.replica, err)
         conn:close()
     end
     return ok, err
@@ -309,13 +343,7 @@ local function netbox_on_disconnect(conn)
     -- Replica is down - remember this time to decrease replica
     -- priority after FAILOVER_DOWN_TIMEOUT seconds.
     replica.down_ts = fiber_clock()
-    -- Future object must be removed from the connection, otherwise
-    -- the connection cannot be garbage collected (gh-517).
-    -- Moreover, future object must be updated. Old result is irrelevant.
-    if conn.vconnect and conn.vconnect.future then
-        conn.vconnect.future:discard()
-        conn.vconnect.future = nil
-    end
+    conn_vconnect_reset(conn)
 end
 
 --
@@ -688,18 +716,7 @@ local function replica_call(replica, func, args, opts)
         if opts.timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
-        local err = storage_status
-        -- VShard functions can throw exceptions using error() function. When
-        -- it reaches the network layer, it is wrapped into LuajitError. Try to
-        -- extract the original error if this is the case. Not always is
-        -- possible - the string representation could be truncated.
-        --
-        -- In old Tarantool versions LuajitError turned into ClientError on the
-        -- client. Check both types.
-        if func:startswith('vshard.') and (err.type == 'LuajitError' or
-           err.type == 'ClientError') then
-            err = lerror.from_string(err.message) or err
-        end
+        local err = lerror.unwrap_vshard_error(storage_status)
         replica.limiter:log_error(err,
             "Exception during calling '%s' on '%s': %s", func, replica, err)
         return false, nil, lerror.make(err)
@@ -821,20 +838,7 @@ local function can_backoff_after_error(e, func)
     if not func:startswith('vshard.') then
         return false
     end
-    -- ClientError is sent for all errors by old Tarantool versions which didn't
-    -- keep error type. New versions preserve the original error type.
-    if e.type == 'ClientError' or e.type == 'AccessDeniedError' then
-        if e.code == box.error.ACCESS_DENIED then
-            return e.message:startswith("Execute access to function 'vshard.")
-        end
-        if e.code == box.error.NO_SUCH_PROC then
-            return e.message:startswith("Procedure 'vshard.")
-        end
-    end
-    if e.type == 'ShardingError' then
-        return e.code == lerror.code.STORAGE_IS_DISABLED
-    end
-    return false
+    return lerror.is_vshard_not_ready(e)
 end
 
 --

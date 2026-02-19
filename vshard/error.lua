@@ -333,6 +333,36 @@ local function error_is_timeout(err)
            err.message == 'Timeout exceeded') or err.type == 'TimedOut'
 end
 
+local function is_vshard_not_ready(e)
+    -- ClientError is sent for all errors by old Tarantool versions which
+    -- didn't keep error type. New versions preserve the original error type.
+    if e.type == 'ClientError' or e.type == 'AccessDeniedError' then
+        if e.code == box.error.ACCESS_DENIED then
+            return e.message:startswith('Execute access to function \'vshard.')
+        end
+        if e.code == box.error.NO_SUCH_PROC then
+            return e.message:startswith('Procedure \'vshard.')
+        end
+    end
+    if e.type == 'ShardingError' then
+        return e.code == error_code.STORAGE_IS_DISABLED
+    end
+    return false
+end
+
+local function unwrap_vshard_error(err)
+    -- VShard functions can throw exceptions using error() function. When
+    -- it reaches the network layer, it is wrapped into LuajitError. Try to
+    -- extract the original error if this is the case. Not always is
+    -- possible - the string representation could be truncated.
+    local unwrapped_error = from_string(err.message)
+    if unwrapped_error and unwrapped_error.type == 'ShardingError' then
+        return unwrapped_error
+    end
+    -- It is not vshard error, we should return original err object
+    return err
+end
+
 return {
     code = error_code,
     box = box_error,
@@ -342,4 +372,6 @@ return {
     alert = make_alert,
     timeout = make_timeout,
     is_timeout = error_is_timeout,
+    is_vshard_not_ready = is_vshard_not_ready,
+    unwrap_vshard_error = unwrap_vshard_error,
 }
