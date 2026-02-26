@@ -276,7 +276,9 @@ build_routes(replicasets)
 -- the latter is a dispenser. It is a structure which hands out
 -- destination UUIDs in a round-robin manner to worker fibers.
 --
-d = dispenser.create({uuid = 15})
+routes = {uuid = {}}
+for i = 1, 15 do table.insert(routes.uuid, i) end
+d = dispenser.create(routes)
 dispenser.pop(d)
 for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end
 dispenser.pop(d)
@@ -285,10 +287,10 @@ dispenser.pop(d)
 dispenser.pop(d)
 d
 
-d = dispenser.create({uuid1 = 5, uuid2 = 5})
-u = dispenser.pop(d)
-u, d
-dispenser.put(d, u)
+d = dispenser.create({uuid1 = {1, 2, 3, 4, 5}, uuid2 = {6, 7, 8, 9, 10}})
+u, b  = dispenser.pop(d)
+u, b, d
+dispenser.put(d, u, b)
 d
 dispenser.throttle(d, u)
 d
@@ -303,7 +305,7 @@ end
 
 -- Double skip should be ok. It happens, if there were several
 -- workers on one destination, and all of them received an error.
-d = dispenser.create({uuid1 = 1})
+d = dispenser.create({uuid1 = {1}})
 dispenser.skip(d, 'uuid1')
 dispenser.skip(d, 'uuid1')
 

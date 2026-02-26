@@ -2,6 +2,8 @@ local fiber = require('fiber')
 local log = require('log')
 local fio = require('fio')
 local git = require('git_util')
+local vutil = require('vshard.util')
+local vconst = require('vshard.consts')
 
 local name_to_uuid = {
     storage_1_a = '8a274925-a26d-47fc-9e1b-af88ce939412',
@@ -217,6 +219,15 @@ local function map_bucket_protection(test_run, cluster, value)
         [[vshard.storage.internal.is_bucket_protected = ...]], value)
 end
 
+local function bucket_recovery_wait()
+    local status_index = box.space._bucket.index.status
+    while vutil.index_has(status_index, vconst.BUCKET.READONLY) or
+          vutil.index_has(status_index, vconst.BUCKET.SENDING) or
+          vutil.index_has(status_index, vconst.BUCKET.RECEIVING) do
+            vshard.storage.recovery_wakeup()
+    end
+end
+
 return {
     check_error = check_error,
     shuffle_masters = shuffle_masters,
@@ -233,4 +244,5 @@ return {
     git_checkout = git_checkout,
     portable_error = portable_error,
     is_timeout_error = is_timeout_error,
+    bucket_recovery_wait = bucket_recovery_wait,
 }

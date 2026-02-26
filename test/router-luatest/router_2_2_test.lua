@@ -1035,18 +1035,13 @@ g.test_retryable_transfer_in_progress = function(g)
         ilt.assert_equals(rs.uuid, uuid)
     end, {bid, g.replica_2_a:replicaset_uuid()})
 
-    -- Block bucket receive.
-    g.replica_1_a:exec(function()
-        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
-    end)
-
-    -- Start bucket send.
     g.replica_2_a:exec(function(bid, uuid)
-        rawset(_G, 'bucket_send_fiber', ifiber.create(function()
-            return ivshard.storage.bucket_send(
-                bid, uuid, {timeout = iwait_timeout})
-        end))
-        _G.bucket_send_fiber:set_joinable(true)
+        -- Block recovery so that the bucket is not made active.
+        _G.bucket_recovery_pause()
+        -- Break bucket sending.
+        ivshard.storage.bucket_refrw(bid)
+        local _, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 0.01})
+        ilt.assert(iverror.is_timeout(err))
         -- Drop ref, otherwise BUCKET_IS_LOCKED error will be thrown.
         ivshard.storage.internal.bucket_refs[bid] = nil
         return bid
@@ -1061,15 +1056,10 @@ g.test_retryable_transfer_in_progress = function(g)
         _G.callrw_fiber:set_joinable(true)
     end, {bid})
 
-    -- End bucket send.
-    g.replica_1_a:exec(function()
-        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
-    end)
+    -- Make bucket active again.
     g.replica_2_a:exec(function()
-        local ok, res = _G.bucket_send_fiber:join()
-        ilt.assert(ok and res)
-        _G.bucket_send_fiber = nil
-        _G.bucket_gc_wait()
+        _G.bucket_recovery_continue()
+        _G.bucket_recovery_wait()
     end)
 
     -- Request should end successfully.
@@ -1080,14 +1070,6 @@ g.test_retryable_transfer_in_progress = function(g)
         ilt.assert_equals(res, 123)
         _G.callrw_fiber = nil
     end)
-
-    -- Return the bucket back.
-    g.replica_1_a:exec(function(bid, uuid)
-        local _, err = ivshard.storage.bucket_send(
-            bid, uuid, {timeout = iwait_timeout})
-        ilt.assert_equals(err, nil)
-        _G.bucket_gc_wait()
-    end, {bid, g.replica_2_a:replicaset_uuid()})
 end
 
 --

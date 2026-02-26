@@ -629,6 +629,9 @@ vshard.storage.bucket_send(1, 'unknown uuid')
   message: Replicaset unknown uuid not found
   name: NO_SUCH_REPLICASET
 ...
+util.bucket_recovery_wait()
+---
+...
 -- gh-217: transfer to self.
 vshard.storage.bucket_send(1, util.replicasets[1])
 ---
@@ -639,6 +642,9 @@ vshard.storage.bucket_send(1, util.replicasets[1])
   name: MOVE_TO_SELF
   message: 'Cannot move: bucket 1 is already on replicaset <replicaset_1>'
   replicaset: <replicaset_1>
+...
+util.bucket_recovery_wait()
+---
 ...
 -- Successful transfer.
 vshard.storage.bucket_send(1, util.replicasets[2])

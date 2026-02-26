@@ -91,18 +91,14 @@ _ = test_run:switch('box_1_a')
 vshard.storage.buckets_info(1)
 
 --
--- Rebalancer takes buckets starting from the minimal id. If a
--- bucket with that ID is locked, it should try another. The case
--- makes bucket with minimal ID locked for RW requests. The only
--- function taking the lock is bucket_send, so to test that a
--- manual bucket_send is called before rebalancer.
+-- Cancel during bucket_send. In that case all the locks should
+-- be freed, obviously.
 --
 vshard.storage.rebalancer_enable()
 _ = test_run:switch('box_2_a')
 vshard.storage.rebalancer_enable()
 _ = test_run:switch('box_1_a')
 keep_lock = true
-send_result = nil
 -- To make first bucket_send keeping rw_lock it is necessary to
 -- make rw ref counter > 0.
 function keep_ref(id)								\
@@ -115,41 +111,13 @@ end
 fiber_to_ref = fiber.create(keep_ref, 1)
 while vshard.storage.buckets_info(1)[1].ref_rw ~= 1 do fiber.sleep(0.01) end
 
--- Now bucket_send on that bucket blocks.
+send_result = nil
 function do_send(id)								\
 	send_result = {								\
 		vshard.storage.bucket_send(id, util.replicasets[2],		\
 					   {timeout = 9999999})			\
 	}									\
 end
-fiber_to_lock = fiber.create(do_send, 1)
-while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
-
-
-cfg.sharding[util.replicasets[1]].weight = 99
-cfg.sharding[util.replicasets[2]].weight = 101
-cfg.rebalancer_disbalance_threshold = 0
-vshard.storage.cfg(cfg, box.info.uuid)
-wait_rebalancer_state('The cluster is balanced ok', test_run)
-
--- Cleanup after the test.
-keep_lock = false
-while not send_result do fiber.sleep(0.01) end
-send_result
-cfg.sharding[util.replicasets[1]].weight = nil
-cfg.sharding[util.replicasets[2]].weight = nil
-vshard.storage.cfg(cfg, box.info.uuid)
-wait_rebalancer_state('The cluster is balanced ok', test_run)
-
---
--- Cancel during bucket_send. In that case all the locks should
--- be freed, obviously.
---
-keep_lock = true
-fiber_to_ref = fiber.create(keep_ref, 1)
-while vshard.storage.buckets_info(1)[1].ref_rw ~= 1 do fiber.sleep(0.01) end
-
-send_result = nil
 fiber_to_lock = fiber.create(do_send, 1)
 while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 
