@@ -888,13 +888,11 @@ end
 --
 -- Perform Ref stage of the Ref-Map-Reduce process on all the known replicasets.
 --
-local function router_ref_storage_all(router, timeout)
+local function router_ref_storage_all(router, timeout, rid)
     local bucket_count = 0
     local err, err_id, args_builder, results
     local futures = {}
     local replicasets_all = router.replicasets
-    local rid = M.ref_id
-    M.ref_id = rid + 1
 
     timeout, err, err_id = router_ref_prepare(router, timeout)
     if not timeout then
@@ -924,23 +922,21 @@ local function router_ref_storage_all(router, timeout)
                             router.total_bucket_count - bucket_count)
         goto fail
     end
-    do return timeout, nil, nil, rid, replicasets_all end
+    do return timeout, nil, nil, replicasets_all end
 
     ::fail::
     for _, f in pairs(futures) do
         f:discard()
     end
-    return nil, err, err_id, rid, replicasets_all
+    return nil, err, err_id, replicasets_all
 end
 
 --
 -- replicasets, which contains all the listed bucket IDs.
 --
-local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
+local function router_ref_storage_by_buckets(router, bucket_ids, timeout, rid)
     local err, err_id, grouped_buckets, args_builder, results
     local replicasets_to_map, futures = {}, {}
-    local rid = M.ref_id
-    M.ref_id = rid + 1
     -- Nil checks are done explicitly here (== nil instead of 'not'), because
     -- netbox requests return box.NULL instead of nils.
     while next(bucket_ids) do
@@ -971,13 +967,13 @@ local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
         bucket_ids = router_ref_process_moved(router, replicasets_to_map,
                                               results)
     end
-    do return timeout, nil, nil, rid, replicasets_to_map end
+    do return timeout, nil, nil, replicasets_to_map end
 
     ::fail::
     for _, f in pairs(futures) do
         f:discard()
     end
-    return nil, err, err_id, rid, replicasets_to_map
+    return nil, err, err_id, replicasets_to_map
 end
 
 --
@@ -1167,17 +1163,20 @@ local function router_map_callrw(router, func, args, opts)
     else
         timeout = consts.CALL_TIMEOUT_MIN
     end
+    rid = M.ref_id
+    M.ref_id = rid + 1
     if plain_bucket_ids then
-        timeout, err, err_id, rid, replicasets_to_map =
-            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout)
+        timeout, err, err_id, replicasets_to_map =
+            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout,
+                                          rid)
         -- Grouped arguments are only possible with partial Map-Reduce.
         if timeout then
             grouped_args = router_group_map_callrw_args(
                 router, plain_bucket_ids, bucket_ids)
         end
     else
-        timeout, err, err_id, rid, replicasets_to_map =
-            router_ref_storage_all(router, timeout)
+        timeout, err, err_id, replicasets_to_map =
+            router_ref_storage_all(router, timeout, rid)
     end
     if timeout then
         map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
