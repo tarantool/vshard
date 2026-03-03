@@ -685,3 +685,180 @@ g.test_map_callrw_with_cdata_bucket_id = function(cg)
         ilt.assert_not(err)
     end)
 end
+
+g.test_full_map_callrw_with_numeric_bucket_ids = function(cg)
+    local res = router_do_map(cg.router, {123}, {
+        mode = 'full',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {1, 2, 3}
+    })
+    t.assert(res.err)
+    t.assert_equals(res.err.message, 'Router can\'t execute map_callrw ' ..
+                    'with \'full\' mode and numeric bucket_ids')
+    t.assert_not(res.err_id)
+    t.assert_not(res.val)
+end
+
+g.test_partial_map_callrw_with_nil_bucket_ids = function(cg)
+    local res = router_do_map(cg.router, {123}, {
+        mode = 'partial',
+        timeout = vtest.wait_timeout
+    })
+    t.assert(res.err)
+    t.assert_equals(res.err.message, 'Router can\'t execute map_callrw ' ..
+                    'with \'partial\' mode and nil bucket_ids')
+    t.assert_not(res.err_id)
+    t.assert_not(res.val)
+end
+
+local function make_do_map_tracking_bucket_ids(cg)
+    -- We override 'do_map' function on storages in order to check that
+    -- default arguments and bucket arguments were successfully passed into
+    -- destination storages according to mode and bucket_ids options.
+    vtest.cluster_exec_each_master(cg, function()
+        rawset(_G, 'old_do_map', _G.do_map)
+        rawset(_G, 'do_map', function(args, bucket_args)
+            ilt.assert_gt(require('vshard.storage.ref').count, 0)
+            return {ivutil.replicaset_uuid(),
+                    {args = args, b_args = bucket_args}}
+        end)
+    end)
+end
+
+local function reset_do_map_to_old_state(cg)
+    vtest.cluster_exec_each_master(cg, function()
+        rawset(_G, 'do_map', _G.old_do_map)
+    end)
+end
+
+g.test_full_map_callrw_with_split_args = function(cg)
+    make_do_map_tracking_bucket_ids(cg)
+    local bid1 = vtest.storage_first_bucket(g.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(g.replica_2_a)
+    local bid3 = vtest.storage_first_bucket(g.replica_3_a)
+
+    local res = router_do_map(cg.router, {0}, {
+        mode = 'full',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {[bid1] = {111}, [bid2] = {222}, [bid3] = {333}}
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {
+        [cg.rs1_uuid] = {{cg.rs1_uuid, {args = 0, b_args = {[bid1] = {111}}}}},
+        [cg.rs2_uuid] = {{cg.rs2_uuid, {args = 0, b_args = {[bid2] = {222}}}}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid, {args = 0, b_args = {[bid3] = {333}}}}},
+    })
+
+    res = router_do_map(cg.router, {0}, {
+        mode = 'full',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {[bid2] = {222}}
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {
+        [cg.rs1_uuid] = {{cg.rs1_uuid, {args = 0}}},
+        [cg.rs2_uuid] = {{cg.rs2_uuid, {args = 0, b_args = {[bid2] = {222}}}}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid, {args = 0}}},
+    })
+    reset_do_map_to_old_state(cg)
+end
+
+g.test_full_map_callrw_without_bucket_ids = function(cg)
+    make_do_map_tracking_bucket_ids(cg)
+    local res = router_do_map(cg.router, {0}, {
+        mode = 'full',
+        timeout = vtest.wait_timeout
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {
+        [cg.rs1_uuid] = {{cg.rs1_uuid, {args = 0}}},
+        [cg.rs2_uuid] = {{cg.rs2_uuid, {args = 0}}},
+        [cg.rs3_uuid] = {{cg.rs3_uuid, {args = 0}}},
+    })
+    reset_do_map_to_old_state(cg)
+end
+
+g.test_partial_map_callrw_with_numeric_bucket_ids = function(cg)
+    make_do_map_tracking_bucket_ids(cg)
+    local bid1 = vtest.storage_first_bucket(g.replica_1_a)
+    local res = router_do_map(cg.router, {0}, {
+        mode = 'partial',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {bid1}
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {[cg.rs1_uuid] = {{cg.rs1_uuid, {args = 0}}}})
+    reset_do_map_to_old_state(cg)
+end
+
+g.test_partial_map_callrw_with_split_args = function(cg)
+    make_do_map_tracking_bucket_ids(cg)
+    local bid1 = vtest.storage_first_bucket(g.replica_1_a)
+    local bid2 = vtest.storage_first_bucket(g.replica_2_a)
+    local res = router_do_map(cg.router, {0}, {
+        mode = 'partial',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {[bid1] = {111}, [bid2] = {222}}
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {
+        [cg.rs1_uuid] = {{cg.rs1_uuid, {args = 0, b_args = {[bid1] = {111}}}}},
+        [cg.rs2_uuid] = {{cg.rs2_uuid, {args = 0, b_args = {[bid2] = {222}}}}},
+    })
+    reset_do_map_to_old_state(cg)
+end
+
+local function move_bucket(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        t.helpers.retrying({timeout = 60}, function()
+            local res, err = ivshard.storage.bucket_send(bucket_id,
+                                                         replicaset_id)
+            t.assert_not(err)
+            t.assert(res)
+        end)
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+    src_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id), {})
+        end)
+    end, {bucket_id})
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:get(bucket_id).status, 'active')
+        end)
+    end, {bucket_id})
+end
+
+g.test_full_map_callrw_with_split_args_and_broken_cache = function(cg)
+    make_do_map_tracking_bucket_ids(cg)
+    cg.router:exec(function()
+        ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = true
+        ivshard.router.discovery_wakeup()
+    end)
+
+    local moved_bucket = vtest.storage_first_bucket(cg.replica_1_a)
+    move_bucket(g.replica_1_a, g.replica_2_a, moved_bucket)
+    local res = router_do_map(cg.router, {0}, {
+        mode = 'partial',
+        timeout = vtest.wait_timeout,
+        bucket_ids = {[moved_bucket] = {111}}
+    })
+    t.assert_not(res.err)
+    t.assert_not(res.err_id)
+    t.assert_equals(res.val, {
+        [cg.rs2_uuid] = {{cg.rs2_uuid, {args = 0,
+                                        b_args = {[moved_bucket] = {111}}}}},
+    })
+
+    cg.router:exec(function()
+        ivshard.router.internal.errinj.ERRINJ_LONG_DISCOVERY = false
+        ivshard.router.discovery_wakeup()
+    end)
+    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket)
+    reset_do_map_to_old_state(cg)
+end

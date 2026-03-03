@@ -29,6 +29,8 @@ local map_serializer = { __serialize = 'map' }
 local future_wait = util.future_wait
 
 local msgpack_is_object = lmsgpack.is_object
+local MAP_CALLRW_FULL = consts.MAP_CALLRW_MODE.FULL
+local MAP_CALLRW_PARTIAL = consts.MAP_CALLRW_MODE.PARTIAL
 
 if not util.feature.msgpack_object then
     local msg = 'Msgpack object feature is not supported by current '..
@@ -774,11 +776,11 @@ end
 --
 -- Prepares a cluster before sending refs to remote storages:
 --    1) Groups the buckets by replicasets according to the router's cache
---       in case of partial map_callrw;
+--       in case of partial map_callrw or full map_callrw with split args;
 --    2) Builds a table of replicasets on which refs should be sent;
 --    3) Waits necessary masters until all connections are established;
 --
-local function router_ref_prepare(router, timeout, bucket_ids)
+local function router_ref_prepare(router, timeout, mode, bucket_ids)
     local err, err_id, grouped_buckets
     local replicasets_to_wait = {}
     local replicasets_all = router.replicasets
@@ -789,12 +791,12 @@ local function router_ref_prepare(router, timeout, bucket_ids)
     if err ~= nil then
        return nil, err
     end
-    if next(bucket_ids) then
+    if mode == MAP_CALLRW_FULL then
+        replicasets_to_wait = replicasets_all
+    else
         for rs_id, _ in pairs(grouped_buckets) do
             table.insert(replicasets_to_wait, replicasets_all[rs_id])
         end
-    else
-        replicasets_to_wait = replicasets_all
     end
     -- Netbox async requests work only with active connections.
     -- So, we need to wait for the master connection explicitly.
@@ -863,7 +865,11 @@ end
 local function router_ref_process_moved(router, rs_to_map, results)
     local bucket_ids = {}
     for rs_id, res in pairs(results) do
-        for _, bucket in pairs(res.moved) do
+        if type(res) ~= 'table' then
+            goto continue
+        end
+        local moved = res.moved or {}
+        for _, bucket in pairs(moved) do
             local bid = bucket.id
             local dst = bucket.dst
             -- 'Reset' regardless of 'set'. So as not to
@@ -881,24 +887,43 @@ local function router_ref_process_moved(router, rs_to_map, results)
             -- referenced.
             rs_to_map[rs_id] = router.replicasets[rs_id]
         end
+        ::continue::
     end
     return bucket_ids
+end
+
+local function router_ref_process_existent(router, results)
+    for rs_id, res in pairs(results) do
+        for _, bucket_id in pairs(res) do
+            bucket_reset(router, bucket_id)
+            bucket_set(router, bucket_id, rs_id)
+        end
+    end
 end
 
 --
 -- Perform Ref stage of the Ref-Map-Reduce process on all the known replicasets.
 --
-local function router_ref_storage_all(router, timeout, rid)
+local function router_ref_storage_all(router, bucket_ids, timeout, rid)
+    local mode = MAP_CALLRW_FULL
     local bucket_count = 0
-    local err, err_id, args_builder, results
+    local err, err_id, grouped_buckets, args_builder, results
     local futures = {}
     local replicasets_all = router.replicasets
 
-    timeout, err, err_id = router_ref_prepare(router, timeout)
+    timeout, err, err_id, grouped_buckets = router_ref_prepare(
+        router, timeout, mode, bucket_ids)
     if not timeout then
         goto fail
     end
-    args_builder = function() return {'storage_ref', rid, timeout} end
+    args_builder = function(rs_id)
+        local buckets = grouped_buckets[rs_id] or {}
+        if grouped_buckets[rs_id] then
+            return {'storage_ref_make_with_buckets', rid, timeout, buckets}
+        else
+            return {'storage_ref', rid, timeout}
+        end
+    end
     timeout, err, err_id, futures = router_ref_send(router, timeout,
                                                     args_builder)
     if not timeout then
@@ -909,7 +934,24 @@ local function router_ref_storage_all(router, timeout, rid)
         goto fail
     end
     for _, res in pairs(results) do
-        bucket_count = bucket_count + res
+        local rs_total = type(res) == 'table' and res.total or res
+        bucket_count = bucket_count + rs_total
+    end
+    bucket_ids = router_ref_process_moved(router, {}, results)
+    if bucket_ids then
+        args_builder = function()
+            return {'storage_ref_check_existent', rid, bucket_ids}
+        end
+        timeout, err, err_id, futures = router_ref_send(router, timeout,
+                                                        args_builder)
+        if not timeout then
+            goto fail
+        end
+        timeout, err, err_id, results = router_ref_collect(futures, timeout)
+        if not timeout then
+            goto fail
+        end
+        router_ref_process_existent(router, results)
     end
     -- All refs are done but not all buckets are covered. This is odd and can
     -- mean many things. The most possible ones: 1) outdated configuration on
@@ -935,13 +977,14 @@ end
 -- replicasets, which contains all the listed bucket IDs.
 --
 local function router_ref_storage_by_buckets(router, bucket_ids, timeout, rid)
+    local mode = MAP_CALLRW_PARTIAL
     local err, err_id, grouped_buckets, args_builder, results
     local replicasets_to_map, futures = {}, {}
     -- Nil checks are done explicitly here (== nil instead of 'not'), because
     -- netbox requests return box.NULL instead of nils.
     while next(bucket_ids) do
         timeout, err, err_id, grouped_buckets = router_ref_prepare(
-            router, timeout, bucket_ids)
+            router, timeout, mode, bucket_ids)
         if not timeout then
             goto fail
         end
@@ -996,13 +1039,14 @@ local function replicasets_map_reduce(replicasets, rid, func, args,
     --
     local func_args = {'storage_map', rid, func, args}
     for id, rs in pairs(replicasets) do
-        if grouped_args ~= nil then
+        local rs_args = grouped_args and grouped_args[id]
+        if rs_args then
             -- It's cheaper to push and then pop, rather then deepcopy
             -- arguments table for every call.
-            table.insert(args, grouped_args[id])
+            table.insert(args, rs_args)
         end
         local res, err = rs:callrw('vshard.storage._call', func_args, opts_map)
-        if grouped_args ~= nil then
+        if rs_args then
             table.remove(args)
         end
         if res == nil then
@@ -1101,13 +1145,49 @@ local function router_group_map_callrw_args(router, bucket_ids, bucket_args)
 end
 
 --
+-- Set the appropriate mode according to bucket_ids option for backward
+-- compatibility (in case of opts_mode is nil) and check the given opts_mode
+-- correctness in other cases.
+--
+local function router_check_map_callrw_mode(opts_mode, bucket_ids)
+    if opts_mode == nil then
+        return bucket_ids and MAP_CALLRW_PARTIAL or MAP_CALLRW_FULL
+    end
+    if opts_mode == MAP_CALLRW_PARTIAL and bucket_ids == nil then
+        return nil, lerror.make('Router can\'t execute map_callrw with ' ..
+                                '\'partial\' mode and nil bucket_ids')
+    end
+    if opts_mode == MAP_CALLRW_FULL and util.table_is_numeric(bucket_ids) then
+        return nil, lerror.make('Router can\'t execute map_callrw with ' ..
+                                '\'full\' mode and numeric bucket_ids')
+    end
+    return opts_mode
+end
+
+--
 -- Consistent Map-Reduce. The given function is called on masters in the cluster
 -- with a guarantee that in case of success it was executed with all buckets
 -- being accessible for reads and writes.
 --
--- The selection of masters depends on bucket_ids option. When specified, the
--- Map-Reduce is performed only on masters having at least one of these buckets.
--- Otherwise it is executed on all the masters in the cluster.
+-- The selection of masters depends on 'mode' and 'bucket_ids' options. There
+-- are 2 general modes how map_callrw can be executed:
+--    1) mode = 'partial'. In this mode user function will be executed on
+--       storages that have at least one bucket of 'bucket_ids'. The
+--       'bucket_ids' option can be presented in two ways: like a numeric array
+--       of buckets' ids or like a map of buckets' arguments. In first one user
+--       function will only receive args, in second one it will additionally
+--       receive buckets' arguments.
+--    2) mode = 'full'. In this mode user function will be executed with args on
+--       all storages in cluster. If we pass 'bucket_ids' like a map of bucket's
+--       arguments the user function will additionally receive buckets'
+--       arguments on those storages that have at least one bucket of
+--       'bucket_ids'.
+--
+-- If we didn't specify the 'mode' option, then it is set based on 'bucket_ids'
+-- option - if 'bucket_ids' is presented, the mode will be 'partial' otherwise
+-- 'full'. Also the next combination of map_callrw options can lead to error:
+-- <mode = 'partial', bucket_ids = nil> and <mode = 'full', bucket_ids =
+-- numeric_array>.
 --
 -- Consistency in scope of map-reduce means all the data was accessible, and
 -- didn't move during map requests execution. To preserve the consistency there
@@ -1130,6 +1210,8 @@ end
 -- @param func Name of the function to call.
 -- @param args Function arguments passed in netbox style (as an array).
 -- @param opts Options. See below:
+--     - mode - a string option ('full' / 'partial') that represents a way of
+--         execution of user function on destination storages.
 --     - timeout - a number of seconds. Note that the refs may end up being kept
 --         on the storages during this entire timeout if something goes wrong.
 --         For instance, network issues appear. This means better not use a
@@ -1153,8 +1235,13 @@ end
 --
 local function router_map_callrw(router, func, args, opts)
     local replicasets_to_map, err, err_id, map, rid
-    local timeout, do_return_raw, bucket_ids, plain_bucket_ids, grouped_args
+    local mode, timeout, do_return_raw, bucket_ids, plain_bucket_ids,
+        grouped_args
     if opts then
+        mode, err = router_check_map_callrw_mode(opts.mode, opts.bucket_ids)
+        if err then
+            return nil, err
+        end
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
         do_return_raw = opts.return_raw
         bucket_ids = opts.bucket_ids
@@ -1162,27 +1249,26 @@ local function router_map_callrw(router, func, args, opts)
             util.table_keys(bucket_ids)
     else
         timeout = consts.CALL_TIMEOUT_MIN
+        mode = MAP_CALLRW_FULL
     end
     rid = M.ref_id
     M.ref_id = rid + 1
-    if plain_bucket_ids then
+    if mode == MAP_CALLRW_FULL then
+        timeout, err, err_id, replicasets_to_map =
+            router_ref_storage_all(router, plain_bucket_ids, timeout, rid)
+    else
         timeout, err, err_id, replicasets_to_map =
             router_ref_storage_by_buckets(router, plain_bucket_ids, timeout,
                                           rid)
-        -- Grouped arguments are only possible with partial Map-Reduce.
-        if timeout then
+    end
+    if timeout then
+        if plain_bucket_ids then
             grouped_args = router_group_map_callrw_args(
                 router, plain_bucket_ids, bucket_ids)
         end
-    else
-        timeout, err, err_id, replicasets_to_map =
-            router_ref_storage_all(router, timeout, rid)
-    end
-    if timeout then
-        map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
-            args, grouped_args, {
-                timeout = timeout, return_raw = do_return_raw
-            })
+        opts = {timeout = timeout, return_raw = do_return_raw, mode = mode}
+        map, err, err_id = replicasets_map_reduce(
+            replicasets_to_map, rid, func, args, grouped_args, opts)
         if map then
             return map
         end
