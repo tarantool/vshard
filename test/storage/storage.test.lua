@@ -89,6 +89,14 @@ alerts = vshard.storage.info().alerts
 _ = test_run:cmd("start server storage_2_a")
 _ = test_run:switch("storage_2_a")
 fiber = require('fiber')
+-- We need to wakeup the rebalancer service in order to establish netbox
+-- connections to masters. It is done explicitly because on_master_enable
+-- service can block rebalancer and recovery execution. In this test we
+-- need to get a valid vshard.storage.info() and without connections to
+-- masters the test will fail.
+vshard.storage.rebalancer_wakeup()
+test_run:wait_log('storage_2_a', 'connected to replica.*storage_1_a')
+test_run:wait_log('storage_2_a', 'connected to replica.*storage_2_a')
 info = vshard.storage.info()
 --
 -- gh-144: do not warn about low redundancy if it is a desired
