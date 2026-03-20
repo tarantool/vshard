@@ -846,6 +846,31 @@ local function info_assert_alert(alerts, alert_name)
     t.fail(('There is no %s in alerts').format(alert_name))
 end
 
+local function bucket_wait_transfer(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:select(bucket_id), {})
+        end)
+    end, {bucket_id})
+    dest_storage:exec(function(bucket_id)
+        t.helpers.retrying({timeout = 10}, function()
+            t.assert_equals(box.space._bucket:get(bucket_id).status, 'active')
+        end)
+    end, {bucket_id})
+end
+
+local function bucket_move(src_storage, dest_storage, bucket_id)
+    src_storage:exec(function(bucket_id, replicaset_id)
+        t.helpers.retrying({timeout = 60}, function()
+            local res, err = ivshard.storage.bucket_send(bucket_id,
+                                                         replicaset_id)
+            t.assert_not(err)
+            t.assert(res)
+        end)
+    end, {bucket_id, dest_storage:replicaset_uuid()})
+    bucket_wait_transfer(src_storage, dest_storage, bucket_id)
+end
+
 -- Git directory of the project and data directory of the test.
 -- Used in evolution tests to fetch old versions of vshard.
 local sourcedir = fio.abspath(os.getenv('PACKPACK_GIT_SOURCEDIR') or
@@ -896,4 +921,6 @@ return {
     vardir = vardir,
     clear_test_cfg_options = clear_test_cfg_options,
     info_assert_alert = info_assert_alert,
+    bucket_move = bucket_move,
+    bucket_wait_transfer = bucket_wait_transfer,
 }
