@@ -923,4 +923,5 @@ return {
     info_assert_alert = info_assert_alert,
     bucket_move = bucket_move,
     bucket_wait_transfer = bucket_wait_transfer,
+    storage_wait_pairsync = storage_wait_pairsync,
 }
