@@ -389,6 +389,26 @@ local function index_has(idx, key)
 end
 
 --
+-- Compare two vclocks according to comparator. The function returns true if
+-- all vclock's components satisfy the comparator condition.
+--
+local function vclock_compare(vclock_1, vclock_2, comparator)
+    local result = true
+    for i, lsn in ipairs(vclock_1) do
+        if i == 0 then
+            -- Skip local component.
+            goto continue
+        end
+        result = result and comparator(lsn, vclock_2[i])
+        if not result then
+            break
+        end
+        ::continue::
+    end
+    return result
+end
+
+--
 -- Dictionary of supported core features on the given instance. Try to use it
 -- in all the other code rather than direct version check.
 --
@@ -503,4 +523,5 @@ return {
     replicaset_uuid = replicaset_uuid,
     uri_format = uri_format,
     module_unload_functions = module_unload_functions,
+    vclock_compare = vclock_compare,
 }

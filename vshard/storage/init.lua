@@ -1142,23 +1142,6 @@ end
 -- Replicaset
 --------------------------------------------------------------------------------
 
--- Vclock comparing function
-local function vclock_lesseq(vc1, vc2)
-    local lesseq = true
-    for i, lsn in ipairs(vc1) do
-        if i == 0 then
-            -- Skip local component.
-            goto continue
-        end
-        lesseq = lesseq and lsn <= (vc2[i] or 0)
-        if not lesseq then
-            break
-        end
-        ::continue::
-    end
-    return lesseq
-end
-
 local function is_replica_in_configuration(replica)
     local is_named = M.this_replica.id == M.this_replica.name
     local id = is_named and replica.name or replica.uuid
@@ -1201,8 +1184,9 @@ local function wait_lsn(timeout, interval)
             end
 
             local down = replica.downstream
-            if not down or (down.status == 'stopped' or
-                            not vclock_lesseq(vclock, down.vclock)) then
+            local comparator = function(c1, c2) return c1 <= (c2 or 0) end
+            if not down or down.status == 'stopped' or
+                not util.vclock_compare(vclock, down.vclock, comparator) then
                 done = false
                 break
             end
