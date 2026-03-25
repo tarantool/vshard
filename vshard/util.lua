@@ -388,6 +388,42 @@ local function index_has(idx, key)
     return index_min(idx, key) ~= nil
 end
 
+---
+--- Compare two vclocks using a component-by-component comparison (i.e. each
+--- component of vclock_1 is compared with the corresponding component
+--- of vclock_2). Local components are skipped.
+---
+--- @return 1 if vclock_1 is strictly greater than vclock_2
+--- @return -1 if vclock_1 is strictly less than vclock_2
+--- @return 0 if vclock_1 is equal to vclock_2.
+--- @return nil if vclock_1 and vclock_2 are incomparable or if either is nil.
+---
+local function vclock_compare(vclock_1, vclock_2)
+    if not vclock_1 or not vclock_2 then
+        return nil
+    end
+    local le, ge = true, true
+    for i, lsn in ipairs(vclock_1) do
+        if i == 0 then
+            -- Skip local component.
+            goto continue
+        end
+        le = le and lsn <= (vclock_2[i] or 0)
+        ge = ge and lsn >= (vclock_2[i] or 0)
+        if not le and not ge then
+            return nil
+        end
+        ::continue::
+    end
+    if ge and not le then
+        return 1
+    end
+    if le and not ge then
+        return -1
+    end
+    return 0
+end
+
 --
 -- Dictionary of supported core features on the given instance. Try to use it
 -- in all the other code rather than direct version check.
@@ -513,4 +549,5 @@ return {
     uri_format = uri_format,
     module_unload_functions = module_unload_functions,
     errinj_countdown = errinj_countdown,
+    vclock_compare = vclock_compare,
 }
