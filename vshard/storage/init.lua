@@ -1142,23 +1142,6 @@ end
 -- Replicaset
 --------------------------------------------------------------------------------
 
--- Vclock comparing function
-local function vclock_lesseq(vc1, vc2)
-    local lesseq = true
-    for i, lsn in ipairs(vc1) do
-        if i == 0 then
-            -- Skip local component.
-            goto continue
-        end
-        lesseq = lesseq and lsn <= (vc2[i] or 0)
-        if not lesseq then
-            break
-        end
-        ::continue::
-    end
-    return lesseq
-end
-
 local function is_replica_in_configuration(replica)
     local is_named = M.this_replica.id == M.this_replica.name
     local id = is_named and replica.name or replica.uuid
@@ -1177,14 +1160,15 @@ local function is_replica_in_configuration(replica)
     return true
 end
 
-local function wait_lsn(timeout, interval)
-    local info = box.info
-    local current_id = info.id
-    local vclock = info.vclock
+local function storage_wait_vclock_template(timeout, interval, comparator)
+    local current_id = box.info.id
     local deadline = fiber_clock() + timeout
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
+            -- The current vclock may be changed between iterations. We need to
+            -- track the most recent one.
+            local vclock = box.info.vclock
             -- We should not check the current instance as there's
             -- no downstream. Moreover, it's not guaranteed that the
             -- first replica is the same as the current one, so ids
@@ -1201,8 +1185,8 @@ local function wait_lsn(timeout, interval)
             end
 
             local down = replica.downstream
-            if not down or (down.status == 'stopped' or
-                            not vclock_lesseq(vclock, down.vclock)) then
+            if not down or down.status == 'stopped' or
+                not util.vclock_compare(vclock, down.vclock, comparator) then
                 done = false
                 break
             end
@@ -1216,11 +1200,22 @@ local function wait_lsn(timeout, interval)
     return nil, lerror.timeout()
 end
 
+--
+-- Waits until current master successfully replicates all data to other
+-- replicas. It means that all components of master's vclock will not
+-- superior to replcas' vclock components.
+--
+local function storage_wait_vclock_replicated(timeout, interval)
+    return storage_wait_vclock_template(timeout, interval, function(c1, c2)
+        return c1 <= (c2 or 0)
+    end)
+end
+
 local function sync(timeout)
     if timeout ~= nil and type(timeout) ~= 'number' then
         error('Usage: vshard.storage.sync([timeout: number])')
     end
-    return wait_lsn(timeout or M.sync_timeout, 0.001)
+    return storage_wait_vclock_replicated(timeout or M.sync_timeout, 0.001)
 end
 
 --------------------------------------------------------------------------------
@@ -2099,8 +2094,8 @@ end
 -- were approved for deletion.
 --
 local function gc_bucket_process_sent_one_batch_xc(batch)
-    local ok, err = wait_lsn(consts.GC_WAIT_LSN_TIMEOUT,
-                             consts.GC_WAIT_LSN_STEP)
+    local ok, err = storage_wait_vclock_replicated(consts.GC_WAIT_LSN_TIMEOUT,
+                                                   consts.GC_WAIT_LSN_STEP)
     if not ok then
         local msg = 'Failed to delete sent buckets - could not sync '..
                     'with replicas'
