@@ -299,3 +299,23 @@ test_group.test_table_keys = function()
     t.assert_equals(table_keys({['a'] = 1, ['b'] = 2}), {'a', 'b'})
     t.assert_equals(table_keys({[1] = 'a', [3] = 'b'}), {3, 1})
 end
+
+test_group.test_vclock_compare = function()
+    local vclock_compare = vutil.vclock_compare
+    -- Local components are not counted.
+    t.assert_equals(vclock_compare({[0] = 0, [1] = 1}, {[0] = 0, [1] = 1}), 0)
+    t.assert_equals(vclock_compare({[0] = 7, [1] = 1}, {[0] = 8, [1] = 1}), 0)
+    t.assert_equals(vclock_compare({[0] = 0, [1] = 1}, {[1] = 1}), 0)
+    t.assert_equals(vclock_compare({[1] = 1}, {[0] = 0, [1] = 1}), 0)
+    -- Equal vclocks.
+    t.assert_equals(vclock_compare({[1] = 1, [2] = 2}, {[1] = 1, [2] = 2}), 0)
+    -- vclock_1 < vclock_2.
+    t.assert_equals(vclock_compare({[1] = 1}, {[1] = 2}), -1)
+    -- vclock_1 > vclock_2.
+    t.assert_equals(vclock_compare({[1] = 2}, {[1] = 1}), 1)
+    -- vclocks are not compatible
+    t.assert_not(vclock_compare({[1] = 10, [2] = 11}, {[1] = 11, [2] = 10}))
+    -- vclock is nil
+    t.assert_not(vclock_compare({[1] = 2}, nil, 1))
+    t.assert_not(vclock_compare(nil, {[1] = 2}, 1))
+end
