@@ -95,6 +95,8 @@ _bucket:select{}
 
 _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
+vshard.storage.recovery_wakeup()
+while _bucket.index.status:count({'active'}) ~= 3 do fiber.sleep(0.01) end
 _bucket:select{}
 
 --

@@ -162,10 +162,14 @@ end)
 util.check_error(vshard.router.call, 1, 'read', 'echo', {123})
 vshard.router.buckets_info(0, 3)
 _ = test_run:cmd('start server storage_2_a')
-
+_ = test_run:switch('storage_2_a')
+test_run:wait_log('storage_2_a', 'New master has synchronized with other replicas')
+vshard.storage.rebalancer_wakeup()
+vshard.storage.recovery_wakeup()
 --
 -- gh-26: API to get netbox by bucket identifier.
 --
+_ = test_run:switch('router_1')
 vshard.router.route(vshard.consts.DEFAULT_BUCKET_COUNT + 100)
 util.check_error(vshard.router.route, 'asdfg')
 util.check_error(vshard.router.route)

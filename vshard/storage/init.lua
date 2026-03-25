@@ -115,6 +115,11 @@ if not M then
         -- Control whether _bucket changes should be validated and rejected if
         -- are invalid.
         is_bucket_protected = true,
+        -- Flag whether a newly elected master is synchronized with other
+        -- replicas in replicaset (that is it has the same vclock). It is
+        -- needed to prevent the doubled buckets in the cluster during
+        -- rebalancing and recovery process.
+        buckets_are_in_sync = true,
         --
         -- Incremental generation of the _bucket space. It is
         -- incremented on each _bucket change and is used to
@@ -176,6 +181,10 @@ if not M then
         -- to it.
         instance_watch_fiber = nil,
         instance_watch_service = nil,
+        -- Fiber for waiting until newly elected master synchronizes it's
+        -- vclock with other replicas in replicaset.
+        on_master_enable_fiber = nil,
+        on_master_enable_service = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -1045,6 +1054,13 @@ local function recovery_service_f(service, limiter)
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
         service:next_iter()
+        if not M.buckets_are_in_sync then
+            is_all_recovered = false
+            local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+            limiter:log_warn(err, service:set_status_error(
+                'Error during the start of recovery: %s', err))
+            goto sleep
+        end
         if M.errinj.ERRINJ_RECOVERY_PAUSE then
             M.errinj.ERRINJ_RECOVERY_PAUSE = 1
             lfiber.testcancel()
@@ -1208,6 +1224,17 @@ end
 local function storage_wait_vclock_replicated(timeout, interval)
     return storage_wait_vclock_template(timeout, interval, function(c1, c2)
         return c1 <= (c2 or 0)
+    end)
+end
+
+--
+-- Waits until current master successfully downloads all data from other
+-- replicas. It means that all components of master's vclock will surpass
+-- all replcas' vclock components.
+--
+local function storage_wait_vclock_caught_up(timeout, interval)
+    return storage_wait_vclock_template(timeout, interval, function(c1, c2)
+        return c1 >= (c2 or 0)
     end)
 end
 
@@ -2703,7 +2730,16 @@ end
 -- Main applier of rebalancer routes. It manages worker fibers,
 -- logs total results.
 --
-local function rebalancer_service_apply_routes_f(service, routes)
+local function rebalancer_service_apply_routes_f(service, limiter, routes)
+    while not M.buckets_are_in_sync  do
+        local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+        limiter:log_error(err, service:set_status_error(
+            'Error during the start of rabalancing: %s, ' ..
+            'retry rebalancing later', err))
+        lfiber.testcancel()
+        service:set_activity('idling')
+        lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+    end
     lfiber.name('vshard.rebalancer_applier')
     service:set_activity('applying routes')
     local worker_count = M.rebalancer_worker_count
@@ -2759,9 +2795,12 @@ end
 
 local function rebalancer_apply_routes_f(routes)
     assert(not M.routes_applier_service)
-    local service = lservice_info.new('routes_applier')
+    local name = 'routes_applier'
+    local service = lservice_info.new(name)
+    local ratelimit = lratelimit.create{name = name}
     M.routes_applier_service = service
-    local ok, err = pcall(rebalancer_service_apply_routes_f, service, routes)
+    local ok, err = pcall(rebalancer_service_apply_routes_f, service,
+                          ratelimit, routes)
     -- Delay service destruction in order to check states and errors
     while M.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY do
         lfiber.sleep(0.001)
@@ -2847,6 +2886,16 @@ local function rebalancer_service_f(service, limiter)
             M.rebalancer_service:set_activity('disabled')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+        end
+        if not M.buckets_are_in_sync then
+            local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+            limiter:log_error(err, service:set_status_error(
+                'Error during the start of rabalancing: %s, ' ..
+                'retry rebalancing later', err))
+            service:set_activity('idling')
+            lfiber.testcancel()
+            lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+            goto continue
         end
         service:set_activity('downloading states')
         lfiber.testcancel()
@@ -3385,8 +3434,44 @@ end
 -- Master management
 --------------------------------------------------------------------------------
 
+local function on_master_enable_service_f(service)
+    lfiber.testcancel()
+    M.buckets_are_in_sync = false
+    service:set_activity('idling')
+    if storage_wait_vclock_caught_up(consts.TIMEOUT_INFINITY,
+                                     consts.NEW_MASTER_WAIT_LSN_STEP) then
+        lfiber.testcancel()
+        service:set_activity('synced')
+        log.info('New master has synchronized with other replicas')
+        M.buckets_are_in_sync = true
+        if M.on_master_enable_fiber then
+            log.info('on_master_enable stopped')
+            M.on_master_enable_fiber:cancel()
+        end
+        return
+    end
+end
+
+local function on_master_enable_f()
+    local service = lservice_info.new('on_master_enable')
+    M.on_master_enable_service = service
+    local ok, err = pcall(on_master_enable_service_f, service)
+    M.on_master_enable_fiber = nil
+    if M.on_master_enable_service == service then
+        M.on_master_enable_service = nil
+    end
+    if not ok then
+        error(err)
+    end
+end
+
 local function master_role_update()
     if this_is_master() and M.is_configured then
+        if not M.on_master_enable_fiber then
+            M.on_master_enable_fiber =
+                util.reloadable_fiber_new('on_master_enable', M,
+                                          'on_master_enable_f')
+        end
         if not M.collect_bucket_garbage_fiber then
             M.collect_bucket_garbage_fiber =
                 util.reloadable_fiber_new('vshard.gc', M, 'gc_bucket_f')
@@ -4174,6 +4259,7 @@ M.recovery_f = recovery_f
 M.rebalancer_f = rebalancer_f
 M.gc_bucket_f = gc_bucket_f
 M.instance_watch_f = instance_watch_f
+M.on_master_enable_f = on_master_enable_f
 
 M.api_call_cache = storage_api_call_unsafe
 
