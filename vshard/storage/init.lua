@@ -115,6 +115,11 @@ if not M then
         -- Control whether _bucket changes should be validated and rejected if
         -- are invalid.
         is_bucket_protected = true,
+        -- Flag whether a newly elected master is synchronized with other
+        -- replicas in replicaset (that is it has the same vclock). It is
+        -- needed to prevent the doubled buckets in the cluster during
+        -- rebalancing and recovery process.
+        buckets_are_in_sync = true,
         --
         -- Incremental generation of the _bucket space. It is
         -- incremented on each _bucket change and is used to
@@ -176,6 +181,10 @@ if not M then
         -- to it.
         instance_watch_fiber = nil,
         instance_watch_service = nil,
+        -- Fiber for waiting until newly elected master synchronizes it's
+        -- vclock with other replicas in replicaset.
+        on_master_enable_fiber = nil,
+        on_master_enable_service = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -1059,6 +1068,13 @@ local function recovery_service_f(service, limiter)
     -- there was found a bug, and reload fixes it.
     while module_version == M.module_version do
         service:next_iter()
+        if not M.buckets_are_in_sync then
+            is_all_recovered = false
+            local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+            limiter:log_warn(err, service:set_status_error(
+                'Error during the start of recovery: %s', err))
+            goto sleep
+        end
         if M.errinj.ERRINJ_RECOVERY_PAUSE then
             M.errinj.ERRINJ_RECOVERY_PAUSE = 1
             lfiber.testcancel()
@@ -1156,23 +1172,6 @@ end
 -- Replicaset
 --------------------------------------------------------------------------------
 
--- Vclock comparing function
-local function vclock_lesseq(vc1, vc2)
-    local lesseq = true
-    for i, lsn in ipairs(vc1) do
-        if i == 0 then
-            -- Skip local component.
-            goto continue
-        end
-        lesseq = lesseq and lsn <= (vc2[i] or 0)
-        if not lesseq then
-            break
-        end
-        ::continue::
-    end
-    return lesseq
-end
-
 local function is_replica_in_configuration(replica)
     local is_named = M.this_replica.id == M.this_replica.name
     local id = is_named and replica.name or replica.uuid
@@ -1191,14 +1190,15 @@ local function is_replica_in_configuration(replica)
     return true
 end
 
-local function wait_lsn(timeout, interval)
-    local info = box.info
-    local current_id = info.id
-    local vclock = info.vclock
+local function storage_wait_vclock_template(timeout, interval, comparator)
+    local current_id = box.info.id
     local deadline = fiber_clock() + timeout
     repeat
         local done = true
         for _, replica in ipairs(box.info.replication) do
+            -- The current vclock may be changed between iterations. We need to
+            -- track the most recent one.
+            local vclock = box.info.vclock
             -- We should not check the current instance as there's
             -- no downstream. Moreover, it's not guaranteed that the
             -- first replica is the same as the current one, so ids
@@ -1215,8 +1215,8 @@ local function wait_lsn(timeout, interval)
             end
 
             local down = replica.downstream
-            if not down or (down.status == 'stopped' or
-                            not vclock_lesseq(vclock, down.vclock)) then
+            if not down or down.status == 'stopped' or
+                not util.vclock_compare(vclock, down.vclock, comparator) then
                 done = false
                 break
             end
@@ -1230,11 +1230,33 @@ local function wait_lsn(timeout, interval)
     return nil, lerror.timeout()
 end
 
+--
+-- Waits until current master successfully replicates all data to other
+-- replicas. It means that all components of master's vclock will not
+-- superior to replcas' vclock components.
+--
+local function storage_wait_vclock_replicated(timeout, interval)
+    return storage_wait_vclock_template(timeout, interval, function(c1, c2)
+        return c1 <= (c2 or 0)
+    end)
+end
+
+--
+-- Waits until current master successfully downloads all data from other
+-- replicas. It means that all components of master's vclock will surpass
+-- all replcas' vclock components.
+--
+local function storage_wait_vclock_caught_up(timeout, interval)
+    return storage_wait_vclock_template(timeout, interval, function(c1, c2)
+        return c1 >= (c2 or 0)
+    end)
+end
+
 local function sync(timeout)
     if timeout ~= nil and type(timeout) ~= 'number' then
         error('Usage: vshard.storage.sync([timeout: number])')
     end
-    return wait_lsn(timeout or M.sync_timeout, 0.001)
+    return storage_wait_vclock_replicated(timeout or M.sync_timeout, 0.001)
 end
 
 --------------------------------------------------------------------------------
@@ -2113,8 +2135,8 @@ end
 -- were approved for deletion.
 --
 local function gc_bucket_process_sent_one_batch_xc(batch)
-    local ok, err = wait_lsn(consts.GC_WAIT_LSN_TIMEOUT,
-                             consts.GC_WAIT_LSN_STEP)
+    local ok, err = storage_wait_vclock_replicated(consts.GC_WAIT_LSN_TIMEOUT,
+                                                   consts.GC_WAIT_LSN_STEP)
     if not ok then
         local msg = 'Failed to delete sent buckets - could not sync '..
                     'with replicas'
@@ -2722,7 +2744,16 @@ end
 -- Main applier of rebalancer routes. It manages worker fibers,
 -- logs total results.
 --
-local function rebalancer_service_apply_routes_f(service, routes)
+local function rebalancer_service_apply_routes_f(service, limiter, routes)
+    while not M.buckets_are_in_sync  do
+        local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+        limiter:log_error(err, service:set_status_error(
+            'Error during the start of rabalancing: %s, ' ..
+            'retry rebalancing later', err))
+        lfiber.testcancel()
+        service:set_activity('idling')
+        lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+    end
     lfiber.name('vshard.rebalancer_applier')
     service:set_activity('applying routes')
     local worker_count = M.rebalancer_worker_count
@@ -2778,9 +2809,12 @@ end
 
 local function rebalancer_apply_routes_f(routes)
     assert(not M.routes_applier_service)
-    local service = lservice_info.new('routes_applier')
+    local name = 'routes_applier'
+    local service = lservice_info.new(name)
+    local ratelimit = lratelimit.create{name = name}
     M.routes_applier_service = service
-    local ok, err = pcall(rebalancer_service_apply_routes_f, service, routes)
+    local ok, err = pcall(rebalancer_service_apply_routes_f, service,
+                          ratelimit, routes)
     -- Delay service destruction in order to check states and errors
     while M.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY do
         lfiber.sleep(0.001)
@@ -2866,6 +2900,16 @@ local function rebalancer_service_f(service, limiter)
             M.rebalancer_service:set_activity('disabled')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_IDLE_INTERVAL)
+        end
+        if not M.buckets_are_in_sync then
+            local err = lerror.vshard(lerror.code.MASTER_NOT_SYNCED)
+            limiter:log_error(err, service:set_status_error(
+                'Error during the start of rabalancing: %s, ' ..
+                'retry rebalancing later', err))
+            service:set_activity('idling')
+            lfiber.testcancel()
+            lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
+            goto continue
         end
         service:set_activity('downloading states')
         lfiber.testcancel()
@@ -3404,8 +3448,44 @@ end
 -- Master management
 --------------------------------------------------------------------------------
 
+local function on_master_enable_service_f(service)
+    lfiber.testcancel()
+    M.buckets_are_in_sync = false
+    service:set_activity('idling')
+    if storage_wait_vclock_caught_up(consts.TIMEOUT_INFINITY,
+                                     consts.NEW_MASTER_WAIT_LSN_STEP) then
+        lfiber.testcancel()
+        service:set_activity('synced')
+        log.info('New master has synchronized with other replicas')
+        M.buckets_are_in_sync = true
+        if M.on_master_enable_fiber then
+            log.info('on_master_enable stopped')
+            M.on_master_enable_fiber:cancel()
+        end
+        return
+    end
+end
+
+local function on_master_enable_f()
+    local service = lservice_info.new('on_master_enable')
+    M.on_master_enable_service = service
+    local ok, err = pcall(on_master_enable_service_f, service)
+    M.on_master_enable_fiber = nil
+    if M.on_master_enable_service == service then
+        M.on_master_enable_service = nil
+    end
+    if not ok then
+        error(err)
+    end
+end
+
 local function master_role_update()
     if this_is_master() and M.is_configured then
+        if not M.on_master_enable_fiber then
+            M.on_master_enable_fiber =
+                util.reloadable_fiber_new('on_master_enable', M,
+                                          'on_master_enable_f')
+        end
         if not M.collect_bucket_garbage_fiber then
             M.collect_bucket_garbage_fiber =
                 util.reloadable_fiber_new('vshard.gc', M, 'gc_bucket_f')
@@ -4193,6 +4273,7 @@ M.recovery_f = recovery_f
 M.rebalancer_f = rebalancer_f
 M.gc_bucket_f = gc_bucket_f
 M.instance_watch_f = instance_watch_f
+M.on_master_enable_f = on_master_enable_f
 
 M.api_call_cache = storage_api_call_unsafe
 

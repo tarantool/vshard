@@ -132,32 +132,6 @@ local function start_partial_bucket_move(src_storage, dest_storage, bucket_id)
     end, {bucket_id})
 end
 
-local function wait_for_bucket_is_transferred(src_storage, dest_storage,
-                                              bucket_id)
-    src_storage:exec(function(bucket_id)
-        t.helpers.retrying({timeout = 10}, function()
-            t.assert_equals(box.space._bucket:select(bucket_id), {})
-        end)
-    end, {bucket_id})
-    dest_storage:exec(function(bucket_id)
-        t.helpers.retrying({timeout = 10}, function()
-            t.assert_equals(box.space._bucket:get(bucket_id).status, 'active')
-        end)
-    end, {bucket_id})
-end
-
-local function move_bucket(src_storage, dest_storage, bucket_id)
-    src_storage:exec(function(bucket_id, replicaset_id)
-        t.helpers.retrying({timeout = 60}, function()
-            local res, err = ivshard.storage.bucket_send(bucket_id,
-                                                         replicaset_id)
-            t.assert_not(err)
-            t.assert(res)
-        end)
-    end, {bucket_id, dest_storage:replicaset_uuid()})
-    wait_for_bucket_is_transferred(src_storage, dest_storage, bucket_id)
-end
-
 --
 -- Reduce spam of "Finish bucket recovery step" logs and add logging of
 -- recovered buckets in recovery service (gh-212).
@@ -200,10 +174,8 @@ test_group.test_no_logs_while_unsuccess_recovery = function(g)
         t.assert(g.replica_1_a:grep_log('Finish bucket recovery step'))
         t.assert(g.replica_1_a:grep_log('Recovered buckets'))
     end)
-    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
-                                   hung_bucket_id_1)
-    wait_for_bucket_is_transferred(g.replica_2_a, g.replica_1_a,
-                                   hung_bucket_id_2)
+    vtest.bucket_wait_transfer(g.replica_2_a, g.replica_1_a, hung_bucket_id_1)
+    vtest.bucket_wait_transfer(g.replica_2_a, g.replica_1_a, hung_bucket_id_2)
 end
 
 --
@@ -211,9 +183,9 @@ end
 --
 test_group.test_rebalancer_routes_logging = function(g)
     local moved_bucket_from_2 = vtest.storage_first_bucket(g.replica_2_a)
-    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket_from_2)
+    vtest.bucket_move(g.replica_2_a, g.replica_1_a, moved_bucket_from_2)
     local moved_bucket_from_3 = vtest.storage_first_bucket(g.replica_3_a)
-    move_bucket(g.replica_3_a, g.replica_1_a, moved_bucket_from_3)
+    vtest.bucket_move(g.replica_3_a, g.replica_1_a, moved_bucket_from_3)
     vtest.cluster_rebalancer_enable(g)
     t.helpers.retrying({timeout = 60}, function()
         g.replica_1_a:exec(function() ivshard.storage.rebalancer_wakeup() end)
@@ -241,7 +213,7 @@ end
 test_group.test_no_log_spam_when_buckets_no_active = function(g)
     vtest.cluster_rebalancer_enable(g)
     local moved_bucket = vtest.storage_first_bucket(g.replica_1_a)
-    move_bucket(g.replica_1_a, g.replica_2_a, moved_bucket)
+    vtest.bucket_move(g.replica_1_a, g.replica_2_a, moved_bucket)
     vtest.storage_stop(g.replica_2_a)
     local err_log = string.format('Error during downloading rebalancer ' ..
                                   'states:.*"replicaset_id":"%s"',
@@ -251,6 +223,6 @@ test_group.test_no_log_spam_when_buckets_no_active = function(g)
         t.assert(g.replica_1_a:grep_log(err_log))
     end)
     vtest.storage_start(g.replica_2_a, global_cfg)
-    move_bucket(g.replica_2_a, g.replica_1_a, moved_bucket)
+    vtest.bucket_move(g.replica_2_a, g.replica_1_a, moved_bucket)
     vtest.cluster_rebalancer_disable(g)
 end

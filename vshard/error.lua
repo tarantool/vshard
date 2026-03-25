@@ -207,6 +207,10 @@ local error_message_template = {
         msg = 'Mismatch server name: expected "%s", but got "%s"',
         args = {'expected_name', 'actual_name'},
     },
+    [42] = {
+        name = 'MASTER_NOT_SYNCED',
+        msg = 'Newly elected master hasn\'t synchronized yet',
+    }
 }
 
 --

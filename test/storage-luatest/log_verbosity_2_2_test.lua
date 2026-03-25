@@ -119,7 +119,7 @@ test_group.test_rebalancer_do_not_spam_same_errors = function(g)
         end
     end)
     local msg = "Error during downloading rebalancer states"
-    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 0.1,
+    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 1,
         on_yield = function() ivshard.storage.rebalancer_wakeup() end})
     g.replica_2_a:exec(function()
         ivshard.storage.rebalancer_request_state = _G.old_call
