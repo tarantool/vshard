@@ -3494,6 +3494,27 @@ local function storage_call(bucket_id, mode, name, args)
     return ok, ret1, ret2, ret3
 end
 
+local function bucket_get_existent(bucket_ids)
+    local res = {}
+    for _, bucket_id in pairs(bucket_ids) do
+        local bucket = M.bucket_refs[bucket_id] or
+                       box.space._bucket:get{bucket_id}
+        if bucket and bucket.status ~= BGARBAGE and bucket.status ~= BSENT then
+            table.insert(res, bucket_id)
+        end
+    end
+    return res
+end
+
+local function storage_ref_check_existent(rid, bucket_ids)
+    local ok, err = lref.check(rid, box.session.id())
+    if not ok then
+        return nil, err
+    end
+    bucket_ids = bucket_ids or {}
+    return bucket_get_existent(bucket_ids)
+end
+
 --
 -- Bind a new storage ref to the current box session. Is used as a part of
 -- Map-Reduce API.
@@ -3558,11 +3579,11 @@ local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
     if #moved == #bucket_ids then
         -- If all the passed buckets are absent, there is no need to create a
         -- ref.
-        return {moved = moved}
+        return {moved = moved, total = bucket_count()}
     end
     local bucket_generation = M.bucket_generation
-    local ok, err = storage_ref(rid, timeout)
-    if not ok then
+    local bucket_count, err = storage_ref(rid, timeout)
+    if not bucket_count then
         return nil, err
     end
     if M.bucket_generation ~= bucket_generation then
@@ -3571,10 +3592,10 @@ local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
         moved = bucket_get_moved(bucket_ids)
         if #moved == #bucket_ids then
             storage_unref(rid)
-            return {moved = moved}
+            return {moved = moved, total = bucket_count}
         end
     end
-    return {is_done = true, moved = moved}
+    return {is_done = true, moved = moved, total = bucket_count}
 end
 
 --
@@ -3696,6 +3717,7 @@ service_call_api = setmetatable({
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
     storage_ref = storage_ref,
+    storage_ref_check_existent = storage_ref_check_existent,
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
