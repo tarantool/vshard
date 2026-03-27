@@ -28,6 +28,39 @@ local cfg_template = {
 }
 local global_cfg
 
+local function get_config_for_specific_version(hash)
+    local path = g.vshard_copy_path_load
+    local lua_path = string.format('%s/?.lua;%s/?/init.lua;', path, path)
+    -- Force 'require' to use new directory
+    return {env = {['LUA_PATH'] = lua_path .. os.getenv('LUA_PATH')}}
+end
+
+local function create_cluster_on_specific_version(hash)
+    git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
+    local server_config = get_config_for_specific_version(hash)
+    vtest.cluster_new(g, global_cfg, server_config)
+    vtest.cluster_bootstrap(g, global_cfg)
+    vtest.cluster_rebalancer_disable(g)
+
+    vtest.cluster_exec_each_master(g, function()
+        local test = box.schema.space.create('test', {format = {
+            {'id', 'unsigned'},
+            {'bucket_id', 'unsigned'},
+        }})
+
+        test:create_index('primary')
+        test:create_index('bucket_id', {unique = false, parts = {2}})
+    end)
+    vtest.cluster_exec_each(g, function()
+        rawset(_G, 'insert', function(space_name, tuple)
+            return box.space[space_name]:insert(tuple)
+        end)
+        rawset(_G, 'get', function(space_name, key)
+            return box.space[space_name]:get(key)
+        end)
+    end)
+end
+
 g.before_all(function()
     -- Override of the built in modules is available only since 2.11.0.
     t.run_only_if(vutil.version_is_at_least(2, 11, 0, nil, 0, 0))
@@ -62,31 +95,7 @@ g.before_all(function()
 
     -- Hash of the latest commit for testing router on the latest version.
     g.latest_hash = git_util.log_hashes({args = '-1', dir = vtest.sourcedir})[1]
-
-    -- No need to reload storages. Just run them on the latest version.
-    vtest.cluster_new(g, global_cfg)
-    vtest.cluster_bootstrap(g, global_cfg)
-    vtest.cluster_rebalancer_disable(g)
-
-    -- Basic storage configuration
-    vtest.cluster_exec_each_master(g, function()
-        local test = box.schema.space.create('test', {format = {
-            {'id', 'unsigned'},
-            {'bucket_id', 'unsigned'},
-        }})
-
-        test:create_index('primary')
-        test:create_index('bucket_id', {unique = false, parts = {2}})
-    end)
-
-    vtest.cluster_exec_each(g, function()
-        rawset(_G, 'insert', function(space_name, tuple)
-            return box.space[space_name]:insert(tuple)
-        end)
-        rawset(_G, 'get', function(space_name, key)
-            return box.space[space_name]:get(key)
-        end)
-    end)
+    create_cluster_on_specific_version(g.latest_hash)
 end)
 
 g.after_all(function()
@@ -115,7 +124,7 @@ end
 --         * Checkout to old version;
 --         * Create and start a router;
 --     3. Test smth on the old version;
---     4. Invoke reload_router():
+--     4. Invoke reload_server():
 --         * Checkout to the latest version;
 --         * Reload the module.
 --     5. Test smth on the new version
@@ -123,47 +132,48 @@ end
 --
 local function create_router_at(hash)
     git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
-    local path = g.vshard_copy_path_load
-    local lua_path = string.format("%s/?.lua;%s/?/init.lua;", path, path)
-    local router = vtest.router_new(g, 'router', nil, {
-        env = {
-            -- Force 'require' to use new directory
-            ['LUA_PATH'] = lua_path .. os.getenv('LUA_PATH')
-        },
-    })
+    local server_config = get_config_for_specific_version(hash)
+    local router = vtest.router_new(g, 'router', nil, server_config)
     router_cfg(router, global_cfg)
     return router
 end
 
 --
--- Reloads router. If service_name is provided, then
+-- Reloads server (router or storage). If service_name is provided, then
 -- the function also waits until the service is restarted.
-local function reload_router(router, service_name)
+--
+local function reload_server(server, server_type, service_name)
     git_util.exec('checkout', {args = g.latest_hash .. ' -f',
                                dir = g.vshard_copy_path})
-    router:exec(function(service_name)
+    server:exec(function(server_type, service_name)
         local service
-        local internal = ivshard.router.internal
+        local internal = ivshard[server_type].internal
         if service_name ~= nil then
-            service = internal.static_router[service_name]
+            if server_type == 'router' then
+                service = internal.static_router[service_name]
+            else
+                service = internal[service_name]
+            end
             ilt.assert_not_equals(service, nil)
         end
 
-        ilt.assert_equals(ivshard.router.module_version(), 0)
-        package.loaded['vshard.router'] = nil
-        ivshard.router = require('vshard.router')
+        local package_name = string.format('vshard.%s', server_type)
+        ilt.assert_equals(ivshard[server_type].module_version(), 0)
+        package.loaded[package_name] = nil
+        ivshard[server_type] = require(package_name)
         _G.ivconst = require('vshard.consts')
-        ilt.assert_equals(ivshard.router.module_version(), 1)
+        ilt.assert_equals(ivshard[server_type].module_version(), 1)
 
         if service ~= nil then
             ilt.helpers.retrying({timeout = ivtest.wait_timeout,
                                   delay = ivtest.busy_step}, function()
-                if service == internal.static_router[service_name] then
+                if service == internal.static_router[service_name] or
+                   service == internal[service_name] then
                     error('Service have not been reloaded yet')
                 end
             end)
         end
-    end, {service_name})
+    end, {server_type, service_name})
 end
 
 local function test_basic_template(router)
@@ -185,7 +195,7 @@ g.test_basic = function(g)
     local router = create_router_at(hash)
     router_assert_version_equals(router, nil)
     test_basic_template(router)
-    reload_router(router)
+    reload_server(router, 'router')
     router_assert_version_equals(router, vconsts.VERSION)
     test_basic_template(router)
     vtest.drop_instance(g, router)
@@ -228,7 +238,7 @@ g.test_discovery = function(g)
     local router = create_router_at(hash)
     router_assert_version_equals(router, nil)
     test_discovery_template(g, router)
-    reload_router(router, 'discovery_service')
+    reload_server(router, 'router', 'discovery_service')
     router_assert_version_equals(router, vconsts.VERSION)
     test_discovery_template(g, router)
     vtest.drop_instance(g, router)
@@ -327,7 +337,7 @@ g.test_master_search = function(g)
     local auto_master_cfg = vtest.config_new(auto_master_cfg_template)
 
     test_master_search_template(g, router, auto_master_cfg)
-    reload_router(router)
+    reload_server(router, 'router')
     router_assert_version_equals(router, vconsts.VERSION)
     -- Wait for old master_search service to be stopped.
     router:exec(function()
