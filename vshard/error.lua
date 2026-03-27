@@ -212,6 +212,11 @@ local error_message_template = {
         msg = "Master %s of replicaset %s has not synchronized yet",
         args = {'replica', 'replicaset'},
     },
+    [43] = {
+        name = 'UNSUPPORTED',
+        msg = 'Can\'t perform %s. Operation is not supported',
+        args = {'operation'},
+    },
 }
 
 --

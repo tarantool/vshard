@@ -250,14 +250,14 @@ test_group.test_ref_with_buckets_basic = function(g)
         res, err = ivshard.storage._call(
             'storage_ref_make_with_buckets', rid, iwait_timeout, {})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {}})
+        ilt.assert_equals(res, {moved = {}, total = 10})
         ilt.assert_equals(lref.count, 0)
 
         -- Check for a single ok bucket.
         res, err = ivshard.storage._call(
             'storage_ref_make_with_buckets', rid, iwait_timeout, {bids[1]})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {is_done = true, moved = {}})
+        ilt.assert_equals(res, {is_done = true, moved = {}, total = 10})
         ilt.assert_equals(lref.count, 1)
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
@@ -268,7 +268,7 @@ test_group.test_ref_with_buckets_basic = function(g)
             'storage_ref_make_with_buckets', rid, iwait_timeout,
             {bids[1], bids[2]})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {is_done = true, moved = {}})
+        ilt.assert_equals(res, {is_done = true, moved = {}, total = 10})
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
 
@@ -277,7 +277,7 @@ test_group.test_ref_with_buckets_basic = function(g)
             'storage_ref_make_with_buckets', rid, iwait_timeout,
             {bids[1], bids[1]})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {is_done = true, moved = {}})
+        ilt.assert_equals(res, {is_done = true, moved = {}, total = 10})
         ilt.assert_equals(lref.count, 1)
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
@@ -295,7 +295,8 @@ test_group.test_ref_with_buckets_basic = function(g)
                 {id = bucket_count + 1},
                 {id = bucket_count + 2},
                 {id = bucket_count + 3},
-            }
+            },
+            total = 10,
         })
         _, err = ivshard.storage._call('storage_unref', rid)
         ilt.assert_equals(err, nil)
@@ -308,7 +309,7 @@ test_group.test_ref_with_buckets_basic = function(g)
             {bucket_count + 1, bucket_count + 2}
         )
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {
+        ilt.assert_equals(res, {total = 10, moved = {
             {id = bucket_count + 1},
             {id = bucket_count + 2},
         }})
@@ -355,7 +356,7 @@ test_group.test_ref_with_buckets_return_last_known_dst = function(g)
         local res, err = ivshard.storage._call(
             'storage_ref_make_with_buckets', rid, iwait_timeout, {bid})
         ilt.assert_equals(err, nil)
-        ilt.assert_equals(res, {moved = {{
+        ilt.assert_equals(res, {total = 10, moved = {{
             id = bid,
             dst = id,
             status = ivconst.BUCKET.SENT,
@@ -406,6 +407,7 @@ test_group.test_ref_with_buckets_move_part_while_referencing = function(g)
         ilt.assert_equals(res, {
             moved = {{id = bids[2], dst = id}},
             is_done = true,
+            total = 8,
         })
         -- Ref was done, because at least one bucket was ok.
         ilt.assert_equals(lref.count, 1)
@@ -458,7 +460,8 @@ test_group.test_ref_with_buckets_move_all_while_referencing = function(g)
             moved = {
                 {id = bids[1], dst = id},
                 {id = bids[2], dst = id},
-            }
+            },
+            total = 8,
         })
         -- Ref was not done, because all the buckets moved out.
         ilt.assert_equals(lref.count, 0)

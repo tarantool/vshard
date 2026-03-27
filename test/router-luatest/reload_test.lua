@@ -28,16 +28,16 @@ local cfg_template = {
 }
 local global_cfg
 
-local function get_config_for_specific_version()
+local function get_config_for_specific_version(g)
     local path = g.vshard_copy_path_load
     local lua_path = string.format('%s/?.lua;%s/?/init.lua;', path, path)
     -- Force 'require' to use new directory
     return {env = {['LUA_PATH'] = lua_path .. os.getenv('LUA_PATH')}}
 end
 
-local function create_cluster_on_specific_version(hash)
+local function create_cluster_on_specific_version(g, hash)
     git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
-    local server_config = get_config_for_specific_version()
+    local server_config = get_config_for_specific_version(g)
     vtest.cluster_new(g, global_cfg, server_config)
     vtest.cluster_bootstrap(g, global_cfg)
     vtest.cluster_rebalancer_disable(g)
@@ -58,17 +58,21 @@ local function create_cluster_on_specific_version(hash)
         rawset(_G, 'get', function(space_name, key)
             return box.space[space_name]:get(key)
         end)
+        rawset(_G, 'do_map', function(args, bucket_args)
+            ilt.assert_gt(require('vshard.storage.ref').count, 0)
+            return {ivutil.replicaset_uuid(),
+                    {args = args, b_args = bucket_args}}
+        end)
     end)
 end
 
-g.before_all(function()
+local function prepare_temp_workspace(g)
     -- Override of the built in modules is available only since 2.11.0.
     t.run_only_if(vutil.version_is_at_least(2, 11, 0, nil, 0, 0))
     global_cfg = vtest.config_new(cfg_template)
 
     -- The test works in the following directory
-    local vardir = vtest.vardir or fio.tempdir()
-    g.vshard_copy_path_load =  vardir .. '/vshard_copy'
+    g.vshard_copy_path_load = fio.tempdir() .. '/vshard_copy'
     t.assert_equals(fio.mkdir(g.vshard_copy_path_load), true)
     --
     -- Tarantool searches for compilation units in the following order:
@@ -86,7 +90,7 @@ g.before_all(function()
     -- So we can use package.setsearchroot() to change cwd, luatest's `chdir`
     -- or override. The last one is used here, since it's the easiest.
     --
-    g.vshard_copy_path =  vardir .. '/vshard_copy/override'
+    g.vshard_copy_path = g.vshard_copy_path_load .. '/override'
     t.assert_equals(fio.mkdir(g.vshard_copy_path), true)
     -- Copy source to the temporary directory
     t.assert_equals(fio.mkdir(g.vshard_copy_path .. '/.git'), true)
@@ -95,10 +99,21 @@ g.before_all(function()
 
     -- Hash of the latest commit for testing router on the latest version.
     g.latest_hash = git_util.log_hashes({args = '-1', dir = vtest.sourcedir})[1]
-    create_cluster_on_specific_version(g.latest_hash)
+end
+
+local function remove_temp_workspace(g)
+    local is_success, err = fio.rmtree(g.vshard_copy_path_load)
+    t.assert_not(err)
+    t.assert(is_success)
+end
+
+g.before_all(function()
+    prepare_temp_workspace(g)
+    create_cluster_on_specific_version(g, g.latest_hash)
 end)
 
 g.after_all(function()
+    remove_temp_workspace(g)
     g.cluster:drop()
 end)
 
@@ -130,9 +145,9 @@ end
 --     5. Test smth on the new version
 --     6. Drop a router with vtest.drop_instance
 --
-local function create_router_at(hash)
+local function create_router_at(g, hash)
     git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
-    local server_config = get_config_for_specific_version()
+    local server_config = get_config_for_specific_version(g)
     local router = vtest.router_new(g, 'router', nil, server_config)
     router_cfg(router, global_cfg)
     return router
@@ -142,7 +157,7 @@ end
 -- Reloads server (router or storage). If service_name is provided, then
 -- the function also waits until the service is restarted.
 --
-local function reload_server(server, server_type, service_name)
+local function reload_server(g, server, server_type, service_name)
     git_util.exec('checkout', {args = g.latest_hash .. ' -f',
                                dir = g.vshard_copy_path})
     server:exec(function(server_type, service_name)
@@ -192,10 +207,10 @@ g.test_basic = function(g)
     -- Latest meaningful commit:
     --     "router: fix reload problem with global function refs".
     local hash = '139223269cddefe2ba4b8e9f6e44712f099f4b35'
-    local router = create_router_at(hash)
+    local router = create_router_at(g, hash)
     router_assert_version_equals(router, nil)
     test_basic_template(router)
-    reload_server(router, 'router')
+    reload_server(g, router, 'router')
     router_assert_version_equals(router, vconsts.VERSION)
     test_basic_template(router)
     vtest.drop_instance(g, router)
@@ -235,10 +250,10 @@ g.test_discovery = function(g)
     -- the test cannot be run without it:
     --     "router: add saving of background service statuses".
     local hash = 'f5f386a5a35e6e5efd8f4f2ed1b3d208fdae9095'
-    local router = create_router_at(hash)
+    local router = create_router_at(g, hash)
     router_assert_version_equals(router, nil)
     test_discovery_template(g, router)
-    reload_server(router, 'router', 'discovery_service')
+    reload_server(g, router, 'router', 'discovery_service')
     router_assert_version_equals(router, vconsts.VERSION)
     test_discovery_template(g, router)
     vtest.drop_instance(g, router)
@@ -323,7 +338,7 @@ g.test_master_search = function(g)
     -- the test cannot be run without it:
     --     "router: add saving of background service statuses".
     local hash = 'f5f386a5a35e6e5efd8f4f2ed1b3d208fdae9095'
-    local router = create_router_at(hash)
+    local router = create_router_at(g, hash)
     router_assert_version_equals(router, nil)
 
     -- Enable auto master search
@@ -337,7 +352,7 @@ g.test_master_search = function(g)
     local auto_master_cfg = vtest.config_new(auto_master_cfg_template)
 
     test_master_search_template(g, router, auto_master_cfg)
-    reload_server(router, 'router')
+    reload_server(g, router, 'router')
     router_assert_version_equals(router, vconsts.VERSION)
     -- Wait for old master_search service to be stopped.
     router:exec(function()
@@ -352,4 +367,81 @@ g.test_master_search = function(g)
     end)
     test_master_search_template(g, router, auto_master_cfg)
     vtest.drop_instance(g, router)
+end
+
+local g2 = t.group('reload_storage')
+
+g2.before_all(function()
+    prepare_temp_workspace(g2)
+    -- Full map_callrw with split args was introduced just right after
+    -- this commit. We need to test the behavior of map_callrw on old
+    -- storage versions in order to check that there will be no crashes
+    -- of storages due to changes in storage_ref_* functions.
+    -- Latest meaningful commit:
+    --     "Bump version to 0.1.41"
+    create_cluster_on_specific_version(g2,
+        '42081581f25e671a17fddb7f9873ddcf5b0130c6')
+end)
+
+g2.after_all(function()
+    remove_temp_workspace(g2)
+    g2.cluster:drop()
+end)
+
+g2.test_map_callrw = function(g2)
+    local rs_uuids = {g2.replica_1_a:replicaset_uuid(),
+                      g2.replica_2_a:replicaset_uuid()}
+    local router = vtest.router_new(g2, 'router')
+    router_cfg(router, global_cfg)
+    -- The latest router and old masters
+    router:exec(function(rs1_uuid, rs2_uuid)
+        -- Full map_callrw
+        local res, err, err_id = ivshard.router.map_callrw('do_map', {'arg_1'},
+            {timeout = ivtest.wait_timeout, mode = 'full'})
+        t.assert_not(err)
+        t.assert_not(err_id)
+        t.assert_equals(res, {
+            [rs1_uuid] = {{rs1_uuid, {args = 'arg_1'}}},
+            [rs2_uuid] = {{rs2_uuid, {args = 'arg_1'}}},
+        })
+        -- Full map_callrw with split args
+        res, err, err_id = ivshard.router.map_callrw('do_map', {'arg_1'},
+            {timeout = 3, mode = 'full', bucket_ids = {[1] = {'b_arg_1'}}})
+        t.assert_equals(err.name, 'UNSUPPORTED')
+        t.assert_not(err_id)
+        t.assert_not(res)
+        -- Partial map_callrw with numeric buckets' args
+        res, err, err_id = ivshard.router.map_callrw('do_map', {'arg_1'},
+            {timeout = 3, mode = 'partial', bucket_ids = {1,}})
+        t.assert_not(err)
+        t.assert_not(err_id)
+        t.assert_equals(res, {
+            [rs1_uuid] = {{rs1_uuid, {args = 'arg_1'}}},
+        })
+        -- Partial map_callrw with split args
+        res, err, err_id = ivshard.router.map_callrw('do_map', {'arg_1'},
+            {timeout = 3, mode = 'partial', bucket_ids = {[1] = {'b_arg_1'}}})
+        t.assert_not(err)
+        t.assert_not(err_id)
+        t.assert_equals(res, {
+            [rs1_uuid] = {{rs1_uuid, {args = 'arg_1',
+                                      b_args = {{'b_arg_1'}}}}},
+        })
+    end, rs_uuids)
+    for _, storage in pairs({g2.replica_1_a, g2.replica_2_a}) do
+        reload_server(g2, storage, 'storage')
+    end
+    -- The latest router and latest masters
+    router:exec(function(rs1_uuid, rs2_uuid)
+        -- Full map_callrw with split args
+        local res, err, err_id = ivshard.router.map_callrw('do_map', {'arg_1'},
+            {timeout = 3, mode = 'full', bucket_ids = {[1] = {'b_arg_1'}}})
+        t.assert_not(err)
+        t.assert_not(err_id)
+        t.assert_equals(res, {
+            [rs1_uuid] = {{rs1_uuid, {args = 'arg_1',
+                                      b_args = {{'b_arg_1'}}}}},
+            [rs2_uuid] = {{rs2_uuid, {args = 'arg_1'}}},
+        })
+    end, rs_uuids)
 end
