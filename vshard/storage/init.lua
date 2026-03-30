@@ -441,12 +441,11 @@ end
 local function bucket_are_all_rw_not_cache()
     local index_has = util.index_has
     local status_index = box.space._bucket.index.status
-    local status = consts.BUCKET
-    local res = not index_has(status_index, status.SENDING) and
-       not index_has(status_index, status.SENT) and
-       not index_has(status_index, status.RECEIVING) and
-       not index_has(status_index, status.GARBAGE) and
-       not index_has(status_index, status.READONLY)
+    local res = not index_has(status_index, BSENDING) and
+       not index_has(status_index, BSENT) and
+       not index_has(status_index, BRECEIVING) and
+       not index_has(status_index, BGARBAGE) and
+       not index_has(status_index, BREADONLY)
 
     M.bucket_are_all_rw_cache = res
     bucket_are_all_rw = bucket_are_all_rw_cache
@@ -3516,7 +3515,6 @@ end
 -- under any circumstances.
 --
 local function bucket_get_moved(bucket_ids)
-    local allstatus = consts.BUCKET
     local res = {}
     for _, bucket_id in pairs(bucket_ids) do
         local bucket = box.space._bucket:get{bucket_id}
@@ -3525,7 +3523,7 @@ local function bucket_get_moved(bucket_ids)
             is_moved = true
         else
             local status = bucket.status
-            is_moved = status == allstatus.GARBAGE or status == allstatus.SENT
+            is_moved = status == BGARBAGE or status == BSENT
         end
         if is_moved then
             table.insert(res, {
