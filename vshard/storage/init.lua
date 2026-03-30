@@ -3511,7 +3511,6 @@ end
 -- under any circumstances.
 --
 local function bucket_get_moved(bucket_ids)
-    local allstatus = consts.BUCKET
     local res = {}
     for _, bucket_id in pairs(bucket_ids) do
         local bucket = box.space._bucket:get{bucket_id}
@@ -3520,7 +3519,7 @@ local function bucket_get_moved(bucket_ids)
             is_moved = true
         else
             local status = bucket.status
-            is_moved = status == allstatus.GARBAGE or status == allstatus.SENT
+            is_moved = status == BGARBAGE or status == BSENT
         end
         if is_moved then
             table.insert(res, {
