@@ -80,7 +80,7 @@ jobs:
           tt version
 
       - name: Setup luatest
-        run: tt rocks install luatest
+        run: tt rocks install luatest 1.4.1
 
       - run: cmake .
       - run: make test-flaky
