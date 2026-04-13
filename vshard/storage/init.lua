@@ -445,6 +445,13 @@ local function bucket_status_is_transfer_in_progress(status)
 end
 
 --
+-- Check, whether the bucket should have the destination written.
+--
+local function bucket_status_has_destination(status)
+    return status ~= BACTIVE and status ~= BPINNED
+end
+
+--
 -- Handle a bad update of _bucket space.
 --
 local function bucket_reject_update(bid, message, ...)
@@ -940,10 +947,23 @@ local function recovery_local_bucket_is_active(local_bucket, remote_bucket)
     return status == BSENT or status == BGARBAGE
 end
 
-local function recovery_save_recovered(dict, id, status)
-    local ids = dict[status] or {}
-    table.insert(ids, id)
-    dict[status] = ids
+local bucket_recovery_checkers = {
+    [BSENT] = recovery_local_bucket_is_sent,
+    [BGARBAGE] = recovery_local_bucket_is_garbage,
+    [BACTIVE] = recovery_local_bucket_is_active,
+}
+
+local function bucket_recover(bucket_id, status, recovered_buckets)
+    if bucket_status_has_destination(status) then
+        -- Preserve the destination, just update the status.
+        box.space._bucket:update({bucket_id}, {{'=', 2, status}})
+    else
+        -- Replace the whole tuple, drop destination if it exists.
+        box.space._bucket:replace({bucket_id, status})
+    end
+    local ids = recovered_buckets[status] or {}
+    table.insert(ids, bucket_id)
+    recovered_buckets[status] = ids
 end
 
 --
@@ -1014,19 +1034,14 @@ local function recovery_step_by_type(type, limiter)
             log.info(start_format, type)
         end
         lfiber.testcancel()
-        if recovery_local_bucket_is_sent(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, BSENT}})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BSENT)
-        elseif recovery_local_bucket_is_garbage(bucket, remote_bucket) then
-            _bucket:update({bucket_id}, {{'=', 2, BGARBAGE}})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BGARBAGE)
-        elseif recovery_local_bucket_is_active(bucket, remote_bucket) then
-            _bucket:replace({bucket_id, BACTIVE})
-            recovered = recovered + 1
-            recovery_save_recovered(recovered_buckets, bucket_id, BACTIVE)
-        elseif is_step_empty then
+        for status, can_recover in pairs(bucket_recovery_checkers) do
+            if can_recover(bucket, remote_bucket) then
+                bucket_recover(bucket_id, status, recovered_buckets)
+                recovered = recovered + 1
+                break
+            end
+        end
+        if recovered == 0 and is_step_empty then
             log.info('Bucket %s is %s local and %s on replicaset %s, waiting',
                      bucket_id, bucket.status, remote_bucket.status, peer_id)
         end
@@ -1070,31 +1085,22 @@ local function recovery_service_f(service, limiter)
             goto sleep
         end
 
-        service:set_activity('recovering sending')
-        lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BSENDING, limiter)
-        if not ok then
-            is_all_recovered = false
-            limiter:log_error(total, service:set_status_error(
-                       'Error during sending buckets recovery: %s', total))
-        elseif total ~= recovered then
-            is_all_recovered = false
-        end
-
-        service:set_activity('recovering receiving')
-        lfiber.testcancel()
-        ok, total, recovered = pcall(recovery_step_by_type, BRECEIVING, limiter)
-        if not ok then
-            is_all_recovered = false
-            limiter:log_error(total, service:set_status_error(
-                'Error during receiving buckets recovery: %s', total))
-        elseif total == 0 then
-            bucket_receiving_quota_reset()
-        else
-            bucket_receiving_quota_add(recovered)
-            if total ~= recovered then
+        for _, status in ipairs({BSENDING, BRECEIVING}) do
+            lfiber.testcancel()
+            service:set_activity('recovering ' .. status)
+            ok, total, recovered = pcall(recovery_step_by_type, status, limiter)
+            if not ok then
+                is_all_recovered = false
+                limiter:log_error(total, service:set_status_error(
+                    'Error during %s buckets recovery: %s', status, total))
+            elseif total ~= recovered then
                 is_all_recovered = false
             end
+        end
+        if ok and total == 0 then
+            bucket_receiving_quota_reset()
+        elseif ok then
+            bucket_receiving_quota_add(recovered)
         end
 
     ::sleep::
