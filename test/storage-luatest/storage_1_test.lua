@@ -476,6 +476,7 @@ test_group.test_moved_buckets_various_statuses = function(g)
         ilt.assert_equals(ivconst.BUCKET, {
             ACTIVE = 'active',
             PINNED = 'pinned',
+            READONLY = 'readonly',
             SENDING = 'sending',
             SENT = 'sent',
             RECEIVING = 'receiving',
@@ -485,7 +486,7 @@ test_group.test_moved_buckets_various_statuses = function(g)
         _G.bucket_gc_pause()
         local luuid = require('uuid')
         -- +1 to delete and make it a 404 bucket.
-        local bids = _G.get_n_buckets(7)
+        local bids = _G.get_n_buckets(8)
 
         -- ACTIVE = bids[1].
         --
@@ -498,11 +499,15 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local bid_sending = bids[3]
         local id_sending = luuid.str()
         _bucket:update({bid_sending},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
+        _bucket:update({bid_sending},
             {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sending}})
 
         -- SENT = bids[4].
         local bid_sent = bids[4]
         local id_sent = luuid.str()
+        _bucket:update({bid_sent},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
         _bucket:update({bid_sent},
             {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sent}})
         _bucket:update({bid_sent},
@@ -511,6 +516,8 @@ test_group.test_moved_buckets_various_statuses = function(g)
         -- RECEIVING = bids[5].
         local bid_receiving = bids[5]
         local id_receiving = luuid.str()
+        _bucket:update({bid_receiving},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
         _bucket:update({bid_receiving},
             {{'=', 2, ivconst.BUCKET.SENDING}})
         _bucket:update({bid_receiving},
@@ -524,6 +531,8 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local bid_garbage = bids[6]
         local id_garbage = luuid.str()
         _bucket:update({bid_garbage},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
+        _bucket:update({bid_garbage},
             {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_garbage}})
         _bucket:update({bid_garbage},
             {{'=', 2, ivconst.BUCKET.SENT}})
@@ -533,12 +542,19 @@ test_group.test_moved_buckets_various_statuses = function(g)
         -- NOT EXISTING = bids[7].
         local bid_404 = bids[7]
         _bucket:update({bid_404},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
+        _bucket:update({bid_404},
             {{'=', 2, ivconst.BUCKET.SENDING}})
         _bucket:update({bid_404},
             {{'=', 2, ivconst.BUCKET.SENT}})
         _bucket:update({bid_404},
             {{'=', 2, ivconst.BUCKET.GARBAGE}})
         _bucket:delete({bid_404})
+
+        -- READONLY = bids[8].
+        local bid_readonly = bids[8]
+        _bucket:update({bid_readonly},
+            {{'=', 2, ivconst.BUCKET.READONLY}})
 
         local moved = ivshard.storage.internal.bucket_get_moved(bids)
         ilt.assert_items_equals(moved, {
@@ -583,6 +599,9 @@ test_group.test_moved_buckets_various_statuses = function(g)
             {{'=', 2, ivconst.BUCKET.ACTIVE}})
         -- PINNED.
         _bucket:update({bid_pinned},
+            {{'=', 2, ivconst.BUCKET.ACTIVE}})
+        -- READONLY.
+        _bucket:update({bid_readonly},
             {{'=', 2, ivconst.BUCKET.ACTIVE}})
 
         _G.bucket_recovery_continue()

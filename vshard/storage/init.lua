@@ -44,6 +44,7 @@ local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
 local BACTIVE = consts.BUCKET.ACTIVE
 local BPINNED = consts.BUCKET.PINNED
+local BREADONLY = consts.BUCKET.READONLY
 local BSENDING = consts.BUCKET.SENDING
 local BSENT = consts.BUCKET.SENT
 local BRECEIVING = consts.BUCKET.RECEIVING
@@ -382,7 +383,8 @@ local function bucket_are_all_rw_not_cache()
     local res = not index_has(status_index, status.SENDING) and
        not index_has(status_index, status.SENT) and
        not index_has(status_index, status.RECEIVING) and
-       not index_has(status_index, status.GARBAGE)
+       not index_has(status_index, status.GARBAGE) and
+       not index_has(status_index, status.READONLY)
 
     M.bucket_are_all_rw_cache = res
     bucket_are_all_rw = bucket_are_all_rw_cache
@@ -434,21 +436,22 @@ end
 -- Check if @a bucket can accept 'read' requests.
 --
 local function bucket_status_is_readable(status)
-    return bucket_status_is_writable(status) or status == BSENDING
+    return bucket_status_is_writable(status) or status == BSENDING or
+        status == BREADONLY
 end
 
 --
 -- Check if a bucket is sending or receiving.
 --
 local function bucket_status_is_transfer_in_progress(status)
-    return status == BSENDING or status == BRECEIVING
+    return status == BSENDING or status == BRECEIVING or status == BREADONLY
 end
 
 --
 -- Check, whether the bucket should have the destination written.
 --
 local function bucket_status_has_destination(status)
-    return status ~= BACTIVE and status ~= BPINNED
+    return status ~= BACTIVE and status ~= BPINNED and status ~= BREADONLY
 end
 
 --
@@ -493,8 +496,14 @@ end
 local bucket_state_edges = {
     -- From nothing. Have to cast nil to box.NULL explicitly then.
     [box.NULL] = {BRECEIVING},
-    [BACTIVE] = {BPINNED, BSENDING},
+    -- In the current code ACTIVE cannot become SENDING, only the transition
+    -- ACTIVE -> READONLY -> SENDING is allowed. However, it must be kept,
+    -- since if we're a replica and master works on top of an old version, it
+    -- may make ACTIVE bucket SENDING, and the replication should not be broken
+    -- in such case, replica should accept such change.
+    [BACTIVE] = {BPINNED, BSENDING, BREADONLY},
     [BPINNED] = {BACTIVE},
+    [BREADONLY] = {BACTIVE, BSENDING},
     [BSENDING] = {BACTIVE, BSENT},
     [BSENT] = {BGARBAGE},
     [BRECEIVING] = {BGARBAGE, BACTIVE},
@@ -985,8 +994,16 @@ local function recovery_step_by_type(type, limiter)
             goto continue
         end
         assert(bucket_status_is_transfer_in_progress(bucket.status))
-        local peer_id = bucket.destination
-        local destination = M.replicasets[peer_id]
+        local peer_id, destination, remote_bucket, err
+        if not bucket_status_has_destination(type) then
+            -- READONLY bucket status doesn't have destination and doesn't
+            -- require checking the remote bucket state, since it's guaranteed,
+            -- that the bucket has not been sent yet. Just recover it.
+            assert(type == BREADONLY)
+            goto recover
+        end
+        peer_id = bucket.destination
+        destination = M.replicasets[peer_id]
         if not destination then
             -- No replicaset master for a bucket. Wait until it
             -- appears.
@@ -999,7 +1016,7 @@ local function recovery_step_by_type(type, limiter)
             goto continue
         end
         lfiber.testcancel()
-        local remote_bucket, err = master_call(
+        remote_bucket, err = master_call(
             destination, 'vshard.storage._call',
             {'recovery_bucket_stat', bucket_id},
             {timeout = consts.RECOVERY_GET_STAT_TIMEOUT})
@@ -1023,6 +1040,7 @@ local function recovery_step_by_type(type, limiter)
         if remote_bucket and remote_bucket.is_transfering then
             goto continue
         end
+    ::recover::
         -- It is possible that during lookup a new request arrived
         -- which finished the transfer.
         bucket = _bucket:get{bucket_id}
@@ -1085,7 +1103,7 @@ local function recovery_service_f(service, limiter)
             goto sleep
         end
 
-        for _, status in ipairs({BSENDING, BRECEIVING}) do
+        for _, status in ipairs({BREADONLY, BSENDING, BRECEIVING}) do
             lfiber.testcancel()
             service:set_activity('recovering ' .. status)
             ok, total, recovered = pcall(recovery_step_by_type, status, limiter)
@@ -1299,12 +1317,13 @@ end
 local function bucket_refro(bucket_id)
     local ref = M.bucket_refs[bucket_id]
     if not ref then
-        local _, err = bucket_check_state(bucket_id, 'read')
+        local bucket, err = bucket_check_state(bucket_id, 'read')
         if err then
             return nil, err
         end
         ref = bucket_ref_new()
         ref.ro = 1
+        ref.rw_lock = not bucket_status_is_writable(bucket.status)
         M.bucket_refs[bucket_id] = ref
     elseif ref.ro_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
@@ -1384,19 +1403,6 @@ local function bucket_unrefrw(bucket_id)
         ref.rw = ref.rw - 1
     end
     return true
-end
-
---
--- Ensure that a bucket ref exists and can be referenced for an RW
--- request.
---
-local function bucket_refrw_touch(bucket_id)
-    local status, err = bucket_refrw(bucket_id)
-    if not status then
-        return nil, err
-    end
-    bucket_unrefrw(bucket_id)
-    return M.bucket_refs[bucket_id]
 end
 
 --
@@ -1814,23 +1820,43 @@ end
 --
 -- Send a bucket to other replicaset.
 --
-local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
+local function bucket_send_xc(bucket_id, destination, opts)
     local id = M.this_replicaset.id
     local status, ok
-    local ref, err = bucket_refrw_touch(bucket_id)
-    if not ref then
+    local bucket, err = bucket_check_state(bucket_id, 'write')
+    if err then
         return nil, err
     end
-    ref.rw_lock = true
-    exception_guard.ref = ref
-    exception_guard.drop_rw_lock = true
+    if bucket.status == BPINNED then
+        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
+    end
     if not opts or not opts.timeout then
         opts = opts and table.copy(opts) or {}
         opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
     end
     local timeout = opts.timeout
+    ok, err = lsched.move_start(timeout)
+    if not ok then
+        return nil, err
+    end
+    assert(lref.count == 0)
+    local _bucket = box.space._bucket
+    -- Move is scheduled only for the time of _bucket update because:
+    --
+    -- * it is consistent with bucket_recv() (see its comments);
+    --
+    -- * gives the same effect as if move was in the scheduler for the whole
+    --   bucket_send() time, because refs won't be able to start anyway - the
+    --   bucket is not writable.
+    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, BREADONLY})
+    lsched.move_end(1)
+    if not ok then
+        return nil, err
+    end
+
     local deadline = fiber_clock() + timeout
-    while ref.rw ~= 0 do
+    local ref = M.bucket_refs[bucket_id]
+    while ref and ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
         ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
         if not ok then
@@ -1839,13 +1865,8 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
         lfiber.testcancel()
     end
 
-    local _bucket = box.space._bucket
-    local bucket = _bucket:get({bucket_id})
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
-    end
-    if bucket.status == BPINNED then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
     end
     local replicaset = M.replicasets[destination]
     if replicaset == nil then
@@ -1861,25 +1882,11 @@ local function bucket_send_xc(bucket_id, destination, opts, exception_guard)
     local bucket_generation = M.bucket_generation
     local sendg = BSENDING
 
-    ok, err = lsched.move_start(timeout)
-    if not ok then
-        return nil, err
-    end
-    assert(lref.count == 0)
-    -- Move is scheduled only for the time of _bucket update because:
-    --
-    -- * it is consistent with bucket_recv() (see its comments);
-    --
-    -- * gives the same effect as if move was in the scheduler for the whole
-    --   bucket_send() time, because refs won't be able to start anyway - the
-    --   bucket is not writable.
     ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
-    lsched.move_end(1)
     if not ok then
         return nil, lerror.make(err)
     end
 
-    exception_guard.drop_rw_lock = false
     for _, space in pairs(spaces) do
         local index = space.index[idx]
         local space_data = {}
@@ -1957,12 +1964,7 @@ local function bucket_send(bucket_id, destination, opts)
     if not status then
         return nil, err
     end
-    local exception_guard = {}
-    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts,
-                             exception_guard)
-    if exception_guard.drop_rw_lock then
-        exception_guard.ref.rw_lock = false
-    end
+    status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
     bucket_transfer_end(bucket_id)
     if status then
         if ret then
@@ -2978,7 +2980,7 @@ local function rebalancer_request_state()
     local _bucket = box.space._bucket
     local status_index = _bucket.index.status
     local repl_id = M.this_replica.id
-    for _, status in pairs({BSENDING, BRECEIVING, BGARBAGE}) do
+    for _, status in pairs({BSENDING, BRECEIVING, BGARBAGE, BREADONLY}) do
         if #status_index:select({status}, {limit = 1}) > 0 then
             local err = string.format('Replica %s has %s buckets during ' ..
                                       'rebalancing', repl_id, status)
@@ -3996,6 +3998,7 @@ local function storage_info(opts)
     state.bucket.garbage = status:count({BSENT})
     state.bucket.receiving = status:count({BRECEIVING})
     state.bucket.sending = status:count({BSENDING})
+    state.bucket.readonly = status:count({BREADONLY})
     state.bucket.pinned = pinned
     if state.bucket.receiving ~= 0 and state.bucket.sending ~= 0 then
         --
