@@ -293,3 +293,41 @@ test_group.test_rebalancer_mode = function(g)
     vtest.cluster_cfg(g, global_cfg)
     wait_rebalancer_on_instance(g, 'replica_1_a')
 end
+
+--
+-- gh-573: test the behavior of the READONLY bucket.
+--
+test_group.test_readonly_recovery = function(g)
+    g.replica_1_a:exec(function(uuid)
+        --
+        -- If bucket send ends unsuccessfully before sending happens, recovery
+        -- makes it active again after some time.
+        --
+        local bid = _G.get_first_bucket()
+        ilt.assert(ivshard.storage.bucket_refrw(bid))
+        -- Unsuccessful send.
+        local _, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 0.01})
+        ilt.assert(iverror.is_timeout(err))
+        local bucket = ivshard.storage.bucket_stat(bid)
+        ilt.assert_not(bucket.is_transfering)
+        ilt.assert_equals(bucket.status, ivconst.BUCKET.READONLY)
+        -- Impossible to pin the READONLY bucket.
+        ilt.assert_not(ivshard.storage.bucket_pin(bid))
+        -- Recovery restores the bucket to ACTIVE.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.recovery_wakeup()
+            local b = ivshard.storage.bucket_stat(bid)
+            ilt.assert_equals(b.status, ivconst.BUCKET.ACTIVE)
+        end)
+        ilt.assert(ivshard.storage.bucket_unrefrw(bid))
+
+        --
+        -- it's impossible to prepare PINNED bucket for sending and cannot pin
+        -- the READONLY bucket.
+        --
+        ilt.assert(ivshard.storage.bucket_pin(bid))
+        _, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 0.1})
+        ilt.assert_equals(err.code, iverror.code.BUCKET_IS_PINNED)
+        ilt.assert(ivshard.storage.bucket_unpin(bid))
+    end, {g.replica_2_a:replicaset_uuid()})
+end

@@ -146,6 +146,9 @@ local function bucket_recovery_wait()
         if index_has(status_index, vconst.BUCKET.RECEIVING) then
             error('Still have RECEIVING buckets')
         end
+        if index_has(status_index, vconst.BUCKET.READONLY) then
+            error('Still have READONLY buckets')
+        end
     end)
 end
 
