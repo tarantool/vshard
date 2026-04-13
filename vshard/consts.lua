@@ -7,6 +7,7 @@ return {
     BUCKET = {
         ACTIVE = 'active',
         PINNED = 'pinned',
+        READONLY = 'readonly',
         SENDING = 'sending',
         SENT = 'sent',
         RECEIVING = 'receiving',

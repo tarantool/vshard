@@ -306,6 +306,7 @@ vshard.storage.info().bucket
   total: 50
   garbage: 0
   pinned: 0
+  readonly: 0
   sending: 0
 ...
 check_consistency()
@@ -323,6 +324,7 @@ vshard.storage.info().bucket
   total: 50
   garbage: 0
   pinned: 0
+  readonly: 0
   sending: 0
 ...
 check_consistency()
@@ -340,6 +342,7 @@ vshard.storage.info().bucket
   total: 50
   garbage: 0
   pinned: 0
+  readonly: 0
   sending: 0
 ...
 check_consistency()
@@ -357,6 +360,7 @@ vshard.storage.info().bucket
   total: 50
   garbage: 0
   pinned: 0
+  readonly: 0
   sending: 0
 ...
 check_consistency()

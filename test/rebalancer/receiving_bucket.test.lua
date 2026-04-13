@@ -127,7 +127,11 @@ f = fiber.create(function() vshard.storage.call(1, 'write', 'do_long_thing') end
 while f:status() ~= 'suspended' do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
 f1 = fiber.create(function() ret, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3}) end)
-while f1:status() ~= 'suspended' do fiber.sleep(0.01) end
+-- We must wait for rw_lock to be set inside the loop: if we don't do that,
+-- it's possible to read the bucket with `READONLY` status but without
+-- `rw_lock`: reading can happen, when the write has not yet returned to the TX
+-- thread, when `on_commit` trigger has not yet worked, when mvcc is disabled.
+while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
 vshard.storage.bucket_refrw(1)
 while f1:status() ~= 'dead' do fiber.sleep(0.01) end
