@@ -1816,49 +1816,12 @@ end
 --
 local function bucket_send_xc(bucket_id, destination, opts)
     local id = M.this_replicaset.id
-    local status, ok
-    local bucket, err = bucket_check_state(bucket_id, 'write')
-    if err then
-        return nil, err
-    end
-    if bucket.status == BPINNED then
-        return nil, lerror.vshard(lerror.code.BUCKET_IS_PINNED, bucket_id)
-    end
+    local status, ok, err
+    local _bucket = box.space._bucket
     if not opts or not opts.timeout then
         opts = opts and table.copy(opts) or {}
         opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
     end
-    local timeout = opts.timeout
-    ok, err = lsched.move_start(timeout)
-    if not ok then
-        return nil, err
-    end
-    assert(lref.count == 0)
-    local _bucket = box.space._bucket
-    -- Move is scheduled only for the time of _bucket update because:
-    --
-    -- * it is consistent with bucket_recv() (see its comments);
-    --
-    -- * gives the same effect as if move was in the scheduler for the whole
-    --   bucket_send() time, because refs won't be able to start anyway - the
-    --   bucket is not writable.
-    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, BREADONLY})
-    lsched.move_end(1)
-    if not ok then
-        return nil, err
-    end
-
-    local deadline = fiber_clock() + timeout
-    local ref = M.bucket_refs[bucket_id]
-    while ref and ref.rw ~= 0 do
-        timeout = deadline - fiber_clock()
-        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
-        if not ok then
-            return nil, err
-        end
-        lfiber.testcancel()
-    end
-
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -1942,6 +1905,61 @@ local function bucket_send_xc(bucket_id, destination, opts)
     return true
 end
 
+local function bucket_send_prepare(bid, opts)
+    local ok, err, bucket, deadline, ref
+    local _bucket = box.space._bucket
+    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+
+    ok, err = bucket_transfer_start(bid)
+    if not ok then
+        return nil, err
+    end
+    bucket, err = bucket_check_state(bid, 'write')
+    if err then
+        goto error
+    end
+    if bucket.status == BPINNED then
+        err = lerror.vshard(lerror.code.BUCKET_IS_PINNED, bid)
+        goto error
+    end
+    ok, err = lsched.move_start(timeout)
+    if not ok then
+        goto error
+    end
+    assert(lref.count == 0)
+    -- Move is scheduled only for the time of _bucket update because:
+    --
+    -- * it is consistent with bucket_recv() (see its comments);
+    --
+    -- * gives the same effect as if move was in the scheduler for the whole
+    --   bucket_send() time, because refs won't be able to start anyway - the
+    --   bucket is not writable.
+    ok, err = pcall(_bucket.replace, _bucket, {bid, BREADONLY})
+    lsched.move_end(1)
+    if not ok then
+        goto error
+    end
+    deadline = fiber_clock() + timeout
+    ref = M.bucket_refs[bid]
+    while ref and ref.rw ~= 0 do
+        timeout = deadline - fiber_clock()
+        ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
+        if not ok then
+            goto error
+        end
+        lfiber.testcancel()
+    end
+    do return true end
+
+::error::
+    bucket_transfer_end(bid)
+    return nil, err
+end
+
+local function bucket_send_end(bid)
+    bucket_transfer_end(bid)
+end
+
 --
 -- Exception and recovery safe version of bucket_send_xc.
 --
@@ -1950,12 +1968,12 @@ local function bucket_send(bucket_id, destination, opts)
         error('Usage: bucket_send(bucket_id, destination)')
     end
     local status, ret, err
-    status, err = bucket_transfer_start(bucket_id)
+    status, err = bucket_send_prepare(bucket_id, opts)
     if not status then
         return nil, err
     end
     status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
-    bucket_transfer_end(bucket_id)
+    bucket_send_end(bucket_id)
     if status then
         if ret then
             return ret
