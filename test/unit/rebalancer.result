@@ -1080,6 +1080,7 @@ d = dispenser.create({uuid = 15})
 dispenser.pop(d)
 ---
 - uuid
+- 1
 ...
 for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end
 ---
@@ -1141,7 +1142,7 @@ u, d
     uuid1: *1
     uuid2: *0
 ...
-dispenser.put(d, u)
+dispenser.put(d, u, 1)
 ---
 ...
 d

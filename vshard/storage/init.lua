@@ -2588,14 +2588,13 @@ end
 -- receives a throttle error. This is the only error that can be
 -- tolerated.
 --
-local function route_dispenser_put(dispenser, id)
+local function route_dispenser_put(dispenser, id, count)
     local dst = dispenser.map[id]
-    if dst then
-        local bucket_count = dst.bucket_count + 1
-        dst.bucket_count = bucket_count
-        if bucket_count == 1 then
+    if dst and count > 0 then
+        if dst.bucket_count == 0 then
             dispenser.rlist:add_tail(dst)
         end
+        dst.bucket_count = dst.bucket_count + count
     end
 end
 
@@ -2652,15 +2651,50 @@ local function route_dispenser_pop(dispenser)
     local rlist = dispenser.rlist
     local dst = rlist.first
     if dst then
-        local bucket_count = dst.bucket_count - 1
+        local cfg = consts.DEFAULT_REBALANCER_MAX_SENDING
+        local to_send = math.min(dst.bucket_count, cfg)
+        local bucket_count = dst.bucket_count - to_send
         dst.bucket_count = bucket_count
         rlist:remove(dst)
         if bucket_count > 0 then
             rlist:add_tail(dst)
         end
-        return dst.id
+        return dst.id, to_send
     end
     return nil
+end
+
+local function rebalancer_pick_and_prepare_buckets(bucket_count, opts)
+    assert(opts and opts.timeout)
+    local buckets = {}
+    local active_key = {BACTIVE}
+    local _status = box.space._bucket.index.status
+    local status, err, bucket_id
+    while #buckets ~= bucket_count do
+        -- Can't just take a first active bucket. It may be already locked by a
+        -- manual bucket_send in another fiber.
+        for _, bucket in _status:pairs(active_key) do
+            bucket_id = bucket.id
+            if not M.rebalancer_transfering_buckets[bucket_id] then
+                goto prepare
+            end
+        end
+        err = lerror.make('Can not find active buckets')
+        goto error
+::prepare::
+        status, err = bucket_send_prepare(bucket_id, opts)
+        if not status then
+            goto error
+        end
+        table.insert(buckets, bucket_id)
+    end
+    do return buckets end
+
+::error::
+    for _, bid in ipairs(buckets) do
+        bucket_send_end(bid)
+    end
+    return nil, err
 end
 
 --
@@ -2672,38 +2706,42 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
-    local active_key = {BACTIVE}
-    local id = route_dispenser_pop(dispenser)
+    local id, bucket_count = route_dispenser_pop(dispenser)
     local worker_throttle_count = 0
-    local bucket_id, is_found
     while id do
-        is_found = false
-        -- Can't just take a first active bucket. It may be
-        -- already locked by a manual bucket_send in another
-        -- fiber.
-        for _, bucket in _status:pairs(active_key) do
-            bucket_id = bucket.id
-            if not M.rebalancer_transfering_buckets[bucket_id] then
-                is_found = true
+        local status, ret, err, buckets, finished, total, sent_count
+        buckets, err = rebalancer_pick_and_prepare_buckets(bucket_count, opts)
+        if not buckets then
+            log.error('Error during picking buckets for sending: %s', err)
+            break
+        end
+        sent_count = 0
+        for _, bid in ipairs(buckets) do
+            status, ret, err = pcall(bucket_send_xc, bid, id, opts)
+            bucket_send_end(bid)
+            if status and ret then
+                worker_throttle_count = 0
+                finished, total = route_dispenser_sent(dispenser, id)
+                sent_count = sent_count + 1
+            else
+                err = status and err or ret
                 break
             end
         end
-        if not is_found then
-            log.error('Can not find active buckets')
-            break
-        end
-        local ret, err = bucket_send(bucket_id, id, opts)
-        if ret then
-            worker_throttle_count = 0
-            local finished, total = route_dispenser_sent(dispenser, id)
+        if sent_count == #buckets then
             if finished then
                 log.info('%d buckets were successfully sent to %s', total, id)
             end
             goto continue
         end
-        route_dispenser_put(dispenser, id)
+        -- Clean all the remaining buckets in case of send error.
+        for _, bid in ipairs(buckets) do
+            if M.rebalancer_transfering_buckets[bid] then
+                bucket_send_end(bid)
+            end
+        end
+        route_dispenser_put(dispenser, id, #buckets - sent_count)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
@@ -2729,7 +2767,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        id = route_dispenser_pop(dispenser)
+        id, bucket_count = route_dispenser_pop(dispenser)
     end
     quit_cond:broadcast()
 end
@@ -2746,9 +2784,6 @@ local function rebalancer_service_apply_routes_f(service, routes)
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
              yaml_encode(routes))
     local dispenser = route_dispenser_create(routes)
-    local _status = box.space._bucket.index.status
-    assert(_status:count({BSENDING}) == 0)
-    assert(_status:count({BRECEIVING}) == 0)
     -- Can not assign it on fiber.create() like
     -- var = fiber.create(), because when it yields, we have no
     -- guarantee that an event loop does not contain events

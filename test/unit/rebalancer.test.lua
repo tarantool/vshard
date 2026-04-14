@@ -288,7 +288,7 @@ d
 d = dispenser.create({uuid1 = 5, uuid2 = 5})
 u = dispenser.pop(d)
 u, d
-dispenser.put(d, u)
+dispenser.put(d, u, 1)
 d
 dispenser.throttle(d, u)
 d

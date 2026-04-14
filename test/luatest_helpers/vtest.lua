@@ -499,6 +499,32 @@ local function cluster_rebalancer_enable(g)
 end
 
 --
+-- Disable recovery on all masters.
+--
+local function cluster_recovery_disable(g)
+    local _, err =  cluster_exec_each_master(g, function()
+        local errinj = ivshard.storage.internal.errinj
+        errinj.ERRINJ_RECOVERY_PAUSE = true
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.recovery_wakeup()
+            ilt.assert_equals(errinj.ERRINJ_RECOVERY_PAUSE, 1)
+        end)
+    end)
+    t.assert_equals(err, nil, 'recovery disable')
+end
+
+--
+-- Enable recovery on all masters.
+--
+local function cluster_recovery_enable(g)
+    local _, err =  cluster_exec_each(g, function()
+        ivshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
+        ivshard.storage.recovery_wakeup()
+    end)
+    t.assert_equals(err, nil, 'recovery enable')
+end
+
+--
 -- Wait vclock sync in each replicaset between all its replicas.
 --
 local function cluster_wait_vclock_all(g)
@@ -870,6 +896,8 @@ return {
     cluster_bootstrap = cluster_bootstrap,
     cluster_rebalancer_disable = cluster_rebalancer_disable,
     cluster_rebalancer_enable = cluster_rebalancer_enable,
+    cluster_recovery_disable = cluster_recovery_disable,
+    cluster_recovery_enable = cluster_recovery_enable,
     cluster_wait_vclock_all = cluster_wait_vclock_all,
     cluster_wait_fullsync = cluster_wait_fullsync,
     cluster_rebalancer_find = cluster_rebalancer_find,

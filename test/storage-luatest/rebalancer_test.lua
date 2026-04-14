@@ -70,6 +70,17 @@ test_group.after_all(function(g)
     g.cluster:drop()
 end)
 
+local function wait_n_buckets(storage, count)
+    t.helpers.retrying({timeout = vtest.wait_timeout}, storage.exec,
+                       storage, function(count)
+        ivshard.storage.rebalancer_wakeup()
+        local _status = box.space._bucket.index.status
+        if _status:count({ivconst.BUCKET.ACTIVE}) ~= count then
+            error('Wrong bucket count')
+        end
+    end, {count})
+end
+
 test_group.test_rebalancer_in_work = function(g)
     local new_cfg_template = table.deepcopy(cfg_template)
     new_cfg_template.sharding[1].weight = 0
@@ -77,15 +88,6 @@ test_group.test_rebalancer_in_work = function(g)
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
     vtest.cluster_rebalancer_enable(g)
-    local function wait_n_buckets(storage, count)
-        t.helpers.retrying({timeout = vtest.wait_timeout}, storage.exec,
-                           storage, function(count)
-            local _status = box.space._bucket.index.status
-            if _status:count({ivconst.BUCKET.ACTIVE}) ~= count then
-                error('Wrong bucket count')
-            end
-        end, {count})
-    end
     wait_n_buckets(g.replica_1_a, 0)
     wait_n_buckets(g.replica_2_a, 0)
     wait_n_buckets(g.replica_3_a, cfg_template.bucket_count)
@@ -330,4 +332,62 @@ test_group.test_readonly_recovery = function(g)
         ilt.assert_equals(err.code, iverror.code.BUCKET_IS_PINNED)
         ilt.assert(ivshard.storage.bucket_unpin(bid))
     end, {g.replica_2_a:replicaset_uuid()})
+end
+
+--
+-- Test, that the worker sends buckets in batches. Sending more buckets, than
+-- the storage has leads to error. After error during preparation all buckets
+-- can be recovered.
+--
+test_group.test_send_more_buckets_than_has = function(g)
+    vtest.cluster_exec_each_master(g, function()
+        rawset(_G, 'old_max_sending', ivconst.DEFAULT_REBALANCER_MAX_SENDING)
+        ivconst.DEFAULT_REBALANCER_MAX_SENDING = 6
+    end)
+
+    vtest.cluster_recovery_disable(g)
+    -- Start sending of 11 buckets, when replica has only 10.
+    g.replica_1_a:exec(function(uuid)
+        ilt.assert_equals(box.space._bucket:count(), 10)
+        -- Returns ok no matter what.
+        ilt.assert(ivshard.storage.rebalancer_apply_routes({[uuid] = 11}))
+    end, {g.replica_2_a:replicaset_uuid()})
+    -- Wait for error message to happen.
+    t.helpers.retrying({timeout = vtest.iwait_timeout}, function()
+        t.assert(g.replica_1_a:grep_log('Can not find active buckets'))
+    end)
+    -- Since recovery is disabled all non-sent buckets remain in READONLY state.
+    g.replica_1_a:exec(function()
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.garbage_collector_wakeup()
+            ilt.assert_equals(box.space._bucket:count(), 4)
+        end)
+        local transfer_flags =
+            ivshard.storage.internal.rebalancer_transfering_buckets
+        for _, b in box.space._bucket:pairs() do
+            ilt.assert_equals(b.status, ivconst.BUCKET.READONLY)
+            ilt.assert_not(transfer_flags[b.id])
+        end
+    end)
+    -- Recovery restores the READONLY buckets back.
+    vtest.cluster_recovery_enable(g)
+    g.replica_1_a:exec(function()
+        local active_key = {ivconst.BUCKET.ACTIVE}
+        local _status = box.space._bucket.index.status
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(_status:count(active_key), 4)
+            ivshard.storage.recovery_wakeup()
+        end)
+    end)
+
+    -- Restore the cluster with rebalancer.
+    vtest.cluster_rebalancer_enable(g)
+    wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 3)
+    vtest.cluster_rebalancer_disable(g)
+    vtest.cluster_exec_each_master(g, function()
+        ivconst.DEFAULT_REBALANCER_MAX_SENDING = _G.old_max_sending
+        _G.old_max_sending = nil
+    end)
 end
