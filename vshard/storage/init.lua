@@ -2651,8 +2651,8 @@ local function route_dispenser_pop(dispenser)
     local rlist = dispenser.rlist
     local dst = rlist.first
     if dst then
-        local cfg = consts.DEFAULT_REBALANCER_MAX_SENDING
-        local to_send = math.min(dst.bucket_count, cfg)
+        local cfg =  M.rebalancer_max_sending / M.rebalancer_worker_count
+        local to_send = math.min(dst.bucket_count, math.floor(cfg))
         local bucket_count = dst.bucket_count - to_send
         dst.bucket_count = bucket_count
         rlist:remove(dst)
@@ -3843,7 +3843,8 @@ local function storage_cfg_xc(cfgctx)
     M.total_bucket_count = new_cfg.bucket_count
     M.rebalancer_disbalance_threshold = new_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
-    M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
+    M.rebalancer_worker_count = new_cfg.rebalancer_worker_count
+    M.rebalancer_max_sending = new_cfg.rebalancer_max_sending
     M.sync_timeout = new_cfg.sync_timeout
     M.current_cfg = new_cfg
     storage_cfg_master_commit(cfgctx)

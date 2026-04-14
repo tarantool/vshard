@@ -341,8 +341,9 @@ end
 --
 test_group.test_send_more_buckets_than_has = function(g)
     vtest.cluster_exec_each_master(g, function()
-        rawset(_G, 'old_max_sending', ivconst.DEFAULT_REBALANCER_MAX_SENDING)
-        ivconst.DEFAULT_REBALANCER_MAX_SENDING = 6
+        local current_cfg = ivshard.storage.internal.current_cfg
+        current_cfg.rebalancer_max_sending = 6
+        ivshard.storage.cfg(current_cfg, box.info.uuid)
     end)
 
     vtest.cluster_recovery_disable(g)
@@ -386,8 +387,5 @@ test_group.test_send_more_buckets_than_has = function(g)
     wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 3)
     wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 3)
     vtest.cluster_rebalancer_disable(g)
-    vtest.cluster_exec_each_master(g, function()
-        ivconst.DEFAULT_REBALANCER_MAX_SENDING = _G.old_max_sending
-        _G.old_max_sending = nil
-    end)
+    vtest.cluster_cfg(g, global_cfg)
 end

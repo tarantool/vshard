@@ -276,6 +276,7 @@ build_routes(replicasets)
 -- the latter is a dispenser. It is a structure which hands out
 -- destination UUIDs in a round-robin manner to worker fibers.
 --
+vshard.storage.internal.rebalancer_max_sending = 1
 d = dispenser.create({uuid = 15})
 dispenser.pop(d)
 for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end

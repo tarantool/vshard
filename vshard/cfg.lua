@@ -414,7 +414,13 @@ local cfg_template = {
         name = 'Rebalancer max sending bucket count',
         is_optional = true,
         default = consts.DEFAULT_REBALANCER_MAX_SENDING,
-        max = consts.REBALANCER_MAX_SENDING_MAX
+    },
+    rebalancer_worker_count = {
+        type = 'positive integer',
+        name = 'Rebalancer worker count',
+        is_optional = true,
+        default = consts.DEFAULT_REBALANCER_WORKER_COUNT,
+        max = consts.REBALANCER_MAX_WORKER_COUNT,
     },
     rebalancer_mode = {
         type = 'enum',

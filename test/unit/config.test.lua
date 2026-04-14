@@ -210,15 +210,15 @@ cfg.sharding = nil
 -- gh-161: parallel rebalancer and its option - max sending.
 --
 cfg.sharding = {}
-cfg.rebalancer_max_sending = 'ten'
+cfg.rebalancer_worker_count = 'ten'
 util.check_error(lcfg.check, cfg)
-cfg.rebalancer_max_sending = 100
+cfg.rebalancer_worker_count = 100
 util.check_error(lcfg.check, cfg)
-cfg.rebalancer_max_sending = 0
+cfg.rebalancer_worker_count = 0
 util.check_error(lcfg.check, cfg)
-cfg.rebalancer_max_sending = 15
-lcfg.check(cfg).rebalancer_max_sending
-cfg.rebalancer_max_sending = nil
+cfg.rebalancer_worker_count = 15
+lcfg.check(cfg).rebalancer_worker_count
+cfg.rebalancer_worker_count = nil
 
 --
 -- Deprecated options do not break anything.
