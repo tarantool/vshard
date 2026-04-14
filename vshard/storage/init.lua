@@ -2595,6 +2595,20 @@ local function rebalancer_prepare_buckets(bucket_count, opts)
     local _status = box.space._bucket.index.status
     local limit = consts.BUCKET_CHUNK_SIZE
     while #buckets ~= bucket_count do
+        -- Prefer buckets without rw refs or without refs at all.
+        for _, bucket in _status:pairs(active_key) do
+            bucket_id = bucket.id
+            local ref = M.bucket_refs[bucket_id]
+            if not M.rebalancer_transfering_buckets[bucket_id] and
+               (not ref or ref.rw == 0) then
+                goto prepare
+            end
+            limit = limit - 1
+            if limit == 0 then
+                fiber_yield()
+                limit = consts.BUCKET_CHUNK_SIZE
+            end
+        end
         -- Can't just take a first active bucket. It may be already locked by a
         -- manual bucket_send in another fiber.
         for _, bucket in _status:pairs(active_key) do
