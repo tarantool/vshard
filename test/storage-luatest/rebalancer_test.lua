@@ -389,3 +389,69 @@ test_group.test_send_more_buckets_than_has = function(g)
     vtest.cluster_rebalancer_disable(g)
     vtest.cluster_cfg(g, global_cfg)
 end
+
+--
+-- gh-351: rebalancer should prefer buckets without rw refs.
+--
+test_group.test_buckets_with_no_refs_are_preferred = function(g)
+    vtest.cluster_rebalancer_enable(g)
+    -- Make rw "requests" to all buckets, except the single one.
+    local bid = g.replica_1_a:exec(function()
+        -- The maximum available bucket id is not refed.
+        local idx = box.space._bucket.index.status
+        local opts = {limit = 1, iterator = 'LE'}
+        local bid = idx:select(ivconst.BUCKET.ACTIVE, opts)[1].id
+        for _, b in box.space._bucket:pairs() do
+            if b.id ~= bid then
+                ivshard.storage.bucket_refrw(b.id)
+            end
+        end
+        return bid
+    end)
+
+    -- Move one bucket, it must be the one without refs.
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].weight = cfg_template.bucket_count / 3 - 1
+    new_cfg_template.sharding[2].weight = cfg_template.bucket_count / 3 + 1
+    new_cfg_template.sharding[3].weight = cfg_template.bucket_count / 3
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    wait_n_buckets(g.replica_1_a, 9)
+    wait_n_buckets(g.replica_2_a, 11)
+    g.replica_2_a:exec(function(bid)
+        local status = ivshard.storage.bucket_stat(bid).status
+        ilt.assert_equals(status, ivconst.BUCKET.ACTIVE)
+    end, {bid})
+
+    -- Even with all bucket refed we still try to send them.
+    new_cfg_template.sharding[1].weight = 0
+    new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    g.replica_1_a:exec(function(bid)
+        -- Wait for routes applier start and picking a buckets.
+        local internal = ivshard.storage.internal
+        local applier_name = 'routes_applier_service'
+        ivtest.wait_for_not_nil(internal, applier_name,
+                                {timeout = iwait_timeout,
+                                 on_yield = ivshard.storage.rebalancer_wakeup})
+        local service = internal[applier_name]
+        ivtest.service_wait_for_activity(service, 'applying routes')
+        -- End rw "requests".
+        for _, b in box.space._bucket:pairs() do
+            if b.id ~= bid then
+                ivshard.storage.bucket_unrefrw(b.id)
+            end
+        end
+    end, {bid})
+    wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 2)
+    wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 2)
+
+    vtest.cluster_cfg(g, global_cfg)
+    wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 3)
+    vtest.cluster_rebalancer_disable(g)
+    vtest.cluster_exec_each_master(g, function()
+        _G.bucket_gc_wait()
+    end)
+end

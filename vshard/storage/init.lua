@@ -2671,6 +2671,19 @@ local function rebalancer_pick_and_prepare_buckets(bucket_count, opts)
     local _status = box.space._bucket.index.status
     local status, err, bucket_id
     while #buckets ~= bucket_count do
+        -- Prefer buckets without rw refs or without refs at all.
+        for _, bucket in _status:pairs(active_key) do
+            bucket_id = bucket.id
+            local ref = M.bucket_refs[bucket_id]
+            if not M.rebalancer_transfering_buckets[bucket_id] and
+               (not ref or ref.rw == 0) then
+                goto prepare
+            end
+        end
+        -- Better yield, than sorry. We iterated over the whole space and
+        -- didn't find the bucket without refs and we may have to do it one
+        -- more time.
+        fiber_yield()
         -- Can't just take a first active bucket. It may be already locked by a
         -- manual bucket_send in another fiber.
         for _, bucket in _status:pairs(active_key) do
