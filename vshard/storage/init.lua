@@ -1956,10 +1956,6 @@ local function bucket_send(bucket_id, destination, opts)
         error('Usage: bucket_send(bucket_id, destination)')
     end
     local status, ret, err
-    ret, err = check_is_master()
-    if not ret then
-        return nil, err
-    end
     status, err = bucket_transfer_start(bucket_id)
     if not status then
         return nil, err
