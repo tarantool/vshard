@@ -119,7 +119,7 @@ _ = test_run:switch('storage_2_a')
 big_timeout = 1000000
  | ---
  | ...
-timeout = 0.01
+timeout = 1
  | ---
  | ...
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \

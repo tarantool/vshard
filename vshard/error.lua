@@ -207,6 +207,11 @@ local error_message_template = {
         msg = 'Mismatch server name: expected "%s", but got "%s"',
         args = {'expected_name', 'actual_name'},
     },
+    [42] = {
+        name = 'BUCKET_SEND_ERROR',
+        msg = 'Error during bucket send: %s',
+        args = {'reason'},
+    }
 }
 
 --

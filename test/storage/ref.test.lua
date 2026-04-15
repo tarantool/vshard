@@ -50,7 +50,7 @@ assert(not ok and err.message)
 _ = test_run:switch('storage_2_a')
 -- Receive (from another replicaset) also fails.
 big_timeout = 1000000
-timeout = 0.01
+timeout = 1
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \
                                      {timeout = timeout})
 assert(not ok and util.is_timeout_error(err))

@@ -455,3 +455,102 @@ test_group.test_buckets_with_no_refs_are_preferred = function(g)
         _G.bucket_gc_wait()
     end)
 end
+
+--
+-- gh-573: rebalancer should not make bucket SENDING before it checks,
+-- that all replicas doesn't have RW refs. Checks the sync part.
+--
+test_group.test_bucket_cannot_be_sent_with_down_replica = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].weight = cfg_template.bucket_count / 3 - 1
+    new_cfg_template.sharding[2].weight = cfg_template.bucket_count / 3 + 1
+    new_cfg_template.sharding[3].weight = cfg_template.bucket_count / 3
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    g.replica_1_a:exec(function()
+        rawset(_G, 'old_chunk_timeout', ivconst.REBALANCER_CHUNK_TIMEOUT)
+        ivconst.REBALANCER_CHUNK_TIMEOUT = 1
+    end)
+    vtest.cluster_cfg(g, new_global_cfg)
+    g.replica_1_b:update_box_cfg({replication = {}})
+    vtest.cluster_rebalancer_enable(g)
+
+    -- Sending with rebalancer.
+    t.helpers.retrying({timeout = vtest.iwait_timeout}, function()
+        t.assert(g.replica_1_a:grep_log('could not sync with replicas for'))
+        g.replica_1_a:exec(function() ivshard.storage.rebalancer_wakeup() end)
+    end)
+    vtest.cluster_rebalancer_disable(g)
+    g.replica_1_a:exec(function()
+        _G.bucket_recovery_wait()
+        ivconst.REBALANCER_CHUNK_TIMEOUT = _G.old_chunk_timeout
+        _G.old_chunk_timeout = nil
+    end)
+
+    -- Manual bucket send.
+    g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 1})
+        ilt.assert_not(ok)
+        ilt.assert(err and err.prev)
+        ilt.assert_equals(err.code, iverror.code.BUCKET_SEND_ERROR)
+        ilt.assert(iverror.is_timeout(err.prev))
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_1_a:exec(function()
+        _G.bucket_recovery_wait()
+    end)
+end
+
+--
+-- gh-573: rebalancer should not make bucket SENDING before it checks,
+-- that all replicas doesn't have RW refs. Checks the ref part.
+--
+test_group.test_replication_not_broken_when_ref_on_replica = function(g)
+    g.replica_1_a:exec(function()
+        local bid = _G.get_first_bucket()
+        ivshard.storage.bucket_refrw(bid)
+        return bid
+    end)
+    g.replica_1_b:exec(function()
+        rawset(_G, 'old_chunk_timeout', ivconst.REBALANCER_CHUNK_TIMEOUT)
+        ivconst.REBALANCER_CHUNK_TIMEOUT = 1
+    end)
+
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].replicas.replica_1_b.read_only = false
+    new_cfg_template.sharding[1].replicas.replica_1_a.read_only = true
+    new_cfg_template.sharding[1].weight = cfg_template.bucket_count / 3 - 1
+    new_cfg_template.sharding[2].weight = cfg_template.bucket_count / 3 + 1
+    new_cfg_template.sharding[3].weight = cfg_template.bucket_count / 3
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.cluster_rebalancer_enable(g)
+
+    t.helpers.retrying({timeout = vtest.iwait_timeout}, function()
+        t.assert(g.replica_1_b:grep_log('failed waiting for no RW refs'))
+        g.replica_1_b:exec(function() ivshard.storage.rebalancer_wakeup() end)
+    end)
+    g.replica_1_a:assert_follows_upstream(g.replica_1_b:instance_id())
+
+    vtest.cluster_rebalancer_disable(g)
+    g.replica_1_b:exec(function()
+        _G.bucket_recovery_wait()
+        ivconst.REBALANCER_CHUNK_TIMEOUT = _G.old_chunk_timeout
+        _G.old_chunk_timeout = nil
+    end)
+
+    g.replica_1_b:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(bid, uuid, {timeout = 1})
+        ilt.assert_not(ok)
+        ilt.assert(err and err.prev)
+        ilt.assert_equals(err.code, iverror.code.WRONG_BUCKET)
+        ilt.assert(iverror.is_timeout(err.prev))
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_1_b:exec(function()
+        _G.bucket_recovery_wait()
+    end)
+end
