@@ -94,6 +94,7 @@ if not M then
             ERRINJ_LONG_RECEIVE = false,
             ERRINJ_LAST_RECEIVE_DELAY = false,
             ERRINJ_LAST_SEND_DELAY = false,
+            ERRINJ_MAKE_BUCKET_SENDING_DELAY = false,
             ERRINJ_RECEIVE_PARTIALLY = false,
             ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_DISCOVERY = false,
@@ -1871,9 +1872,22 @@ local function bucket_send_xc(bucket_id, destination, opts)
     local bucket_generation = M.bucket_generation
     local sendg = BSENDING
 
+    while M.errinj.ERRINJ_MAKE_BUCKET_SENDING_DELAY do
+        M.errinj.ERRINJ_MAKE_BUCKET_SENDING_DELAY = 1
+        lfiber.testcancel()
+        lfiber.sleep(0.01)
+    end
     ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
     if not ok then
         return nil, lerror.make(err)
+    end
+    ok, err = wait_lsn(opts.timeout, consts.WAIT_LSN_STEP)
+    if not ok then
+        local reason = string.format('could not sync with replicas for ' ..
+            'sending bucket %d', bucket_id)
+        local err_final = lerror.vshard(lerror.code.BUCKET_SEND_ERROR, reason)
+        err_final.prev = err
+        return nil, err_final
     end
 
     for _, space in pairs(spaces) do

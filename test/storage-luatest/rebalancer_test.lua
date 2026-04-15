@@ -554,3 +554,37 @@ test_group.test_replication_not_broken_when_ref_on_replica = function(g)
         _G.bucket_recovery_wait()
     end)
 end
+
+--
+-- gh-575: it's possible to encounter doubled buckets situation, if replica
+-- lags from master, doesn't get the `SENDING` bucket and becomes a master.
+--
+test_group.test_replication_not_broken_when_ref_on_replica = function(g)
+    g.replica_1_a:exec(function(uuid)
+        local errinj = ivshard.storage.internal.errinj
+        errinj.ERRINJ_MAKE_BUCKET_SENDING_DELAY = true
+        local bid = _G.get_first_bucket()
+        rawset(_G, 'err', box.NULL)
+        rawset(_G, 'bucket_send_fiber', ifiber.create(function()
+            local _
+            _, _G.err = ivshard.storage.bucket_send(bid, uuid, {timeout = 1})
+        end))
+        _G.bucket_send_fiber:set_joinable(true)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(errinj.ERRINJ_MAKE_BUCKET_SENDING_DELAY, 1)
+        end)
+    end, {g.replica_2_a:replicaset_uuid()})
+    g.replica_1_b:update_box_cfg({replication = {}})
+    g.replica_1_a:exec(function()
+        local errinj = ivshard.storage.internal.errinj
+        errinj.ERRINJ_MAKE_BUCKET_SENDING_DELAY = false
+        _G.bucket_send_fiber:join()
+        ilt.assert(_G.err and _G.err.prev)
+        ilt.assert_equals(_G.err.code, iverror.code.BUCKET_SEND_ERROR)
+        ilt.assert(iverror.is_timeout(_G.err.prev))
+    end)
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_1_a:exec(function()
+        _G.bucket_recovery_wait()
+    end)
+end
