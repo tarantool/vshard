@@ -1729,6 +1729,38 @@ local function bucket_test_gc(bids)
 end
 
 --
+-- Test, that all passed buckets can be safely tranferred to another replicaset.
+--
+local function bucket_test_send(bids, opts)
+    assert(opts and opts.timeout)
+    local deadline = fiber_clock() + opts.timeout
+    local ok, err, timeout
+    for _, bid in ipairs(bids) do
+        local bucket = box.space._bucket:get({bid})
+        if not bucket or bucket.status ~= BREADONLY then
+            -- Should not happen, just for safety.
+            local reason = string.format("Bucket is '%s' instead of '%s'",
+                                         bucket and bucket.status, BREADONLY)
+            error(lerror.vshard(lerror.code.WRONG_BUCKET, bid, reason,
+                                M.this_replica.id))
+        end
+        local ref = M.bucket_refs[bid]
+        while ref and ref.rw ~= 0 do
+            timeout = deadline - fiber_clock()
+            ok, err = fiber_cond_wait(M.bucket_rw_lock_is_ready_cond, timeout)
+            if not ok then
+                local reason = 'failed waiting for no RW refs'
+                local final_err = lerror.vshard(lerror.code.WRONG_BUCKET,
+                    bid, reason, M.this_replica.id)
+                final_err.prev = err
+                error(final_err)
+            end
+            ref = M.bucket_refs[bid]
+        end
+    end
+end
+
+--
 -- Public wrapper for sharded spaces list getter.
 --
 local function storage_sharded_spaces()
@@ -1834,6 +1866,7 @@ local function bucket_send_build_opts(opts, default_timeout)
         timeout = default_timeout,
         chunk_timeout = consts.DEFAULT_BUCKET_CHUNK_TIMEOUT,
         ref_timeout = consts.DEFAULT_BUCKET_REF_TIMEOUT,
+        sync_timeout = consts.DEFAULT_BUCKET_SYNC_TIMEOUT,
     }
     opts = opts or {}
     local type = 'number'
@@ -2013,6 +2046,33 @@ local function bucket_send_end(bid)
     bucket_transfer_end(bid)
 end
 
+local function bucket_test_send_on_replicas(buckets, opts)
+    assert(opts and opts.sync_timeout and opts.deadline)
+    local ok, err, _
+    local sync_deadline = fiber_clock() + opts.sync_timeout
+    local deadline = math.min(sync_deadline, opts.deadline)
+    ok, err = wait_lsn(deadline - fiber_clock(), consts.WAIT_LSN_STEP)
+    if not ok then
+        err.reason = string.format('could not sync with replicas for ' ..
+            'readonly batch %s', json_encode(buckets))
+        return nil, err
+    end
+    local call_timeout = deadline - fiber_clock()
+    -- Use smaller timeout to reveal the error from storage if it's
+    -- available, user timeout is passed to the call itself.
+    local wait_timeout = call_timeout / 1.5
+    _, err = M.this_replicaset:map_call('vshard.storage._call',
+        {'bucket_test_send', buckets, {timeout = wait_timeout}}, {
+            timeout = call_timeout,
+            except = M.this_replica.id,
+    })
+    if err then
+        err = lerror.from_string(err.message) or err
+        return nil, err
+    end
+    return true
+end
+
 --
 -- Exception and recovery safe version of bucket_send_xc.
 --
@@ -2024,6 +2084,11 @@ local function bucket_send(bucket_id, destination, opts)
     opts = bucket_send_build_opts(table.copy(opts), consts.TIMEOUT_INFINITY)
     status, err = bucket_send_prepare(bucket_id, opts)
     if not status then
+        return nil, err
+    end
+    status, err = bucket_test_send_on_replicas({bucket_id}, opts)
+    if not status then
+        bucket_send_end(bucket_id)
         return nil, err
     end
     status, ret, err = pcall(bucket_send_xc, bucket_id, destination, opts)
@@ -2183,8 +2248,7 @@ end
 -- were approved for deletion.
 --
 local function gc_bucket_process_sent_one_batch_xc(batch)
-    local ok, err = wait_lsn(consts.GC_WAIT_LSN_TIMEOUT,
-                             consts.GC_WAIT_LSN_STEP)
+    local ok, err = wait_lsn(consts.GC_WAIT_LSN_TIMEOUT, consts.WAIT_LSN_STEP)
     if not ok then
         local msg = 'Failed to delete sent buckets - could not sync '..
                     'with replicas'
@@ -2631,6 +2695,10 @@ local function rebalancer_prepare_buckets(bucket_count, opts)
             goto error
         end
         table.insert(buckets, bucket_id)
+    end
+    status, err = bucket_test_send_on_replicas(buckets, opts)
+    if not status then
+        goto error
     end
     do return buckets end
 
@@ -3422,6 +3490,7 @@ end
 service_call_api = setmetatable({
     bucket_recv = bucket_recv,
     bucket_test_gc = bucket_test_gc,
+    bucket_test_send = bucket_test_send,
     rebalancer_apply_routes = rebalancer_apply_routes,
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,

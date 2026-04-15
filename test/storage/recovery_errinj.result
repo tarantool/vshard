@@ -72,7 +72,8 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 _ = test_run:switch('storage_1_a')
 ---
 ...
-ret, err = vshard.storage.bucket_send(1, util.replicasets[2], {timeout = 0.1})
+ret, err = vshard.storage.bucket_send(1, util.replicasets[2],                   \
+                                      {chunk_timeout = 0.1})
 ---
 ...
 ret, util.is_timeout_error(err)
