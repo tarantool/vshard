@@ -173,6 +173,7 @@ vshard.storage._call('test_api', 1, 2, 3)
  | ---
  | - - bucket_recv
  |   - bucket_test_gc
+ |   - bucket_test_send
  |   - info
  |   - rebalancer_apply_routes
  |   - rebalancer_request_state

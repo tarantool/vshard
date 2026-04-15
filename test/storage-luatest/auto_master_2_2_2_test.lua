@@ -369,7 +369,7 @@ test_group.test_master_discovery_on_disconnect = function(g)
             -- destination's master is disconnected. A master search is
             -- triggered then.
             local ok, err = ivshard.storage.bucket_send(
-                bid, rs_uuid, {timeout = 0.01})
+                bid, rs_uuid, {chunk_timeout = 0.01})
             ilt.assert(not ok)
             ilt.assert_not_equals(err, nil)
             -- Recovery will re-discover the master.
@@ -411,13 +411,13 @@ test_group.test_master_discovery_on_disconnect = function(g)
     g.replica_2_b:update_box_cfg{read_only = false}
     promote_if_needed(g, g.replica_2_b)
     send_bucket_to_new_master(g.replica_1_a, g.replica_2_b)
-    -- Can't GC the bucket until the old master is back. But can send it.
-    g.replica_2_b:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
+    -- Can't GC the bucket until the old master is back and can't send it.
 
     -- Restore everything back.
     g.replica_2_a:start()
     vtest.cluster_cfg(g, global_cfg)
     promote_if_needed(g, g.replica_2_a)
+    g.replica_2_a:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
     g.replica_2_b:exec(bucket_gc_wait)
     g.replica_2_b:update_box_cfg{read_only = true}
     vtest.cluster_exec_each(g, function()

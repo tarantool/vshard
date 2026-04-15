@@ -52,7 +52,7 @@ _ = test_run:switch('storage_2_a')
 big_timeout = 1000000
 timeout = 0.01
 ok, err = vshard.storage.bucket_send(1501, util.replicasets[1],                 \
-                                     {timeout = timeout})
+                                     {chunk_timeout = timeout})
 assert(not ok and util.is_timeout_error(err))
 
 --

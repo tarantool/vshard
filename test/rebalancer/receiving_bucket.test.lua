@@ -94,7 +94,8 @@ box.space._bucket:get{1}
 _ = test_run:switch('box_1_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 _ = test_run:switch('box_2_a')
-_, err = vshard.storage.bucket_send(101, util.replicasets[1], {timeout = 0.1})
+_, err = vshard.storage.bucket_send(101, util.replicasets[1],                   \
+                                    {chunk_timeout = 0.1})
 util.is_timeout_error(err)
 wait_bucket_is_collected(101)
 _ = test_run:switch('box_1_a')

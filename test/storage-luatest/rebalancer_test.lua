@@ -598,3 +598,101 @@ test_group.test_buckets_with_no_refs_are_preferred = function(g)
         _G.bucket_gc_wait()
     end)
 end
+
+--
+-- gh-573: rebalancer should not make bucket SENDING before it checks,
+-- that all replicas doesn't have RW refs. Checks the sync part.
+--
+test_group.test_bucket_cannot_be_sent_with_down_replica = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].weight = cfg_template.bucket_count / 3 - 1
+    new_cfg_template.sharding[2].weight = cfg_template.bucket_count / 3 + 1
+    new_cfg_template.sharding[3].weight = cfg_template.bucket_count / 3
+    new_cfg_template.rebalancer_bucket_send_timeout = 0.1
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    g.replica_1_b:update_box_cfg({replication = {}})
+    vtest.cluster_rebalancer_enable(g)
+
+    -- Sending with rebalancer.
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        local applier_name = 'routes_applier_service'
+        ivtest.wait_for_not_nil(internal, applier_name,
+            {on_yield = ivshard.storage.rebalancer_wakeup})
+        ivtest.service_wait_for_new_error(internal[applier_name],
+            'could not sync with replicas')
+    end)
+    vtest.cluster_rebalancer_disable(g)
+    g.replica_1_a:exec(function()
+        _G.bucket_recovery_wait()
+    end)
+
+    -- Manual bucket send.
+    g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {sync_timeout = 0.01})
+        ilt.assert_not(ok)
+        ilt.assert(err)
+        ilt.assert_str_contains(err.reason, 'could not sync with replicas')
+        ilt.assert(iverror.is_timeout(err))
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_1_a:exec(function()
+        _G.bucket_recovery_wait()
+    end)
+end
+
+--
+-- gh-573: rebalancer should not make bucket SENDING before it checks,
+-- that all replicas doesn't have RW refs. Checks the ref part.
+--
+test_group.test_replication_not_broken_when_ref_on_replica = function(g)
+    local bid = g.replica_1_a:exec(function()
+        local bid = _G.get_first_bucket()
+        ivshard.storage.bucket_refrw(bid)
+        return bid
+    end)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].replicas.replica_1_b.read_only = false
+    new_cfg_template.sharding[1].replicas.replica_1_a.read_only = true
+    new_cfg_template.sharding[1].weight = 0
+    new_cfg_template.rebalancer_bucket_send_timeout = 1
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.cluster_rebalancer_enable(g)
+
+    g.replica_1_b:exec(function()
+        local internal = ivshard.storage.internal
+        local applier_name = 'routes_applier_service'
+        ivtest.wait_for_not_nil(internal, applier_name,
+            {on_yield = ivshard.storage.rebalancer_wakeup})
+        ivtest.service_wait_for_new_error(internal[applier_name],
+            'failed waiting for no RW refs')
+    end)
+    g.replica_1_a:assert_follows_upstream(g.replica_1_b:instance_id())
+
+    vtest.cluster_rebalancer_disable(g)
+    g.replica_1_b:exec(function(bid, uuid)
+        _G.bucket_recovery_wait()
+        ilt.helpers.retrying({timeout = _G.iwait_timeout}, function()
+            t.assert_not(ivshard.storage.rebalancing_is_in_progress())
+        end)
+
+        -- Test manual bucket send behaves the same.
+        local ok, err = ivshard.storage.bucket_send(bid, uuid,
+                                                    {sync_timeout = 1})
+        ilt.assert_not(ok)
+        ilt.assert(err and err.prev)
+        ilt.assert_equals(err.code, iverror.code.WRONG_BUCKET)
+        ilt.assert(iverror.is_timeout(err.prev))
+        _G.bucket_recovery_wait()
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+
+    vtest.cluster_cfg(g, global_cfg)
+    g.replica_1_a:exec(function(bid)
+        ivshard.storage.bucket_unrefrw(bid)
+    end, {bid})
+end
