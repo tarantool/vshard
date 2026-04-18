@@ -25,8 +25,8 @@ vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 -- garbage some of them and activate others. Receiving buckets
 -- must be garbaged on bootstrap.
 _bucket = box.space._bucket
-_bucket:replace{2, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
-_bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]}
+_bucket:replace{2, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
+_bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2], {generation = 1}}
 vshard.storage.sync()
 
 _ = test_run:switch('default')
@@ -36,7 +36,8 @@ util.map_bucket_protection(test_run, {REPLICASET_2}, false)
 _ = test_run:switch('storage_2_a')
 _bucket = box.space._bucket
 vshard.storage.bucket_force_create(2)
-_bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
+_bucket:replace{2, vshard.consts.BUCKET.ACTIVE, box.NULL, {generation = 1}}
+_bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1], {generation = 1}}
 vshard.storage.sync()
 
 _ = test_run:switch('default')
@@ -73,10 +74,11 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, false)
 
 _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
-_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
 vshard.storage.sync()
 _ = test_run:switch('storage_2_a')
 vshard.storage.bucket_force_create(1)
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE, box.NULL, {generation = 1}}
 vshard.storage.sync()
 
 _ = test_run:switch('default')
@@ -105,10 +107,10 @@ _ = test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, false)
 
 _ = test_run:switch('storage_2_a')
-_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, util.replicasets[1]}
+_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, util.replicasets[1], {generation = 1}}
 vshard.storage.sync()
 _ = test_run:switch('storage_1_a')
-_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
 vshard.storage.sync()
 
 _ = test_run:switch('default')

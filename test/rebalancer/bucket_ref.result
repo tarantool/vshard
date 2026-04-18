@@ -64,6 +64,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_ro: 1
+    generation: 0
     id: 1
 ...
 vshard.storage.bucket_refrw(1)
@@ -73,10 +74,11 @@ vshard.storage.bucket_refrw(1)
 vshard.storage.buckets_info(1)
 ---
 - 1:
+    generation: 0
+    id: 1
     status: active
     ref_rw: 1
     ref_ro: 1
-    id: 1
 ...
 vshard.storage.bucket_unrefro(1)
 ---
@@ -87,6 +89,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_rw: 1
+    generation: 0
     id: 1
 ...
 -- When an RW ref exists, RO is taken with no _bucket lookup.
@@ -97,10 +100,11 @@ vshard.storage.bucket_refro(1)
 vshard.storage.buckets_info(1)
 ---
 - 1:
+    generation: 0
+    id: 1
     status: active
     ref_rw: 1
     ref_ro: 1
-    id: 1
 ...
 vshard.storage.bucket_unrefro(1)
 ---
@@ -114,6 +118,7 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     status: active
+    generation: 0
     id: 1
 ...
 -- Test locks. For this open some RO requests and then send the
@@ -128,6 +133,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_ro: 1
+    generation: 0
     id: 1
 ...
 _ = test_run:switch('box_1_a')
@@ -152,10 +158,11 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     rw_lock: true
+    generation: 1
     id: 1
     status: sending
-    destination: <replicaset_2>
     ref_ro: 1
+    destination: <replicaset_2>
 ...
 vshard.storage.bucket_ref(1, 'write')
 ---
@@ -189,10 +196,11 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     rw_lock: true
+    generation: 1
     id: 1
     status: sending
-    destination: <replicaset_2>
     ref_ro: 1
+    destination: <replicaset_2>
 ...
 vshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
 ---
@@ -213,10 +221,11 @@ vshard.storage.buckets_info(1)
 - 1:
     ro_lock: true
     rw_lock: true
+    generation: 1
     id: 1
     status: sent
-    destination: <replicaset_2>
     ref_ro: 1
+    destination: <replicaset_2>
 ...
 vshard.storage.bucket_refro(1)
 ---
@@ -243,6 +252,7 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     status: active
+    generation: 1
     id: 1
 ...
 --
@@ -257,6 +267,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_rw: 1
+    generation: 1
     id: 1
 ...
 f2 = fiber.create(function() vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3}) end)
@@ -271,10 +282,11 @@ fiber.sleep(0.2)
 vshard.storage.buckets_info(1)
 ---
 - 1:
-    status: readonly
     rw_lock: true
-    id: 1
+    generation: 1
     ref_rw: 1
+    status: readonly
+    id: 1
 ...
 finish_refs = true
 ---
@@ -289,6 +301,7 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     status: active
+    generation: 2
     id: 1
 ...
 --
@@ -371,6 +384,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_rw: 1
+    generation: 2
     id: 1
 ...
 -- Cleanup after the test.

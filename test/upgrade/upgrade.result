@@ -155,15 +155,15 @@ vschema = require('vshard.storage.schema')
  | ...
 box.space._schema:get({'vshard_version'})
  | ---
- | - ['vshard_version', 0, 1, 16, 0]
+ | - ['vshard_version', 0, 1, 41, 0]
  | ...
 vschema.current_version()
  | ---
- | - '{0.1.16.0}'
+ | - '{0.1.41.0}'
  | ...
 vschema.latest_version
  | ---
- | - '{0.1.16.0}'
+ | - '{0.1.41.0}'
  | ...
 vshard.storage._call ~= nil
  | ---
@@ -201,15 +201,15 @@ test_run:wait_lsn('storage_1_b', 'storage_1_a')
  | ...
 box.space._schema:get({'vshard_version'})
  | ---
- | - ['vshard_version', 0, 1, 16, 0]
+ | - ['vshard_version', 0, 1, 41, 0]
  | ...
 vschema.current_version()
  | ---
- | - '{0.1.16.0}'
+ | - '{0.1.41.0}'
  | ...
 vschema.latest_version
  | ---
- | - '{0.1.16.0}'
+ | - '{0.1.41.0}'
  | ...
 vshard.storage._call ~= nil
  | ---

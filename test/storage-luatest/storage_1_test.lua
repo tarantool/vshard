@@ -38,6 +38,16 @@ test_group.before_all(function(g)
     vtest.cluster_new(g, global_cfg)
     vtest.cluster_bootstrap(g, global_cfg)
     vtest.cluster_rebalancer_disable(g)
+    g.replica_1_a:exec(function()
+        rawset(_G, 'bucket_make_sending', function(bid, dst)
+            local b = box.space._bucket:get(bid)
+            local old_gen = b.opts and b.opts.generation or 0
+            -- Update cannot be done due to the  bug on Tarantool 1.10, it
+            -- fails with 'Field 4 was not found in the tuple'.
+            box.space._bucket:replace{bid, ivconst.BUCKET.SENDING, dst,
+                                      {generation = old_gen + 1}}
+        end)
+    end)
 end)
 
 test_group.after_all(function(g)
@@ -316,8 +326,7 @@ test_group.test_ref_with_buckets_timeout = function(g)
         -- same buckets as for moving.
         --
         _G.bucket_recovery_pause()
-        box.space._bucket:update(
-            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}})
+        _G.bucket_make_sending(bids[1])
         local res, err = ivshard.storage._call(
             'storage_ref_make_with_buckets', rid, 0.01, {bids[2]})
         box.space._bucket:update(
@@ -340,8 +349,7 @@ test_group.test_ref_with_buckets_return_last_known_dst = function(g)
         -- validated and not allowed.
         _G.bucket_recovery_pause()
         _G.bucket_gc_pause()
-        box.space._bucket:update(
-            {bid}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        _G.bucket_make_sending(bid, id)
         box.space._bucket:update(
             {bid}, {{'=', 2, ivconst.BUCKET.SENT}})
         local res, err = ivshard.storage._call(
@@ -376,8 +384,7 @@ test_group.test_ref_with_buckets_move_part_while_referencing = function(g)
         _G.bucket_recovery_pause()
         _G.bucket_gc_pause()
         -- Block the refs for a while.
-        box.space._bucket:update(
-            {bids[3]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        _G.bucket_make_sending(bids[3], id)
         -- Start referencing.
         local session_id
         local f = ifiber.new(function()
@@ -387,8 +394,7 @@ test_group.test_ref_with_buckets_move_part_while_referencing = function(g)
         end)
         f:set_joinable(true)
         -- While waiting, one of the target buckets starts moving.
-        box.space._bucket:update(
-            {bids[2]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        _G.bucket_make_sending(bids[2], id)
         -- Now they are moved.
         box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.SENT}})
         box.space._bucket:update({bids[3]}, {{'=', 2, ivconst.BUCKET.SENT}})
@@ -428,8 +434,7 @@ test_group.test_ref_with_buckets_move_all_while_referencing = function(g)
         _G.bucket_recovery_pause()
         _G.bucket_gc_pause()
         -- Block the refs for a while.
-        box.space._bucket:update(
-            {bids[3]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        _G.bucket_make_sending(bids[3], id)
         -- Start referencing.
         local f = ifiber.new(function()
             return ivshard.storage._call('storage_ref_make_with_buckets', rid,
@@ -437,10 +442,8 @@ test_group.test_ref_with_buckets_move_all_while_referencing = function(g)
         end)
         f:set_joinable(true)
         -- While waiting, all the target buckets start moving.
-        box.space._bucket:update(
-            {bids[1]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
-        box.space._bucket:update(
-            {bids[2]}, {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id}})
+        _G.bucket_make_sending(bids[1], id)
+        _G.bucket_make_sending(bids[2], id)
         -- Now they are moved.
         box.space._bucket:update({bids[1]}, {{'=', 2, ivconst.BUCKET.SENT}})
         box.space._bucket:update({bids[2]}, {{'=', 2, ivconst.BUCKET.SENT}})
@@ -500,16 +503,14 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local id_sending = luuid.str()
         _bucket:update({bid_sending},
             {{'=', 2, ivconst.BUCKET.READONLY}})
-        _bucket:update({bid_sending},
-            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sending}})
+        _G.bucket_make_sending(bid_sending, id_sending)
 
         -- SENT = bids[4].
         local bid_sent = bids[4]
         local id_sent = luuid.str()
         _bucket:update({bid_sent},
             {{'=', 2, ivconst.BUCKET.READONLY}})
-        _bucket:update({bid_sent},
-            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_sent}})
+        _G.bucket_make_sending(bid_sent, id_sent)
         _bucket:update({bid_sent},
             {{'=', 2, ivconst.BUCKET.SENT}})
 
@@ -518,8 +519,7 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local id_receiving = luuid.str()
         _bucket:update({bid_receiving},
             {{'=', 2, ivconst.BUCKET.READONLY}})
-        _bucket:update({bid_receiving},
-            {{'=', 2, ivconst.BUCKET.SENDING}})
+        _G.bucket_make_sending(bid_receiving, id_receiving)
         _bucket:update({bid_receiving},
             {{'=', 2, ivconst.BUCKET.SENT}})
         _bucket:update({bid_receiving},
@@ -532,8 +532,7 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local id_garbage = luuid.str()
         _bucket:update({bid_garbage},
             {{'=', 2, ivconst.BUCKET.READONLY}})
-        _bucket:update({bid_garbage},
-            {{'=', 2, ivconst.BUCKET.SENDING}, {'=', 3, id_garbage}})
+        _G.bucket_make_sending(bid_garbage, id_garbage)
         _bucket:update({bid_garbage},
             {{'=', 2, ivconst.BUCKET.SENT}})
         _bucket:update({bid_garbage},
@@ -543,8 +542,7 @@ test_group.test_moved_buckets_various_statuses = function(g)
         local bid_404 = bids[7]
         _bucket:update({bid_404},
             {{'=', 2, ivconst.BUCKET.READONLY}})
-        _bucket:update({bid_404},
-            {{'=', 2, ivconst.BUCKET.SENDING}})
+        _G.bucket_make_sending(bid_404)
         _bucket:update({bid_404},
             {{'=', 2, ivconst.BUCKET.SENT}})
         _bucket:update({bid_404},

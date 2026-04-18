@@ -209,6 +209,18 @@ upgrade_trace
  |       func_count: 1
  |       new_version: '{0.1.16.0}'
  |       old_version: '{0.1.15.0}'
+ |   - Upgrade to {0.1.41.0}
+ |   - Errinj in begin
+ |   - - Errinj in begin
+ |   - diff: []
+ |   - Errinj in end
+ |   - - Errinj in end
+ |   - diff: []
+ |   - No errinj
+ |   - - true
+ |   - diff:
+ |       new_version: '{0.1.41.0}'
+ |       old_version: '{0.1.16.0}'
  | ...
 
 _ = test_run:switch("default")

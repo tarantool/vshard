@@ -239,11 +239,11 @@ _ = test_run:switch('box_2_a')
 ...
 _bucket:get{35}
 ---
-- [35, 'active']
+- [35, 'active', null, {'generation': 1}]
 ...
 _bucket:get{36}
 ---
-- [36, 'active']
+- [36, 'active', null, {'generation': 1}]
 ...
 --
 -- Test that bucket_send is correctly handled by recovery. When
@@ -283,7 +283,7 @@ _ = test_run:switch('box_2_a')
 ...
 _bucket:get{36}
 ---
-- [36, 'active']
+- [36, 'active', null, {'generation': 1}]
 ...
 box.error.injection.set('ERRINJ_WAL_DELAY', false)
 ---

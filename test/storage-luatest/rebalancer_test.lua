@@ -379,7 +379,10 @@ test_group.test_pinning_before_readonly = function(g)
         test_readonly_with_pinning_template(ivconst.BUCKET.READONLY,
             function()
                 local bucket = box.space._bucket
-                local tuple = {bid, ivconst.BUCKET.PINNED}
+                local b = bucket:get(bid)
+                local old_gen = b.opts and b.opts.generation or 0
+                local gen_opts = {generation = old_gen}
+                local tuple = {bid, ivconst.BUCKET.PINNED, nil, gen_opts}
                 return pcall(bucket.replace, bucket, tuple)
             end,
             function() return ivshard.storage.bucket_send(bid, uuid) end)

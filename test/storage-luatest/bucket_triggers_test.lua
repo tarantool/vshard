@@ -465,6 +465,12 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
                 local ok, err
                 if dst == box.NULL then
                     ok, err = pcall(_bucket.delete, _bucket, {bid})
+                elseif dst == ivconst.BUCKET.SENDING then
+                    -- On transition to SENDING the generation must be
+                    -- increased according to on_replace trigger, so filter
+                    -- that case manually.
+                    ok, err = pcall(_bucket.replace, _bucket,
+                        {bid, dst, nil, {generation = 1}})
                 else
                     ok, err = pcall(_bucket.replace, _bucket, {bid, dst})
                 end
@@ -498,4 +504,77 @@ test_group.test_bucket_space_reject_bad_replace_on_transition = function(g)
     end)
     rep_b:wait_vclock_of(rep_a)
     rep_b:exec(bucket_set_protection, {true})
+end
+
+--
+-- Test that bucket generation triggers works properly.
+--
+test_group.test_bucket_generation_checks = function(g)
+    g.replica_1_a:exec(function()
+        local function drop_bucket(bid)
+            ivshard.storage.internal.is_bucket_protected = false
+            box.space._bucket:delete(bid)
+            ivshard.storage.internal.is_bucket_protected = true
+        end
+        local bid = ivshard.storage.internal.total_bucket_count + 1
+        local _bucket = box.space._bucket
+        local statuses = ivconst.BUCKET
+        local receiving = statuses.RECEIVING
+        --
+        -- It's allowed to insert a bucket with or without generation. See
+        -- the comment in the on_replace trigger for details, why is it so.
+        --
+        ilt.assert(pcall(_bucket.insert, _bucket, {bid, receiving}))
+        drop_bucket(bid)
+        ilt.assert(pcall(_bucket.insert, _bucket,
+                   {bid, receiving, nil, {generation = 1}}))
+        drop_bucket(bid)
+        --
+        -- None of the updates can drop the generation if it was there.
+        --
+        local edges = ivshard.storage.internal.bucket_state_edges
+        for _, status in ipairs(statuses) do
+            local new_status = next(edges[status])
+            if new_status ~= box.NULL then
+                ivshard.storage.internal.is_bucket_protected = false
+                _bucket:insert{bid, status, nil, {generation = 1}}
+                ivshard.storage.internal.is_bucket_protected = true
+                local ok, err = pcall(_bucket.replace, _bucket,
+                    {bid, new_status})
+                ilt.assert_not(ok)
+                ilt.assert_str_contains(err.message, 'drops generation')
+                drop_bucket(bid)
+            end
+        end
+        --
+        -- Transition to SENDING always bumps the generation.
+        --
+        ivshard.storage.internal.is_bucket_protected = false
+        _bucket:insert{bid, statuses.ACTIVE}
+        ivshard.storage.internal.is_bucket_protected = true
+        local sending = statuses.SENDING
+        local ok, err = pcall(_bucket.update, _bucket,
+                              {bid}, {{'=', 2, sending}})
+        ilt.assert_not(ok)
+        ilt.assert_str_contains(err.message, 'increment generation')
+        -- And with increment it's ok.
+        ilt.assert(pcall(_bucket.replace, _bucket,
+                  {bid, sending, nil, {generation = 1}}))
+        --
+        -- Incrementing generation when updating to SENT or GARBAGE is
+        -- prohibited by design and cannot be done in the future.
+        --
+        local sent = statuses.SENT
+        ok, err = pcall(_bucket.replace, _bucket,
+                        {bid, sent, nil, {generation = 2}})
+        ilt.assert_not(ok)
+        ilt.assert_str_contains(err.message, 'changes generation')
+        ilt.assert(pcall(_bucket.replace, _bucket,
+                  {bid, sent, nil, {generation = 1}}))
+        ok, err = pcall(_bucket.replace, _bucket,
+                        {bid, statuses.GARBAGE, nil, {generation = 2}})
+        ilt.assert_not(ok)
+        ilt.assert_str_contains(err.message, 'changes generation')
+        drop_bucket(bid)
+    end)
 end

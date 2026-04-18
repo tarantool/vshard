@@ -117,11 +117,11 @@ _ = test_run:switch('storage_2_a')
 -- Pause recovery. It is too aggressive, and the test needs to see buckets in
 -- their intermediate states.
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
-box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, util.replicasets[1]})
+box.space._bucket:replace({1, vshard.consts.BUCKET.SENDING, util.replicasets[1], {generation = 1}})
 
 _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
-box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]})
+box.space._bucket:replace({1, vshard.consts.BUCKET.RECEIVING, util.replicasets[2], {generation = 1}})
 
 _ = test_run:switch('router_1')
 -- Ok to read sending bucket.

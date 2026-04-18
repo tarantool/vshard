@@ -100,11 +100,12 @@ test_group.test_gc_do_not_spam_same_errors = function(g)
         rawset(_G, 'old_wait_lsn_timeout', ivconst.GC_WAIT_LSN_TIMEOUT)
         ivconst.GC_WAIT_LSN_TIMEOUT = 0.01
         box.begin()
+        local gen = {generation = 1}
         for _, bid in ipairs(bids) do
             box.space._bucket:replace{bid, ivconst.BUCKET.RECEIVING}
             box.space._bucket:replace{bid, ivconst.BUCKET.ACTIVE}
-            box.space._bucket:replace{bid, ivconst.BUCKET.SENDING}
-            box.space._bucket:replace{bid, ivconst.BUCKET.SENT}
+            box.space._bucket:replace{bid, ivconst.BUCKET.SENDING, nil, gen}
+            box.space._bucket:update({bid}, {{'=', 2, ivconst.BUCKET.SENT}})
         end
         box.commit()
     end, {bids})
