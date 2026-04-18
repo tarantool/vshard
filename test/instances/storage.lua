@@ -163,7 +163,7 @@ end
 
 local function bucket_recovery_continue()
     vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
-    vshard.storage.garbage_collector_wakeup()
+    vshard.storage.recovery_wakeup()
 end
 
 local function wal_sync()
