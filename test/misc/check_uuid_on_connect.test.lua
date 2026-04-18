@@ -22,7 +22,7 @@ box.space._bucket:select{}
 -- Bucket sending fails, but it remains 'sending'. It is because
 -- we do not know was request executed or not before connection
 -- was lost. Restore it to 'active' manually.
-box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE}
+box.space._bucket:replace{1, vshard.consts.BUCKET.ACTIVE, box.NULL, {generation = 1}}
 
 test_run:cmd('create server bad_uuid_router with script="misc/bad_uuid_router.lua", wait=True, wait_load=True')
 test_run:cmd('start server bad_uuid_router')

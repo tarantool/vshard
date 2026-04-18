@@ -153,7 +153,7 @@ for i = 1, 500 do assert(box.space.test4:get{i}[3] == 4) assert(box.space.test5:
 ...
 box.space._bucket:get{1}
 ---
-- [1, 'active']
+- [1, 'active', null, {'generation': 1}]
 ...
 --
 -- Ensure the partially received bucket is correctly cleaned up.
@@ -208,7 +208,7 @@ end)
 ...
 box.space._bucket:get{1}
 ---
-- [1, 'active']
+- [1, 'active', null, {'generation': 2}]
 ...
 --
 -- gh-149: a bucket can be activated on two storages in the
@@ -298,6 +298,7 @@ vshard.storage.buckets_info(1)
 - 1:
     status: active
     ref_rw: 1
+    generation: 2
     id: 1
 ...
 f1 = fiber.create(function() ret, err = vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3}) end)
@@ -313,10 +314,11 @@ while not vshard.storage.buckets_info(1)[1].rw_lock do fiber.sleep(0.01) end
 vshard.storage.buckets_info(1)
 ---
 - 1:
-    status: readonly
     rw_lock: true
-    id: 1
+    generation: 2
     ref_rw: 1
+    status: readonly
+    id: 1
 ...
 vshard.storage.bucket_refrw(1)
 ---
@@ -346,6 +348,7 @@ vshard.storage.buckets_info(1)
 ---
 - 1:
     status: active
+    generation: 2
     id: 1
 ...
 box.space.test3:select{100}
@@ -379,7 +382,7 @@ _ = test_run:switch('box_1_a')
 ...
 box.space._bucket:get{1}
 ---
-- [1, 'active']
+- [1, 'active', null, {'generation': 3}]
 ...
 box.space.test3:select{100}
 ---

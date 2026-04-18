@@ -121,6 +121,27 @@ local function schema_downgrade_from_0_1_16_0()
     box.space._schema:delete({'vshard_version'})
 end
 
+local function schema_upgrade_to_0_1_41_0()
+    llog.info("Add 'opts' attribute to _bucket space")
+    box.space._bucket:format({
+        {'id', 'unsigned'},
+        {'status', 'string'},
+        {'destination', 'string', is_nullable = true},
+        {'opts', 'map', is_nullable = true}
+    })
+    box.space._schema:replace({'vshard_version', 0, 1, 41, 0})
+end
+
+local function schema_downgrade_from_0_1_41_0()
+    llog.info("Remove 'opts' attribute from _bucket space")
+    box.space._bucket:format({
+        {'id', 'unsigned'},
+        {'status', 'string'},
+        {'destination', 'string', is_nullable = true},
+    })
+    box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
+end
+
 local function schema_current_version()
     local version = box.space._schema:get({'vshard_version'})
     if version == nil then
@@ -144,7 +165,7 @@ local function schema_upgrade_core_features()
     M.is_core_up_to_date = true
 end
 
-local schema_latest_version = schema_version_make({0, 1, 16, 0})
+local schema_latest_version = schema_version_make({0, 1, 41, 0})
 
 -- Every handler should be atomic. It is either applied whole, or not applied at
 -- all. Atomic upgrade helps to downgrade in case something goes wrong. At least
@@ -157,6 +178,11 @@ local schema_upgrade_handlers = {
         upgrade = schema_upgrade_to_0_1_16_0,
         downgrade = schema_downgrade_from_0_1_16_0
     },
+    {
+        version = schema_version_make({0, 1, 41, 0}),
+        upgrade = schema_upgrade_to_0_1_41_0,
+        downgrade = schema_downgrade_from_0_1_41_0
+    }
 }
 
 local function schema_upgrade(target_version, username, password)

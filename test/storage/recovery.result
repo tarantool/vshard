@@ -54,13 +54,13 @@ vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 _bucket = box.space._bucket
 ---
 ...
-_bucket:replace{2, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+_bucket:replace{2, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
 ---
-- [2, 'sending', '<replicaset_2>']
+- [2, 'sending', '<replicaset_2>', {'generation': 1}]
 ...
-_bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2]}
+_bucket:replace{3, vshard.consts.BUCKET.RECEIVING, util.replicasets[2], {generation = 1}}
 ---
-- [3, 'receiving', '<replicaset_2>']
+- [3, 'receiving', '<replicaset_2>', {'generation': 1}]
 ...
 vshard.storage.sync()
 ---
@@ -85,9 +85,13 @@ vshard.storage.bucket_force_create(2)
 ---
 - true
 ...
-_bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1]}
+_bucket:replace{2, vshard.consts.BUCKET.ACTIVE, box.NULL, {generation = 1}}
 ---
-- [3, 'sending', '<replicaset_1>']
+- [2, 'active', null, {'generation': 1}]
+...
+_bucket:replace{3, vshard.consts.BUCKET.SENDING, util.replicasets[1], {generation = 1}}
+---
+- [3, 'sending', '<replicaset_1>', {'generation': 1}]
 ...
 vshard.storage.sync()
 ---
@@ -119,8 +123,8 @@ _ = test_run:switch('storage_2_a')
 ...
 _bucket:select{}
 ---
-- - [2, 'active']
-  - [3, 'sending', '<replicaset_1>']
+- - [2, 'active', null, {'generation': 1}]
+  - [3, 'sending', '<replicaset_1>', {'generation': 1}]
 ...
 _ = test_run:switch('storage_1_a')
 ---
@@ -160,9 +164,9 @@ _ = test_run:switch('storage_1_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = true
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
 ---
-- [1, 'sending', '<replicaset_2>']
+- [1, 'sending', '<replicaset_2>', {'generation': 1}]
 ...
 vshard.storage.sync()
 ---
@@ -174,6 +178,10 @@ _ = test_run:switch('storage_2_a')
 vshard.storage.bucket_force_create(1)
 ---
 - true
+...
+_bucket:replace{1, vshard.consts.BUCKET.ACTIVE, box.NULL, {generation = 1}}
+---
+- [1, 'active', null, {'generation': 1}]
 ...
 vshard.storage.sync()
 ---
@@ -202,14 +210,14 @@ _bucket = box.space._bucket
 ...
 _bucket:select{}
 ---
-- - [1, 'sending', '<replicaset_2>']
+- - [1, 'sending', '<replicaset_2>', {'generation': 1}]
 ...
 for i = 1, 10 do vshard.storage.recovery_wakeup() end
 ---
 ...
 _bucket:select{}
 ---
-- - [1, 'sending', '<replicaset_2>']
+- - [1, 'sending', '<replicaset_2>', {'generation': 1}]
 ...
 _ = test_run:cmd('start server storage_2_a')
 ---
@@ -229,9 +237,9 @@ _bucket = box.space._bucket
 ...
 _bucket:select{}
 ---
-- - [1, 'active']
-  - [2, 'active']
-  - [3, 'active']
+- - [1, 'active', null, {'generation': 1}]
+  - [2, 'active', null, {'generation': 1}]
+  - [3, 'active', null, {'generation': 1}]
 ...
 --
 -- Test a case when a bucket is sending in one place and garbage
@@ -246,9 +254,9 @@ util.map_bucket_protection(test_run, {REPLICASET_1, REPLICASET_2}, false)
 _ = test_run:switch('storage_2_a')
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, util.replicasets[1]}
+_bucket:replace{1, vshard.consts.BUCKET.GARBAGE, util.replicasets[1], {generation = 1}}
 ---
-- [1, 'garbage', '<replicaset_1>']
+- [1, 'garbage', '<replicaset_1>', {'generation': 1}]
 ...
 vshard.storage.sync()
 ---
@@ -257,9 +265,9 @@ vshard.storage.sync()
 _ = test_run:switch('storage_1_a')
 ---
 ...
-_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2]}
+_bucket:replace{1, vshard.consts.BUCKET.SENDING, util.replicasets[2], {generation = 1}}
 ---
-- [1, 'sending', '<replicaset_2>']
+- [1, 'sending', '<replicaset_2>', {'generation': 1}]
 ...
 vshard.storage.sync()
 ---

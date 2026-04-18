@@ -129,6 +129,7 @@ vshard.storage.bucket_force_create(2000)
 vshard.storage.buckets_info()[2000]
 ---
 - status: active
+  generation: 0
   id: 2000
 ...
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
@@ -160,7 +161,7 @@ test_run:switch('storage_2_a')
 ...
 box.space._bucket:get{bucket_id_to_move}
 ---
-- [3000, 'active']
+- [3000, 'active', null, {'generation': 2}]
 ...
 vshard.storage.call(bucket_id_to_move, 'read', 'do_select', {42})
 ---

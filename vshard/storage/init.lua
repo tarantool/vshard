@@ -588,20 +588,54 @@ local function bucket_prepare_update(old_bucket, new_bucket)
                                  new_status)
         end
     end
-    if new_status == old_status then
+    if new_status ~= old_status
+       and not M.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE then
+        local src = bucket_state_edges[old_status]
+        if not src or not bucket_state_edges[new_status] then
+            bucket_reject_update(bid, "unknown bucket status '%s'",
+                                 not src and old_status or new_status)
+        elseif not src[new_status] then
+            bucket_reject_update(bid, "transition '%s' to '%s' is not allowed",
+                                 old_status == box.NULL and 'nil' or old_status,
+                                 new_status == box.NULL and 'nil' or new_status)
+        end
+    end
+    --
+    -- Check, whether generation is properly updated.
+    --
+    if old_bucket == nil then
+        -- Bucket is inserted: either bootstrap or `bucket_recv`. On boostrap
+        -- the bucket should not have generation set in order to reduce the
+        -- usage of memory until the rebalancing happens. Though on receive it
+        -- should have one, but we cannot check it, since bucket is force
+        -- created during bootstrap with `RECEIVING -> ACTIVE` transition.
+        -- The second problem is that we must still accept the buckets from
+        -- non-upgraded instances, which don't set the generation. Thus,
+        -- it's possible, that generation is missing on insert of the bucket
+        -- and we can guarantee nothing here.
         return
     end
-    if M.errinj.ERRINJ_SKIP_BUCKET_STATUS_VALIDATE then
-        return
+    -- Generation cannot be dropped on any updates, if it was there, it
+    -- must remain for eternity.
+    local old_gen = old_bucket.opts and old_bucket.opts.generation or 0
+    local new_gen = new_bucket.opts and new_bucket.opts.generation or 0
+    if old_gen ~= 0 and new_gen == 0 then
+        bucket_reject_update(bid, "bucket update drops generation %d", old_gen)
     end
-    local src = bucket_state_edges[old_status]
-    if not src or not bucket_state_edges[new_status] then
-        bucket_reject_update(bid, "unknown bucket status '%s'",
-                             not src and old_status or new_status)
-    elseif not src[new_status] then
-        bucket_reject_update(bid, "transition '%s' to '%s' is not allowed",
-                             old_status == box.NULL and 'nil' or old_status,
-                             new_status == box.NULL and 'nil' or new_status)
+    -- SENDING bucket is the only one, which increments the generation for
+    -- now, though it can be extended in the future, but the generation
+    -- cannot be incremented on transition to SENT, RECEIVING or GARBAGE,
+    -- since this will break the recovery process on the non-upgraded
+    -- storages, if we decide to change the recovery in the future.
+    if new_status == BSENDING and new_gen ~= old_gen + 1 then
+        bucket_reject_update(bid, "bucket update to '%s' doesn't " ..
+                             "increment generation %d -> %d", new_status,
+                              new_gen, old_gen)
+    end
+    if (new_status == BSENT or new_status == BGARBAGE)
+        and new_gen ~= old_gen then
+        bucket_reject_update(bid, "transition to '%s' changes generation" ..
+                             "%d -> %d", new_status, new_gen, old_gen)
     end
 end
 
@@ -947,6 +981,7 @@ local function recovery_bucket_stat(bid)
         id = bid,
         status = b.status,
         is_transfering = M.rebalancer_transfering_buckets[bid],
+        generation = b.opts and b.opts.generation or 0,
     }
 end
 
@@ -1008,14 +1043,12 @@ local bucket_recovery_checkers = {
 }
 
 local function bucket_recover(bucket_id, status, recovered_buckets)
-    local ok, err
-    if bucket_status_has_destination(status) then
-        -- Preserve the destination, just update the status.
-        ok, err = bucket_space_update({bucket_id}, {{'=', 2, status}})
-    else
-        -- Replace the whole tuple, drop destination if it exists.
-        ok, err = bucket_space_replace({bucket_id, status})
+    local operation = {{'=', 2, status}}
+    if not bucket_status_has_destination(status) then
+        -- Drop the destination, if it exists, but do not touch the opts.
+        table.insert(operation, {'=', 3, box.NULL})
     end
+    local ok, err = bucket_space_update({bucket_id}, operation)
     if not ok then
         error(err)
     end
@@ -1575,6 +1608,12 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     local b = _bucket:get{bucket_id}
     local recvg = BRECEIVING
     local is_last = opts and opts.is_last
+    local bucket_opts
+    local new_generation = opts and opts.generation or 0
+    local old_generation = b and b.opts and b.opts.generation or 0
+    if new_generation ~= 0 then
+        bucket_opts = {generation = new_generation}
+    end
     if not b then
         if is_last then
             local msg = 'last message is received, but the bucket does not '..
@@ -1604,7 +1643,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         -- the bucket won't be writable.
         -- This way still provides fair scheduling, but does not have the
         -- described issue.
-        ok, err = bucket_space_insert({bucket_id, recvg, from})
+        ok, err = bucket_space_insert({bucket_id, recvg, from, bucket_opts})
         lsched.move_end(1)
         if not ok then
             return nil, err
@@ -1612,6 +1651,11 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
     elseif b.status ~= recvg then
         local msg = string.format("bucket state is changed: was receiving, "..
                                   "became %s", b.status)
+        return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
+                                  from)
+    elseif new_generation ~= old_generation then
+        local msg = string.format("bucket state is changed: had generation " ..
+                                  "%d, now %d", old_generation, new_generation)
         return nil, lerror.vshard(lerror.code.WRONG_BUCKET, bucket_id, msg,
                                   from)
     end
@@ -1657,7 +1701,8 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
     if is_last then
-        local ok, err = bucket_space_replace({bucket_id, BACTIVE})
+        local ok, err =
+            bucket_space_replace({bucket_id, BACTIVE, nil, bucket_opts})
         if not ok then
             return nil, err
         end
@@ -1962,7 +2007,7 @@ local function bucket_send_prepare(bid, opts)
     -- * gives the same effect as if move was in the scheduler for the whole
     --   bucket_send() time, because refs won't be able to start anyway - the
     --   bucket is not writable.
-    ok, err = bucket_space_replace({bid, BREADONLY})
+    ok, err = bucket_space_update({bid}, {{'=', 2, BREADONLY}})
     lsched.move_end(1)
     if not ok then
         goto error
@@ -2022,7 +2067,11 @@ local function bucket_send_xc(bucket_id, destination, opts)
     local bucket_generation = M.bucket_generation
     local sendg = BSENDING
 
-    ok, err = bucket_space_replace({bucket_id, sendg, destination})
+    local bucket = box.space._bucket:get({bucket_id})
+    assert(bucket.status == BREADONLY)
+    local generation = bucket.opts and bucket.opts.generation + 1 or 1
+    local bucket_opts = {generation = generation}
+    ok, err = bucket_space_replace({bucket_id, sendg, destination, bucket_opts})
     if not ok then
         return nil, err
     end
@@ -2039,7 +2088,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
                 timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
                 status, err = master_call(
                     replicaset, 'vshard.storage.bucket_recv',
-                    {bucket_id, id, data}, {timeout = timeout})
+                    {bucket_id, id, data, bucket_opts}, {timeout = timeout})
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
@@ -2053,8 +2102,9 @@ local function bucket_send_xc(bucket_id, destination, opts)
         table.insert(data, {space.name, space_data})
     end
     timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
-    status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, data}, {timeout = timeout})
+    status, err = master_call(
+        replicaset, 'vshard.storage.bucket_recv',
+        {bucket_id, id, data, bucket_opts}, {timeout = timeout})
     if not status then
         return status, lerror.make(err)
     end
@@ -2080,7 +2130,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
     -- doesn't have the bucket. Recovery will then assume that S2 already
     -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
     -- S3 {B: active}, doubled buckets situation (gh-414)
-    ok, err = bucket_space_replace({bucket_id, BSENT, destination})
+    ok, err = bucket_space_replace({bucket_id, BSENT, destination, bucket_opts})
     if not ok then
         return nil, err
     end
@@ -2088,10 +2138,10 @@ local function bucket_send_xc(bucket_id, destination, opts)
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
     -- the same bucket is activated on the destination.
+    bucket_opts.is_last = true
     timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, {}, {is_last = true}},
-                              {timeout = timeout})
+        {bucket_id, id, {}, bucket_opts}, {timeout = timeout})
     if not status then
         return status, lerror.make(err)
     end
@@ -4044,10 +4094,12 @@ local function storage_buckets_info(bucket_id)
 
     for _, bucket in box.space._bucket:pairs({bucket_id}) do
         local ref = M.bucket_refs[bucket.id]
+        local generation = bucket.opts and bucket.opts.generation or 0
         local desc = {
             id = bucket.id,
             status = bucket.status,
             destination = bucket.destination,
+            generation = generation,
         }
         if ref then
             if ref.ro ~= 0 then desc.ref_ro = ref.ro end

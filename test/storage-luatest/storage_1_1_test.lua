@@ -723,3 +723,42 @@ test_group.test_bucket_send_timeout = function(g)
         box.space.test:drop()
     end)
 end
+
+test_group.test_bucket_recv_fails_when_different_generations = function(g)
+    vtest.cluster_recovery_pause(g)
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    g.replica_2_a:exec(function(bid, uuid)
+        ilt.assert(ivshard.storage.bucket_recv(bid, uuid, {}, {generation = 1}))
+        local ok, err = ivshard.storage.bucket_recv(
+            bid, uuid, {}, {generation = 2, is_last = true})
+        ilt.assert_not(ok)
+        ilt.assert_str_contains(err.message, 'had generation 1, now 2')
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+    vtest.cluster_recovery_continue(g)
+    g.replica_2_a:exec(function()
+        _G.bucket_recovery_wait()
+        _G.bucket_gc_wait()
+    end)
+end
+
+test_group.test_bucket_generation_is_bumped_on_send = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    local gen = g.replica_1_a:exec(function(bid, dest_id)
+        local _bucket = box.space._bucket
+        local generation = _bucket:get(bid).opts.generation or 0
+        t.assert_equals(_bucket:get(bid).status, 'active')
+        local res, err = ivshard.storage.bucket_send(bid, dest_id)
+        t.assert(res)
+        t.assert_not(err)
+        _G.bucket_gc_wait()
+        return generation
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+    g.replica_2_a:exec(function(bid, gen, dest_id)
+        local _bucket = box.space._bucket
+        local new_gen = _bucket:get(bid).opts.generation or 0
+        t.assert_equals(_bucket:get(bid).status, 'active')
+        t.assert_equals(new_gen, gen + 1)
+        ilt.assert(ivshard.storage.bucket_send(bid, dest_id))
+        _G.bucket_gc_wait()
+    end, {bid, gen, g.replica_1_a:replicaset_uuid()})
+end

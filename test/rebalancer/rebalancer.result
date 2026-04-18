@@ -276,11 +276,11 @@ _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 ...
 _bucket.index.status:min({vshard.consts.BUCKET.ACTIVE})
 ---
-- [1, 'active']
+- [1, 'active', null, {'generation': 2}]
 ...
 _bucket.index.status:max({vshard.consts.BUCKET.ACTIVE})
 ---
-- [100, 'active']
+- [100, 'active', null, {'generation': 2}]
 ...
 --
 -- After multiple rebalancing a next rebalance must not change
@@ -464,11 +464,11 @@ _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 ...
 _bucket.index.status:min({vshard.consts.BUCKET.ACTIVE})
 ---
-- [1, 'active']
+- [1, 'active', null, {'generation': 2}]
 ...
 _bucket.index.status:max({vshard.consts.BUCKET.ACTIVE})
 ---
-- [100, 'active']
+- [100, 'active', null, {'generation': 1}]
 ...
 space:select{}
 ---
