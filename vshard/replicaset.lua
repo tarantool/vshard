@@ -1008,8 +1008,9 @@ end
 -- Sends asynchronous requests to passed replicas and wait until all the
 -- responses will be received.
 --
--- @return In case of success - a map with replica IDs (UUID or name) keys and
---     values being what the function returned from each replica.
+-- @return In case of success - a map with keys of `replicas` (it's either
+--     IDs of the replicas or IDs of the replicasets) and values being what
+--     the function returned from each replica.
 --
 -- @return In case of an error - nil, error object, UUID or name of the replica
 --     where the error happened.
@@ -1025,16 +1026,16 @@ local function replicas_map_call(replicas, func, args, opts)
     --
     -- Send requests
     --
-    for replica_id, replica in pairs(replicas) do
-        if replica_id == except then
+    for id, replica in pairs(replicas) do
+        if id == except then
             goto next_call
         end
         _, res, err = replica_call(replica, func, args, opts_call)
         if res == nil then
-            err_id = replica_id
+            err_id = id
             goto fail
         end
-        futures[replica_id] = res
+        futures[id] = res
         replica_count = replica_count + 1
     ::next_call::
     end
@@ -1042,13 +1043,13 @@ local function replicas_map_call(replicas, func, args, opts)
     -- Collect results
     --
     map = table.new(0, replica_count)
-    for replica_id, future in pairs(futures) do
+    for id, future in pairs(futures) do
         res, err = future_wait(future, timeout)
         if res == nil then
-            err_id = replica_id
+            err_id = id
             goto fail
         end
-        map[replica_id] = res
+        map[id] = res
         timeout = deadline - fiber_clock()
     end
     do return map end
@@ -1744,6 +1745,25 @@ local function wait_masters_connect(replicasets, timeout)
     return nil, err, err_id
 end
 
+--
+-- Parallel call on all masters in the cluster. Fails if couldn't be done
+-- on at least one master.
+--
+local function masters_map_call(replicasets, func, args, opts)
+    assert(opts and opts.timeout)
+    local err, err_id
+    local timeout = opts.timeout
+    timeout, err, err_id = wait_masters_connect(replicasets, timeout)
+    if not timeout then
+        return nil, err, err_id
+    end
+    local replicas = {}
+    for rs_id, rs in pairs(replicasets) do
+        replicas[rs_id] = rs.master
+    end
+    return replicas_map_call(replicas, func, args, {timeout = timeout})
+end
+
 --------------------------------------------------------------------------------
 -- Replica failover
 --------------------------------------------------------------------------------
@@ -2246,6 +2266,7 @@ return {
     buildall = buildall,
     calculate_etalon_balance = cluster_calculate_etalon_balance,
     wait_masters_connect = wait_masters_connect,
+    masters_map_call = masters_map_call,
     rebind_replicasets = rebind_replicasets,
     replica_safe_uri = replica_safe_uri,
     outdate_replicasets = outdate_replicasets,
