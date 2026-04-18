@@ -1005,8 +1005,8 @@ local function replicaset_template_multicallro(prefer_replica, balance)
 end
 
 --
--- Parallel call on all instances in the replicaset. Fails if couldn't be done
--- on at least one instance.
+-- Sends asynchronous requests to passed replicas and wait until all the
+-- responses will be received.
 --
 -- @return In case of success - a map with replica IDs (UUID or name) keys and
 --     values being what the function returned from each replica.
@@ -1014,7 +1014,7 @@ end
 -- @return In case of an error - nil, error object, UUID or name of the replica
 --     where the error happened.
 --
-local function replicaset_map_call(replicaset, func, args, opts)
+local function replicas_map_call(replicas, func, args, opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
     local except = opts.except
     local deadline = fiber_clock() + timeout
@@ -1023,20 +1023,9 @@ local function replicaset_map_call(replicaset, func, args, opts)
     local futures = {}
     local opts_call = {is_async = true, timeout = 0}
     --
-    -- Wait all connections. Sending any request if at least one connection is
-    -- completely dead would only produce unnecessary workload.
+    -- Send requests
     --
-    timeout, err, err_id = replicaset_wait_connected_all(replicaset, {
-        timeout = timeout,
-        except = except,
-    })
-    if not timeout then
-        goto fail
-    end
-    --
-    -- Send requests.
-    --
-    for replica_id, replica in pairs(replicaset.replicas) do
+    for replica_id, replica in pairs(replicas) do
         if replica_id == except then
             goto next_call
         end
@@ -1069,6 +1058,20 @@ local function replicaset_map_call(replicaset, func, args, opts)
         f:discard()
     end
     return nil, lerror.make(err), err_id
+end
+
+--
+-- Parallel call on all instances in the replicaset. Fails if couldn't be done
+-- on at least one instance.
+--
+local function replicaset_map_call(replicaset, func, args, opts)
+    local timeout, err, err_id = replicaset_wait_connected_all(
+        replicaset, opts)
+    if not timeout then
+        return nil, err, err_id
+    end
+    return replicas_map_call(replicaset.replicas, func, args,
+        {timeout = timeout, except = opts.except})
 end
 
 --
