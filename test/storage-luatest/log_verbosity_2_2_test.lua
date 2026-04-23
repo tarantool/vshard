@@ -45,9 +45,25 @@ test_group.after_all(function(g)
     g.cluster:drop()
 end)
 
+local function ratelimit_force_flush_all(instance)
+    instance:exec(function()
+        local now = ifiber.clock()
+        local internal = require('vshard.log_ratelimit').internal
+        for _, limiter in pairs(internal.limiters) do
+            for _, entry in ipairs(limiter.heap.data) do
+                entry.deadline = now
+            end
+        end
+        if internal.flush_fiber then
+            internal.flush_fiber:wakeup()
+        end
+    end)
+end
+
 test_group.test_recovery_do_not_spam_same_errors = function(g)
     local bids = vtest.storage_get_n_buckets(g.replica_2_a, 3)
     local uuid = g.replica_2_a:replicaset_uuid()
+    ratelimit_force_flush_all(g.replica_1_a)
     vtest.storage_stop(g.replica_2_a)
     g.replica_1_a:exec(function(bids, uuid)
         rawset(_G, 'old_timeout', ivconst.RECOVERY_GET_STAT_TIMEOUT)
@@ -59,8 +75,8 @@ test_group.test_recovery_do_not_spam_same_errors = function(g)
         box.commit()
     end, {bids, uuid})
 
-    local msg = "Error during recovery of bucket"
-    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 0.1,
+    local msg = "Error during recovery of bucket.*MISSING_MASTER"
+    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 1,
                                               on_yield = function()
         ivshard.storage.recovery_wakeup()
     end})
@@ -78,6 +94,7 @@ end
 
 test_group.test_gc_do_not_spam_same_errors = function(g)
     local bids = vtest.storage_get_n_buckets(g.replica_2_a, 3)
+    ratelimit_force_flush_all(g.replica_1_a)
     vtest.storage_stop(g.replica_1_b)
     g.replica_1_a:exec(function(bids)
         rawset(_G, 'old_wait_lsn_timeout', ivconst.GC_WAIT_LSN_TIMEOUT)
@@ -112,14 +129,15 @@ end
 
 test_group.test_rebalancer_do_not_spam_same_errors = function(g)
     vtest.cluster_rebalancer_enable(g)
+    ratelimit_force_flush_all(g.replica_1_a)
     g.replica_2_a:exec(function()
         rawset(_G, 'old_call', ivshard.storage.rebalancer_request_state)
         ivshard.storage.rebalancer_request_state = function()
             error('TimedOut')
         end
     end)
-    local msg = "Error during downloading rebalancer states"
-    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 0.1,
+    local msg = "Error during downloading rebalancer states.*TimedOut"
+    g.replica_1_a:wait_log_exactly_once(msg, {timeout = 1,
         on_yield = function() ivshard.storage.rebalancer_wakeup() end})
     g.replica_2_a:exec(function()
         ivshard.storage.rebalancer_request_state = _G.old_call
