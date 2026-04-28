@@ -478,6 +478,15 @@ else
     uri_format = luri.format
 end
 
+local function errinj_countdown(errinj, countdown_name, callback)
+    if errinj[countdown_name] and errinj[countdown_name] >= 0 then
+        errinj[countdown_name] = errinj[countdown_name] - 1
+        if errinj[countdown_name] == -1 then
+            callback()
+        end
+    end
+end
+
 return {
     core_version = tnt_version,
     uri_eq = uri_eq,
@@ -503,4 +512,5 @@ return {
     replicaset_uuid = replicaset_uuid,
     uri_format = uri_format,
     module_unload_functions = module_unload_functions,
+    errinj_countdown = errinj_countdown,
 }

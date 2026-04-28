@@ -499,6 +499,26 @@ local function cluster_rebalancer_enable(g)
 end
 
 --
+-- Disable recovery on all masters.
+--
+local function cluster_recovery_pause(g)
+    local _, err =  cluster_exec_each_master(g, function()
+        _G.bucket_recovery_pause()
+    end)
+    t.assert_equals(err, nil, 'cluster recovery pause')
+end
+
+--
+-- Enable recovery on all masters.
+--
+local function cluster_recovery_continue(g)
+    local _, err =  cluster_exec_each_master(g, function()
+        _G.bucket_recovery_continue()
+    end)
+    t.assert_equals(err, nil, 'cluster recovery continue')
+end
+
+--
 -- Wait vclock sync in each replicaset between all its replicas.
 --
 local function cluster_wait_vclock_all(g)
@@ -870,6 +890,8 @@ return {
     cluster_bootstrap = cluster_bootstrap,
     cluster_rebalancer_disable = cluster_rebalancer_disable,
     cluster_rebalancer_enable = cluster_rebalancer_enable,
+    cluster_recovery_pause = cluster_recovery_pause,
+    cluster_recovery_continue = cluster_recovery_continue,
     cluster_wait_vclock_all = cluster_wait_vclock_all,
     cluster_wait_fullsync = cluster_wait_fullsync,
     cluster_rebalancer_find = cluster_rebalancer_find,
