@@ -78,6 +78,17 @@ test_group.after_all(function(g)
     g.cluster:drop()
 end)
 
+local function wait_n_buckets(storage, count)
+    t.helpers.retrying({timeout = vtest.wait_timeout}, storage.exec,
+                       storage, function(count)
+        ivshard.storage.rebalancer_wakeup()
+        local _status = box.space._bucket.index.status
+        if _status:count({ivconst.BUCKET.ACTIVE}) ~= count then
+            error('Wrong bucket count')
+        end
+    end, {count})
+end
+
 test_group.test_rebalancer_in_work = function(g)
     local new_cfg_template = table.deepcopy(cfg_template)
     new_cfg_template.sharding[1].weight = 0
@@ -85,15 +96,6 @@ test_group.test_rebalancer_in_work = function(g)
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
     vtest.cluster_rebalancer_enable(g)
-    local function wait_n_buckets(storage, count)
-        t.helpers.retrying({timeout = vtest.wait_timeout}, storage.exec,
-                           storage, function(count)
-            local _status = box.space._bucket.index.status
-            if _status:count({ivconst.BUCKET.ACTIVE}) ~= count then
-                error('Wrong bucket count')
-            end
-        end, {count})
-    end
     wait_n_buckets(g.replica_1_a, 0)
     wait_n_buckets(g.replica_2_a, 0)
     wait_n_buckets(g.replica_3_a, cfg_template.bucket_count)
@@ -430,4 +432,103 @@ test_group.test_readonly_rw_lock_after_ref_drop = function(g)
             ilt.assert_not(info.rw_lock)
         end)
     end, {g.replica_2_a:replicaset_uuid()})
+end
+
+--
+-- Test, that the worker sends buckets in batches. Sending more buckets, than
+-- the storage has leads to error. After error during preparation all buckets
+-- can be recovered.
+--
+test_group.test_send_more_buckets_than_has = function(g)
+    local new_global_cfg = table.deepcopy(global_cfg)
+    new_global_cfg.rebalancer_max_sending = 6
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    vtest.cluster_recovery_pause(g)
+    -- Start sending of 11 buckets, when replica has only 10.
+    g.replica_1_a:exec(function(uuid)
+        ilt.assert_equals(box.space._bucket:count(), 10)
+        -- Returns ok no matter what.
+        ilt.assert(ivshard.storage.rebalancer_apply_routes({[uuid] = 11}))
+        -- Wait for error to happen.
+        local internal = ivshard.storage.internal
+        local applier_name = 'routes_applier_service'
+        ivtest.wait_for_not_nil(internal, applier_name)
+        ivtest.service_wait_for_new_error(internal[applier_name],
+            'Can not find 5 active buckets')
+    end, {g.replica_2_a:replicaset_uuid()})
+    -- Since recovery is disabled all non-sent buckets remain in READONLY state.
+    g.replica_1_a:exec(function()
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.garbage_collector_wakeup()
+            ilt.assert_equals(box.space._bucket:count(), 4)
+        end)
+        local transfer_flags =
+            ivshard.storage.internal.rebalancer_transfering_buckets
+        for _, b in box.space._bucket:pairs() do
+            ilt.assert_equals(b.status, ivconst.BUCKET.READONLY)
+            ilt.assert_not(transfer_flags[b.id])
+        end
+    end)
+    -- Recovery restores the READONLY buckets back.
+    vtest.cluster_recovery_continue(g)
+    g.replica_1_a:exec(function()
+        local active_key = {ivconst.BUCKET.ACTIVE}
+        local _status = box.space._bucket.index.status
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(_status:count(active_key), 4)
+            ivshard.storage.recovery_wakeup()
+        end)
+    end)
+
+    -- Restore the cluster with rebalancer.
+    vtest.cluster_rebalancer_enable(g)
+    wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 3)
+    vtest.cluster_rebalancer_disable(g)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.cluster_exec_each_master(g, function()
+        _G.bucket_gc_wait()
+    end)
+end
+
+--
+-- Test, that the worker doesn't exit and prepares new buckets, if
+-- it's woken up and none of the buckets are available.
+--
+test_group.test_late_worker_wakeup_prepare = function(g)
+    local new_global_cfg = table.deepcopy(global_cfg)
+    new_global_cfg.rebalancer_max_sending = 3
+    vtest.cluster_cfg(g, new_global_cfg)
+
+    g.replica_1_a:exec(function(uuid)
+        ivshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY_COUNTDOWN = 1
+        local errinj = ivshard.storage.internal.errinj
+        local f_name = 'vshard.rebalancer_worker_3'
+        errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY[f_name] = true
+        ilt.assert(ivshard.storage.rebalancer_apply_routes({[uuid] = 4}))
+        local sending_key = {ivconst.BUCKET.SENDING}
+        local _status = box.space._bucket.index.status
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            -- Alive workers prepare buckets, send 1 successfully,
+            -- hang on 2 remaining prepared buckets.
+            ilt.assert_equals(_status:count(sending_key), 2)
+        end)
+        -- Time to wakeup the slow worker.
+        errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY[f_name] = nil
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            -- Now the final worker prepares and sends the last bucket.
+            ilt.assert_equals(_status:count(sending_key), 3)
+        end)
+        ivshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
+    end, {g.replica_2_a:replicaset_uuid()})
+    wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3 - 4)
+
+    vtest.cluster_rebalancer_enable(g)
+    wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_2_a, cfg_template.bucket_count / 3)
+    wait_n_buckets(g.replica_3_a, cfg_template.bucket_count / 3)
+    vtest.cluster_rebalancer_disable(g)
+    vtest.cluster_cfg(g, global_cfg)
 end

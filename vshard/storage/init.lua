@@ -96,6 +96,7 @@ if not M then
             ERRINJ_LONG_RECEIVE = false,
             ERRINJ_LAST_RECEIVE_DELAY = false,
             ERRINJ_LAST_SEND_DELAY = false,
+            ERRINJ_LAST_SEND_DELAY_COUNTDOWN = -1,
             ERRINJ_RECEIVE_PARTIALLY = false,
             ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_DISCOVERY = false,
@@ -103,6 +104,7 @@ if not M then
             ERRINJ_BUCKET_GC_LONG_REPLICAS_TEST = false,
             ERRINJ_APPLY_ROUTES_STOP_DELAY = false,
             ERRINJ_SKIP_BUCKET_STATUS_VALIDATE = false,
+            ERRINJ_WORKER_PREPARE_WAKEUP_DELAY = {},
         },
         -- This counter is used to restart background fibers with
         -- new reloaded code.
@@ -1970,6 +1972,8 @@ local function bucket_send_xc(bucket_id, destination, opts)
     if not status then
         return status, lerror.make(err)
     end
+    util.errinj_countdown(M.errinj, 'ERRINJ_LAST_SEND_DELAY_COUNTDOWN',
+        function() M.errinj.ERRINJ_LAST_SEND_DELAY = true end)
     while M.errinj.ERRINJ_LAST_SEND_DELAY do
         lfiber.sleep(0.01)
     end
@@ -2583,6 +2587,99 @@ local function rebalancer_build_routes(replicasets)
     return bucket_routes
 end
 
+local function rebalancer_prepare_buckets(bucket_count, opts)
+    assert(bucket_count >= 0)
+    local buckets = {}
+    local active_key = {BACTIVE}
+    local status, err, bucket_id, msg
+    local _status = box.space._bucket.index.status
+    local limit = consts.BUCKET_CHUNK_SIZE
+    while #buckets ~= bucket_count do
+        -- Can't just take a first active bucket. It may be already locked by a
+        -- manual bucket_send in another fiber.
+        for _, bucket in _status:pairs(active_key) do
+            bucket_id = bucket.id
+            if not M.rebalancer_transfering_buckets[bucket_id] then
+                goto prepare
+            end
+            limit = limit - 1
+            if limit == 0 then
+                fiber_yield()
+                limit = consts.BUCKET_CHUNK_SIZE
+            end
+        end
+        msg = ('Can not find %d active buckets for send'):format(bucket_count)
+        err = lerror.make(msg)
+        goto error
+::prepare::
+        status, err = bucket_send_prepare(bucket_id, opts)
+        if not status then
+            goto error
+        end
+        table.insert(buckets, bucket_id)
+    end
+    do return buckets end
+
+::error::
+    for _, bid in ipairs(buckets) do
+        bucket_send_end(bid)
+    end
+    return nil, err
+end
+
+local function rebalancer_dispenser_pop(dispenser)
+    -- The function doesn't use global options intentionally. If preparation
+    -- happens, the deadline in dispenser is updated, all other workers use
+    -- that deadline for sending a bunch of buckets.
+    local opts = bucket_send_build_opts(nil, M.rebalancer_bucket_send_timeout)
+    local ok, err, count, buckets
+    while fiber_clock() < opts.deadline do
+        ok = dispenser:wait_prepared(opts.deadline - fiber_clock())
+        local injection = M.errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY
+        while injection[lfiber.self().name()] do
+            lfiber.testcancel()
+            lfiber.sleep(0.01)
+        end
+        if ok == true and #dispenser.prepared_buckets > 0 then
+            -- Fast path, in most cases the buckets are prepared already.
+            return dispenser:pop()
+        elseif ok == false then
+            -- We must prepare the buckets on our own.
+            goto prepare
+        elseif ok == nil then
+            -- Stop waiting, doesn't make sense anymore. Do not log error,
+            -- since it will either be logged later or is not needed to be
+            -- logged at all. Causes exit from a worker.
+            return
+        end
+        -- We're waken up, however, the buckets are not yet prepared
+        -- (e.g. all other workers are already sending them). We need
+        -- to wait again or prepare them on our own.
+    end
+    -- Intentional nil return here, since we didn't manage to wait for
+    -- buckets to be prepared, nothing to do here anymore. Causes exit from
+    -- a worker.
+    do return end
+::prepare::
+    -- The deadline is reset in order to exclude the time for waiting when
+    -- another worker will prepare the buckets, since it's possible, that the
+    -- current worker has waited for the bucket to be prepared, was woken up,
+    -- there're no buckets left and we should prepare the batch.
+    opts.deadline = fiber_clock() + opts.timeout
+    dispenser:prepare_begin()
+    count = math.min(M.rebalancer_worker_count, dispenser.remaining_count)
+    buckets, err = rebalancer_prepare_buckets(count, opts)
+    dispenser:prepare_commit(buckets, opts.deadline)
+    if not buckets then
+        -- Same, intentional nil. The error is saved for other workers to exit
+        -- and for logging purposes.
+        assert(err)
+        dispenser.prepare_error = err
+        return
+    end
+    return dispenser:pop()
+end
+
 --
 -- Body of one rebalancer worker. All the workers share a
 -- dispenser to synchronize their round-robin, and a quit
@@ -2592,30 +2689,19 @@ end
 --
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
-    local _status = box.space._bucket.index.status
-    local opts = {timeout = M.rebalancer_bucket_send_timeout}
-    local active_key = {BACTIVE}
-    local id = dispenser:pop()
+    local id, bid, deadline = rebalancer_dispenser_pop(dispenser)
     local worker_throttle_count = 0
-    local bucket_id, is_found
-    while id do
-        is_found = false
-        -- Can't just take a first active bucket. It may be
-        -- already locked by a manual bucket_send in another
-        -- fiber.
-        for _, bucket in _status:pairs(active_key) do
-            bucket_id = bucket.id
-            if not M.rebalancer_transfering_buckets[bucket_id] then
-                is_found = true
-                break
-            end
-        end
-        if not is_found then
-            log.error('Can not find active buckets')
-            break
-        end
-        local ret, err = bucket_send(bucket_id, id, opts)
-        if ret then
+    while id and bid do
+        assert(deadline)
+        local opts = bucket_send_build_opts(nil, deadline - fiber_clock())
+        local status, ok, err = pcall(bucket_send_xc, bid, id, opts)
+        -- Note, that the bucket should not be returned to the prepared ones.
+        -- Firstly, it may have non-readonly status already, better prepare the
+        -- new one and properly recover this one for code simplicity and
+        -- readability. Secondly, we should not prohibit writes to the bucket
+        -- for more time, than we really have to.
+        bucket_send_end(bid)
+        if status and ok then
             worker_throttle_count = 0
             local finished, total = dispenser:sent(id)
             if finished then
@@ -2623,6 +2709,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             end
             goto continue
         end
+        err = status and err or ok
         dispenser:put(id)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
@@ -2649,7 +2736,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        id = dispenser:pop()
+        id, bid, deadline = rebalancer_dispenser_pop(dispenser)
     end
     quit_cond:broadcast()
 end
@@ -2690,12 +2777,20 @@ local function rebalancer_service_apply_routes_f(service, routes)
                 'Rebalancer worker %d threw an exception: %s', i, res))
         end
     end
-    if not dispenser.error then
+    -- There may be prepared bucket left due to send errors, which caused
+    -- skipping a replicaset. Unblock them already, so that they are recovered.
+    for _, bid in ipairs(dispenser.prepared_buckets) do
+        bucket_send_end(bid)
+    end
+    if not dispenser.error and not dispenser.prepare_error then
         log.info('Rebalancer routes are applied')
         service:set_status_ok()
-    else
+    elseif dispenser.error then
         log.info(service:set_status_error(
             "Couldn't apply some rebalancer routes: %s", dispenser.error))
+    elseif dispenser.prepare_error then
+        log.info(service:set_status_error(
+            "Couldn't prepare buckets: %s", dispenser.prepare_error))
     end
     local throttled = {}
     for id, dst in pairs(dispenser.map) do
