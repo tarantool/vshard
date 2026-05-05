@@ -4,7 +4,6 @@ fiber = require('fiber')
 calc_metrics = vshard.storage.internal.rebalancer_calculate_metrics
 build_routes = vshard.storage.internal.rebalancer_build_routes
 calc_etalon = require('vshard.replicaset').calculate_etalon_balance
-dispenser = vshard.storage.internal.route_dispenser
 rlist = vshard.storage.internal.rlist
 consts = vshard.consts
 util = require('util')
@@ -270,41 +269,5 @@ replicasets
 calc_metrics(replicasets)
 replicasets
 build_routes(replicasets)
-
---
--- gh-161: parallel rebalancer. One of the most important part of
--- the latter is a dispenser. It is a structure which hands out
--- destination UUIDs in a round-robin manner to worker fibers.
---
-d = dispenser.create({uuid = 15})
-dispenser.pop(d)
-for i = 1, 14 do assert(dispenser.pop(d) == 'uuid', i) end
-dispenser.pop(d)
-dispenser.pop(d)
-dispenser.pop(d)
-dispenser.pop(d)
-d
-
-d = dispenser.create({uuid1 = 5, uuid2 = 5})
-u = dispenser.pop(d)
-u, d
-dispenser.put(d, u)
-d
-dispenser.throttle(d, u)
-d
-dispenser.throttle(d, u)
-u1 = dispenser.pop(d)
-u2 = dispenser.pop(d)
-u1, u2
-for i = 1, 4 do					\
-	assert(dispenser.pop(d) == u1)		\
-	assert(dispenser.pop(d) == u2)		\
-end
-
--- Double skip should be ok. It happens, if there were several
--- workers on one destination, and all of them received an error.
-d = dispenser.create({uuid1 = 1})
-dispenser.skip(d, 'uuid1')
-dispenser.skip(d, 'uuid1')
 
 _bucket:drop()
