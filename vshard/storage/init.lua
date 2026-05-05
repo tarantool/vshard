@@ -18,16 +18,16 @@ if rawget(_G, MODULE_INTERNALS) then
     local vshard_modules = {
         'vshard.consts', 'vshard.error', 'vshard.cfg', 'vshard.version',
         'vshard.replicaset', 'vshard.util', 'vshard.service_info',
-        'vshard.storage.reload_evolution', 'vshard.rlist', 'vshard.registry',
+        'vshard.storage.reload_evolution', 'vshard.registry',
         'vshard.heap', 'vshard.storage.ref', 'vshard.storage.sched',
         'vshard.storage.schema', 'vshard.storage.export_log',
         'vshard.storage.exports', 'vshard.log_ratelimit',
+        'vshard.storage.route_dispenser',
     }
     for _, module in pairs(vshard_modules) do
         package.loaded[module] = nil
     end
 end
-local rlist = require('vshard.rlist')
 local consts = require('vshard.consts')
 local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
@@ -40,6 +40,7 @@ local lref = require('vshard.storage.ref')
 local lsched = require('vshard.storage.sched')
 local lschema = require('vshard.storage.schema')
 local reload_evolution = require('vshard.storage.reload_evolution')
+local route_dispenser = require('vshard.storage.route_dispenser')
 local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
 local BACTIVE = consts.BUCKET.ACTIVE
@@ -2549,136 +2550,6 @@ local function rebalancer_build_routes(replicasets)
 end
 
 --
--- Dispenser is a container of routes received from the
--- rebalancer. Its task is to hand out the routes to worker fibers
--- in a round-robin manner so as any two sequential results are
--- different. It allows to spread dispensing evenly over the
--- receiver nodes.
---
-local function route_dispenser_create(routes)
-    local rlist = rlist.new()
-    local map = {}
-    for id, bucket_count in pairs(routes) do
-        local new = {
-            -- Receiver's ID.
-            id = id,
-            -- Rest of buckets to send. The receiver will be
-            -- dispensed this number of times.
-            bucket_count = bucket_count,
-            -- Constant value to be able to track progress.
-            need_to_send = bucket_count,
-            -- Number of *successfully* sent buckets.
-            progress = 0,
-            -- If a user set too long max number of receiving
-            -- buckets, or too high number of workers, worker
-            -- fibers will receive 'throttle' errors, perhaps
-            -- quite often. So as not to clog the log each
-            -- destination is logged as throttled only once.
-            is_throttle_warned = false,
-        }
-        -- Map of destinations is stored in addition to the queue,
-        -- because
-        -- 1) It is possible, that there are no more buckets to
-        --    send, but suddenly one of the workers trying to send
-        --    the last bucket receives a throttle error. In that
-        --    case the bucket is put back, and the destination
-        --    returns to the queue;
-        -- 2) After all buckets are sent, and the queue is empty,
-        --    the main applier fiber does some analysis on the
-        --    destinations.
-        map[id] = new
-        rlist:add_tail(new)
-    end
-    return {
-        rlist = rlist,
-        map = map,
-        -- Error, which occurred in `bucket_send` and led to
-        -- skipping of the above-mentioned id from dispenser.
-        error = nil,
-    }
-end
-
---
--- Put one bucket back to the dispenser. It happens, if the worker
--- receives a throttle error. This is the only error that can be
--- tolerated.
---
-local function route_dispenser_put(dispenser, id)
-    local dst = dispenser.map[id]
-    if dst then
-        local bucket_count = dst.bucket_count + 1
-        dst.bucket_count = bucket_count
-        if bucket_count == 1 then
-            dispenser.rlist:add_tail(dst)
-        end
-    end
-end
-
---
--- In case if a receiver responded with a serious error it is not
--- safe to send more buckets to there. For example, if it was a
--- timeout, it is unknown whether the bucket was received or not.
--- If it was a box error like index key conflict, then it is even
--- worse and the cluster is broken.
---
-local function route_dispenser_skip(dispenser, id)
-    local map = dispenser.map
-    local dst = map[id]
-    if dst then
-        map[id] = nil
-        dispenser.rlist:remove(dst)
-    end
-end
-
---
--- Set that the receiver @a id was throttled. When it happens
--- first time it is logged.
---
-local function route_dispenser_throttle(dispenser, id)
-    local dst = dispenser.map[id]
-    if dst then
-        local old_value = dst.is_throttle_warned
-        dst.is_throttle_warned = true
-        return not old_value
-    end
-    return false
-end
-
---
--- Notify the dispenser that a bucket was successfully sent to
--- @a id. It has no any functional purpose except tracking
--- progress.
---
-local function route_dispenser_sent(dispenser, id)
-    local dst = dispenser.map[id]
-    if dst then
-        local new_progress = dst.progress + 1
-        dst.progress = new_progress
-        local need_to_send = dst.need_to_send
-        return new_progress == need_to_send, need_to_send
-    end
-    return false
-end
-
---
--- Take a next destination to send a bucket to.
---
-local function route_dispenser_pop(dispenser)
-    local rlist = dispenser.rlist
-    local dst = rlist.first
-    if dst then
-        local bucket_count = dst.bucket_count - 1
-        dst.bucket_count = bucket_count
-        rlist:remove(dst)
-        if bucket_count > 0 then
-            rlist:add_tail(dst)
-        end
-        return dst.id
-    end
-    return nil
-end
-
---
 -- Body of one rebalancer worker. All the workers share a
 -- dispenser to synchronize their round-robin, and a quit
 -- condition to be able to quit, when one of the workers sees that
@@ -2690,7 +2561,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     local _status = box.space._bucket.index.status
     local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
     local active_key = {BACTIVE}
-    local id = route_dispenser_pop(dispenser)
+    local id = dispenser:pop()
     local worker_throttle_count = 0
     local bucket_id, is_found
     while id do
@@ -2712,13 +2583,13 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
         local ret, err = bucket_send(bucket_id, id, opts)
         if ret then
             worker_throttle_count = 0
-            local finished, total = route_dispenser_sent(dispenser, id)
+            local finished, total = dispenser:sent(id)
             if finished then
                 log.info('%d buckets were successfully sent to %s', total, id)
             end
             goto continue
         end
-        route_dispenser_put(dispenser, id)
+        dispenser:put(id)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
@@ -2726,11 +2597,11 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('Can not finish transfers to %s, skip to next round', id)
             worker_throttle_count = 0
             dispenser.error = dispenser.error or err
-            route_dispenser_skip(dispenser, id)
+            dispenser:skip(id)
             goto continue
         end
         worker_throttle_count = worker_throttle_count + 1
-        if route_dispenser_throttle(dispenser, id) then
+        if dispenser:throttle(id) then
             log.error('Too many buckets is being sent to %s', id)
         end
         if worker_throttle_count < dispenser.rlist.count then
@@ -2744,7 +2615,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
             log.info('The worker is back')
         end
 ::continue::
-        id = route_dispenser_pop(dispenser)
+        id = dispenser:pop()
     end
     quit_cond:broadcast()
 end
@@ -2760,7 +2631,7 @@ local function rebalancer_service_apply_routes_f(service, routes)
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
              yaml_encode(routes))
-    local dispenser = route_dispenser_create(routes)
+    local dispenser = route_dispenser.new(routes)
     local _status = box.space._bucket.index.status
     assert(_status:count({BSENDING}) == 0)
     assert(_status:count({BRECEIVING}) == 0)
@@ -4235,14 +4106,6 @@ M.api_call_cache = storage_api_call_unsafe
 M.gc_bucket_drop = gc_bucket_drop
 M.rebalancer_build_routes = rebalancer_build_routes
 M.rebalancer_calculate_metrics = rebalancer_calculate_metrics
-M.route_dispenser = {
-    create = route_dispenser_create,
-    put = route_dispenser_put,
-    throttle = route_dispenser_throttle,
-    skip = route_dispenser_skip,
-    pop = route_dispenser_pop,
-    sent = route_dispenser_sent,
-}
 M.bucket_state_edges = bucket_state_edges
 
 M.bucket_are_all_rw = bucket_are_all_rw_public
