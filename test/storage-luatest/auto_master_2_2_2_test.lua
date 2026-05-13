@@ -84,7 +84,12 @@ end)
 
 local function promote_if_needed(g, server)
     if g.params.is_sync then
-        server:exec(function() box.ctl.promote() end)
+        server:exec(function()
+            ilt.helpers.retrying({timeout = iwait_timeout}, function()
+                local ok, err = pcall(box.ctl.promote)
+                ilt.assert(ok, err)
+            end)
+        end)
     end
 end
 
@@ -417,6 +422,8 @@ test_group.test_master_discovery_on_disconnect = function(g)
     g.replica_2_a:start()
     vtest.cluster_cfg(g, global_cfg)
     promote_if_needed(g, g.replica_2_a)
+    -- `replica_2_a` should get the bucket from `replica_2_b` to send it.
+    g.replica_2_a:wait_for_vclock_of(g.replica_2_b)
     g.replica_2_a:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
     g.replica_2_b:exec(bucket_gc_wait)
     g.replica_2_b:update_box_cfg{read_only = true}
