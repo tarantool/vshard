@@ -98,6 +98,7 @@ if not M then
             ERRINJ_LAST_SEND_DELAY = false,
             ERRINJ_LAST_SEND_DELAY_COUNTDOWN = -1,
             ERRINJ_RECEIVE_PARTIALLY = false,
+            ERRINJ_RECEIVE_DELAY = false,
             ERRINJ_RECOVERY_PAUSE = false,
             ERRINJ_DISCOVERY = false,
             ERRINJ_BUCKET_GC_PAUSE = false,
@@ -1042,6 +1043,44 @@ local bucket_recovery_checkers = {
     [BACTIVE] = recovery_local_bucket_is_active,
 }
 
+local function recovery_cluster_bucket_stat(bucket_id, destination)
+    local replicasets = {}
+    for rs_id, rs in pairs(M.replicasets) do
+        -- Exclude self and destination (sender/receiver). We already know,
+        -- that the current replicaset has the bucket, and the destination
+        -- doesn't. No need to make requests to these replicasets.
+        if rs_id ~= M.this_replicaset.id and rs_id ~= destination then
+            replicasets[rs_id] = rs
+        end
+    end
+    local call_opts = {timeout = consts.RECOVERY_GET_STAT_TIMEOUT}
+    local res, err, err_id = lreplicaset.masters_map_call(
+        replicasets, 'vshard.storage._call',
+        {'recovery_bucket_stat', bucket_id}, call_opts)
+    if err then
+        err.replicaset_id = err_id
+        return nil, err
+    end
+    local bucket_info
+    for rs_id, bucket_stat in pairs(res) do
+        local info, err = bucket_stat[1], bucket_stat[2]
+        if err then
+            err.replicaset_id = rs_id
+            return nil, err
+        end
+        if not info then
+            goto continue
+        end
+        if bucket_info and bucket_info.generation > info.generation then
+            -- We're interested in the max generation among all replicasets.
+            goto continue
+        end
+        bucket_info = info
+    ::continue::
+    end
+    return bucket_info
+end
+
 local function bucket_recover(bucket_id, status, recovered_buckets)
     local operation = {{'=', 2, status}}
     if not bucket_status_has_destination(status) then
@@ -1068,6 +1107,7 @@ local function recovery_step_by_type(type, limiter)
     local total = 0
     local start_format = 'Starting %s buckets recovery step'
     local recovered_buckets = {}
+    local generation
     for _, bucket in _bucket.index.status:pairs(type) do
         lfiber.testcancel()
         total = total + 1
@@ -1117,6 +1157,23 @@ local function recovery_step_by_type(type, limiter)
             end
             goto continue
         end
+        if remote_bucket == nil then
+            -- Bucket is missing on the sender, search the bucket in the
+            -- whole cluster. Cannot restore it to active, as it leads to
+            -- doubled buckets (gh-214).
+            remote_bucket, err =
+                recovery_cluster_bucket_stat(bucket_id, destination)
+            if err then
+                if is_step_empty then
+                    log.info(start_format, type)
+                    limiter:log_error(err,
+                        'Error during searching in cluster for recovery of ' ..
+                        '%d bucket: %s', bucket_id, err)
+                    is_step_empty = false
+                end
+                goto continue
+            end
+        end
         -- Do nothing until the bucket on both sides stopped
         -- transferring.
         if remote_bucket and remote_bucket.is_transfering then
@@ -1134,11 +1191,20 @@ local function recovery_step_by_type(type, limiter)
             log.info(start_format, type)
         end
         lfiber.testcancel()
-        for status, can_recover in pairs(bucket_recovery_checkers) do
-            if can_recover(bucket, remote_bucket) then
-                bucket_recover(bucket_id, status, recovered_buckets)
-                recovered = recovered + 1
-                break
+        generation = bucket.opts and bucket.opts.generation or 0
+        if remote_bucket and remote_bucket.generation > generation then
+            bucket_recover(bucket_id, BGARBAGE, recovered_buckets)
+        elseif remote_bucket and remote_bucket.generation < generation then
+            assert(not bucket_status_is_writable(remote_bucket.status))
+            bucket_recover(bucket_id, BACTIVE, recovered_buckets)
+        else
+            assert(not remote_bucket or remote_bucket.generation == generation)
+            for status, can_recover in pairs(bucket_recovery_checkers) do
+                if can_recover(bucket, remote_bucket) then
+                    bucket_recover(bucket_id, status, recovered_buckets)
+                    recovered = recovered + 1
+                    break
+                end
             end
         end
         if recovered == 0 and is_step_empty then
@@ -1756,6 +1822,9 @@ local function bucket_recv(bucket_id, from, data, opts)
     -- bucket_recv_raw() and fallback to bucket_recv().
     if util.feature.msgpack_object and lmsgpack.is_object(bucket_id) then
         bucket_id, from, data, opts = bucket_recv_parse_raw_args(bucket_id)
+    end
+    while M.errinj.ERRINJ_RECEIVE_DELAY do
+        lfiber.sleep(0.01)
     end
     while opts and opts.is_last and M.errinj.ERRINJ_LAST_RECEIVE_DELAY do
         lfiber.sleep(0.01)
