@@ -362,7 +362,7 @@ box.space.test3:select{100}
 _ = test_run:switch('box_2_a')
 ---
 ...
-vshard.storage.bucket_send(1, util.replicasets[1], {timeout = 0.3})
+vshard.storage.bucket_send(1, util.replicasets[1], {chunk_timeout = 0.3})
 ---
 - true
 ...

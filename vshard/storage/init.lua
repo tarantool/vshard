@@ -43,6 +43,7 @@ local reload_evolution = require('vshard.storage.reload_evolution')
 local route_dispenser = require('vshard.storage.route_dispenser')
 local fiber_cond_wait = util.fiber_cond_wait
 local index_has = util.index_has
+local cfg_check_option = lcfg.check_option
 local BACTIVE = consts.BUCKET.ACTIVE
 local BPINNED = consts.BUCKET.PINNED
 local BREADONLY = consts.BUCKET.READONLY
@@ -226,6 +227,9 @@ if not M then
         -- order in parallel. Each fiber sends 1 bucket at a
         -- moment.
         rebalancer_worker_count = consts.DEFAULT_REBALANCER_WORKER_COUNT,
+        -- The timeout for sending a bucket in rebalancer apply routes worker.
+        -- Limits the number of seconds, a bucket can be unavailable for write.
+        rebalancer_bucket_send_timeout = consts.TIMEOUT_INFINITY,
         -- Map of bucket ro/rw reference counters. These counters
         -- works like bucket pins, but countable and are not
         -- persisted. Persistence is not needed since the refs are
@@ -1541,7 +1545,7 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
             return nil, lerror.vshard(lerror.code.TOO_MANY_RECEIVING)
         end
         local timeout = opts and opts.timeout or
-                        consts.DEFAULT_BUCKET_SEND_TIMEOUT
+                        consts.DEFAULT_BUCKET_REF_TIMEOUT
         local ok, err = lsched.move_start(timeout)
         if not ok then
             return nil, err
@@ -1819,13 +1823,41 @@ local function buckets_discovery(opts)
 end
 
 --
+-- Builds the timeout options for sending a bucket. Used in the manual
+-- `bucket_send` (with infinity default) and in the rebalancer routes applier
+-- worker (with `rebalancer_bucket_send_timeout`).
+--
+local function bucket_send_build_opts(opts, default_timeout)
+    local defaults = {
+        timeout = default_timeout,
+        chunk_timeout = consts.DEFAULT_BUCKET_CHUNK_TIMEOUT,
+        ref_timeout = consts.DEFAULT_BUCKET_REF_TIMEOUT,
+    }
+    opts = opts or {}
+    local type = 'number'
+    for name, default in pairs(defaults) do
+        if opts[name] then
+            cfg_check_option(name, type, nil, opts[name])
+        else
+            opts[name] = default
+        end
+    end
+    if not opts.deadline then
+        opts.deadline = fiber_clock() + opts.timeout
+    end
+    return opts
+end
+
+--
 -- Prepare the bucket for sending: mark it as transferring, make READONLY and
 -- wait for 0 RW refs locally.
 --
 local function bucket_send_prepare(bid, opts)
-    local ok, err, bucket, deadline, ref
+    assert(opts and opts.ref_timeout and opts.deadline)
+    local ok, err, bucket, ref, timeout
     local _bucket = box.space._bucket
-    local timeout = opts and opts.timeout or consts.DEFAULT_BUCKET_SEND_TIMEOUT
+    local ref_deadline = fiber_clock() + opts.ref_timeout
+    local deadline = math.min(ref_deadline, opts.deadline)
 
     ok, err = bucket_transfer_start(bid)
     if not ok then
@@ -1839,7 +1871,7 @@ local function bucket_send_prepare(bid, opts)
         err = lerror.vshard(lerror.code.BUCKET_IS_PINNED, bid)
         goto error
     end
-    ok, err = lsched.move_start(timeout)
+    ok, err = lsched.move_start(deadline - fiber_clock())
     if not ok then
         goto error
     end
@@ -1856,7 +1888,6 @@ local function bucket_send_prepare(bid, opts)
     if not ok then
         goto error
     end
-    deadline = fiber_clock() + timeout
     ref = M.bucket_refs[bid]
     while ref and ref.rw ~= 0 do
         timeout = deadline - fiber_clock()
@@ -1877,18 +1908,15 @@ end
 -- Send a bucket to other replicaset.
 --
 local function bucket_send_xc(bucket_id, destination, opts)
+    assert(opts and opts.chunk_timeout and opts.deadline)
     -- `bucket_send_prepare()` must be called before `bucket_send_xc()`.
     assert(M.rebalancer_transfering_buckets[bucket_id])
     local ref = M.bucket_refs[bucket_id]
     assert(not ref or (ref.rw == 0 and ref.rw_lock))
     assert(lref.count == 0)
     local id = M.this_replicaset.id
-    local status, ok, err
+    local status, ok, err, timeout
     local _bucket = box.space._bucket
-    if not opts or not opts.timeout then
-        opts = opts and table.copy(opts) or {}
-        opts.timeout = consts.DEFAULT_BUCKET_SEND_TIMEOUT
-    end
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -1911,6 +1939,7 @@ local function bucket_send_xc(bucket_id, destination, opts)
         return nil, lerror.make(err)
     end
 
+    local deadline = opts.deadline
     for _, space in pairs(spaces) do
         local index = space.index[idx]
         local space_data = {}
@@ -1919,9 +1948,10 @@ local function bucket_send_xc(bucket_id, destination, opts)
             limit = limit - 1
             if limit == 0 then
                 table.insert(data, {space.name, space_data})
+                timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
                 status, err = master_call(
                     replicaset, 'vshard.storage.bucket_recv',
-                    {bucket_id, id, data}, opts)
+                    {bucket_id, id, data}, {timeout = timeout})
                 bucket_generation =
                     bucket_guard_xc(bucket_generation, bucket_id, sendg)
                 if not status then
@@ -1934,8 +1964,9 @@ local function bucket_send_xc(bucket_id, destination, opts)
         end
         table.insert(data, {space.name, space_data})
     end
+    timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, data}, opts)
+                              {bucket_id, id, data}, {timeout = timeout})
     if not status then
         return status, lerror.make(err)
     end
@@ -1964,8 +1995,10 @@ local function bucket_send_xc(bucket_id, destination, opts)
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
     -- the same bucket is activated on the destination.
+    timeout = math.min(opts.chunk_timeout, deadline - fiber_clock())
     status, err = master_call(replicaset, 'vshard.storage.bucket_recv',
-                              {bucket_id, id, {}, {is_last = true}}, opts)
+                              {bucket_id, id, {}, {is_last = true}},
+                              {timeout = timeout})
     if not status then
         return status, lerror.make(err)
     end
@@ -1984,6 +2017,7 @@ local function bucket_send(bucket_id, destination, opts)
         error('Usage: bucket_send(bucket_id, destination)')
     end
     local status, ret, err
+    opts = bucket_send_build_opts(table.copy(opts), consts.TIMEOUT_INFINITY)
     status, err = bucket_send_prepare(bucket_id, opts)
     if not status then
         return nil, err
@@ -2559,7 +2593,7 @@ end
 local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
     lfiber.name(string.format('vshard.rebalancer_worker_%d', worker_id))
     local _status = box.space._bucket.index.status
-    local opts = {timeout = consts.REBALANCER_CHUNK_TIMEOUT}
+    local opts = {timeout = M.rebalancer_bucket_send_timeout}
     local active_key = {BACTIVE}
     local id = dispenser:pop()
     local worker_throttle_count = 0
@@ -3695,6 +3729,7 @@ local function storage_cfg_xc(cfgctx)
     M.rebalancer_disbalance_threshold = new_cfg.rebalancer_disbalance_threshold
     M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
     M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
+    M.rebalancer_bucket_send_timeout = new_cfg.rebalancer_bucket_send_timeout
     M.sync_timeout = new_cfg.sync_timeout
     M.current_cfg = new_cfg
     storage_cfg_master_commit(cfgctx)
