@@ -638,3 +638,88 @@ test_group.test_on_replace_trigger_on_bucket_space = function(g)
         _G.on_replace_trigger = nil
     end)
 end
+
+test_group.test_bucket_send_timeout = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    vtest.cluster_exec_each_master(g, function(bid)
+        local s = box.schema.create_space('test', {format = {
+            {'id', 'unsigned'},
+            {'bid', 'unsigned'},
+        }})
+        s:create_index('pk')
+        s:create_index('bucket_id', {unique = false, parts = {2}})
+        s:insert{1, bid}
+    end, {bid})
+    g.replica_1_a:exec(function(uuid, bid)
+        local json = require('json')
+        -- The tests use negative timeouts to guarantee, that send cannot
+        -- pass, since sometimes even the most small positive timeout is
+        -- enough to successfully send a bucket.
+        local tests = {
+            {
+                -- Test, that with small ref_timeout the sending ends,
+                -- if there're active refs on that bucket.
+                prepare = function(b) ivshard.storage.bucket_refrw(b) end,
+                finish = function(b) ivshard.storage.bucket_unrefrw(b) end,
+                opts = {
+                    timeout = ivconst.TIMEOUT_INFINITY,
+                    ref_timeout = -1,
+                },
+            },
+            {
+                -- Same with small timeout but big ref_timeout. Min is used.
+                prepare = function(b) ivshard.storage.bucket_refrw(b) end,
+                finish = function(b) ivshard.storage.bucket_unrefrw(b) end,
+                opts = {
+                    timeout = -1,
+                    ref_timeout = ivconst.TIMEOUT_INFINITY,
+                },
+            },
+            {
+                opts = {
+                    -- Test, that small chunk_timeout leads to error. It
+                    -- doesn't make sense to test small timeout and big
+                    -- chunk_timeout, since error will happen on ref part in
+                    -- such case.
+                    timeout = ivconst.TIMEOUT_INFINITY,
+                    chunk_timeout = -1,
+                }
+            },
+            {
+                -- Test that timeout option limits chunk sending.
+                opts = {
+                    timeout = -1,
+                    chunk_timeout = ivconst.DEFAULT_BUCKET_CHUNK_TIMEOUT,
+                }
+            },
+            {
+                -- Ref fails before send happens.
+                prepare = function(b) ivshard.storage.bucket_refrw(b) end,
+                finish = function(b) ivshard.storage.bucket_unrefrw(b) end,
+                opts = {
+                    ref_timeout = -1,
+                    chunk_timeout = ivconst.DEFAULT_BUCKET_CHUNK_TIMEOUT,
+                }
+            },
+            {
+                -- Ref succeeds, send fails.
+                opts = {
+                    ref_timeout = ivconst.DEFAULT_BUCKET_REF_TIMEOUT,
+                    chunk_timeout = -1,
+                }
+            },
+        }
+        for _, test in ipairs(tests) do
+            if test.prepare then test.prepare(bid) end
+            local ok, err = ivshard.storage.bucket_send(bid, uuid, test.opts)
+            ilt.assert_not(ok, test.opts)
+            ilt.assert(iverror.is_timeout(err), ('%s - %s'):format(
+                json.encode(test.opts), json.encode(err)))
+            if test.finish then test.finish(bid) end
+            _G.bucket_recovery_wait()
+        end
+    end, {g.replica_2_a:replicaset_uuid(), bid})
+    vtest.cluster_exec_each_master(g, function()
+        box.space.test:drop()
+    end)
+end

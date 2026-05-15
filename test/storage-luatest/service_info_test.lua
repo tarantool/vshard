@@ -69,8 +69,8 @@ test_group.test_basic_storage_service_info = function(g)
         local internal = ivshard.storage.internal
         internal.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY = true
         -- Break timeout in order to get error
-        rawset(_G, 'chunk_timeout', ivconst.REBALANCER_CHUNK_TIMEOUT)
-        ivconst.REBALANCER_CHUNK_TIMEOUT = -1
+        rawset(_G, 'chunk_timeout', ivconst.DEFAULT_BUCKET_CHUNK_TIMEOUT)
+        ivconst.DEFAULT_BUCKET_CHUNK_TIMEOUT = -1
         return ivutil.replicaset_uuid()
     end)
 
@@ -94,7 +94,7 @@ test_group.test_basic_storage_service_info = function(g)
         ivtest.service_wait_for_error(service, 'Timed?[Oo]ut')
 
         -- Restore everything
-        ivconst.REBALANCER_CHUNK_TIMEOUT = _G.chunk_timeout
+        ivconst.DEFAULT_BUCKET_CHUNK_TIMEOUT = _G.chunk_timeout
         internal.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY = false
         ivtest.wait_for_nil(internal, applier_name)
         internal.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY = true

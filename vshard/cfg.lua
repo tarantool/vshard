@@ -416,6 +416,10 @@ local cfg_template = {
         default = consts.DEFAULT_REBALANCER_MAX_SENDING,
         max = consts.REBALANCER_MAX_SENDING_MAX
     },
+    rebalancer_bucket_send_timeout = {
+        type = 'positive number', name = 'Rebalancer bucket send timeout',
+        is_optional = true, default = consts.TIMEOUT_INFINITY,
+    },
     rebalancer_mode = {
         type = 'enum',
         name = 'Rebalancer mode',
@@ -573,8 +577,17 @@ local function cfg_extract_identifiers(cfg_key, cfg_value, is_named)
     return uuid, name
 end
 
+local function check_option(name, type, tv, value)
+    assert(type_descriptors[type])
+    local td = type_descriptors[type]
+    if not td:check(tv, value) then
+        error('%s must be %s', name, td:tostring(tv))
+    end
+end
+
 return {
     check = cfg_check,
+    check_option = check_option,
     extract_vshard = cfg_extract_vshard,
     extract_box = cfg_extract_box,
     extract_identifiers = cfg_extract_identifiers,
