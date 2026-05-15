@@ -70,7 +70,7 @@ test_group.test_basic_storage_service_info = function(g)
         internal.errinj.ERRINJ_APPLY_ROUTES_STOP_DELAY = true
         -- Break timeout in order to get error
         rawset(_G, 'chunk_timeout', ivconst.REBALANCER_CHUNK_TIMEOUT)
-        ivconst.REBALANCER_CHUNK_TIMEOUT = 1e-6
+        ivconst.REBALANCER_CHUNK_TIMEOUT = -1
         return ivutil.replicaset_uuid()
     end)
 
@@ -88,7 +88,8 @@ test_group.test_basic_storage_service_info = function(g)
     g.replica_1_a:exec(function()
         local internal = ivshard.storage.internal
         local applier_name = 'routes_applier_service'
-        ivtest.wait_for_not_nil(internal, applier_name)
+        ivtest.wait_for_not_nil(internal, applier_name,
+            {on_yield = ivshard.storage.rebalancer_wakeup})
         local service = internal[applier_name]
         ivtest.service_wait_for_error(service, 'Timed?[Oo]ut')
 
