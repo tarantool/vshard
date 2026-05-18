@@ -387,7 +387,7 @@ test_group.test_pinning_before_readonly = function(g)
         -- READONLY before PINNED.
         test_readonly_with_pinning_template(ivconst.BUCKET.PINNED,
             function() return ivshard.storage.bucket_send(bid, uuid) end,
-            function() return pcall(ivshard.storage.bucket_pin, bid) end)
+            function() return ivshard.storage.bucket_pin(bid) end)
     end, {g.replica_2_a:replicaset_uuid()})
     g.replica_2_a:exec(function(uuid)
         ilt.assert(ivshard.storage.bucket_send(_G.get_first_bucket(), uuid))

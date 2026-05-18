@@ -120,6 +120,8 @@ if not M then
         -- Control whether _bucket changes should be validated and rejected if
         -- are invalid.
         is_bucket_protected = true,
+        -- Number of transactions over the _bucket space.
+        bucket_txns_in_progress_count = 0,
         --
         -- Incremental generation of the _bucket space. It is
         -- incremented on each _bucket change and is used to
@@ -266,6 +268,9 @@ else
     if M.is_master == nil then
         M.is_master = M.this_replicaset.master == M.this_replica
     end
+    if M.bucket_txns_in_progress_count == nil then
+        M.bucket_txns_in_progress_count = 0
+    end
 end
 
 --
@@ -351,6 +356,36 @@ end
 -- function to the cached one. So on the next call it is cheap. No 'if's at all.
 --
 local bucket_count
+
+local function bucket_space_op(name, ...)
+    if not M.is_master then
+        local rs = M.this_replicaset
+        return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
+                                  rs.id, rs.master.id)
+    end
+    local space = box.space._bucket
+    local is_success, res = pcall(space[name], space, ...)
+    if is_success then
+        return res
+    end
+    return nil, lerror.make(res)
+end
+
+local function bucket_space_insert(tuple)
+    return bucket_space_op('insert', tuple)
+end
+
+local function bucket_space_replace(tuple)
+    return bucket_space_op('replace', tuple)
+end
+
+local function bucket_space_update(key, ops)
+    return bucket_space_op('update', key, ops)
+end
+
+local function bucket_space_delete(key)
+    return bucket_space_op('delete', key)
+end
 
 local function bucket_count_cache()
     return M.bucket_count_cache
@@ -613,6 +648,8 @@ local function bucket_on_commit_or_rollback_f(row_pairs, is_commit)
 ::continue::
     end
     bucket_generation_increment()
+    assert(M.bucket_txns_in_progress_count > 0)
+    M.bucket_txns_in_progress_count = M.bucket_txns_in_progress_count - 1
 end
 
 local function bucket_on_commit_f(row_pairs)
@@ -640,6 +677,7 @@ local function bucket_on_replace_f(old_bucket, new_bucket)
     if not pcall(box.on_commit, f_commit, f_commit) then
         box.on_commit(f_commit)
         box.on_rollback(bucket_on_rollback_f)
+        M.bucket_txns_in_progress_count = M.bucket_txns_in_progress_count + 1
     end
 end
 
@@ -970,12 +1008,16 @@ local bucket_recovery_checkers = {
 }
 
 local function bucket_recover(bucket_id, status, recovered_buckets)
+    local ok, err
     if bucket_status_has_destination(status) then
         -- Preserve the destination, just update the status.
-        box.space._bucket:update({bucket_id}, {{'=', 2, status}})
+        ok, err = bucket_space_update({bucket_id}, {{'=', 2, status}})
     else
         -- Replace the whole tuple, drop destination if it exists.
-        box.space._bucket:replace({bucket_id, status})
+        ok, err = bucket_space_replace({bucket_id, status})
+    end
+    if not ok then
+        error(err)
     end
     local ids = recovered_buckets[status] or {}
     table.insert(ids, bucket_id)
@@ -1562,10 +1604,10 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         -- the bucket won't be writable.
         -- This way still provides fair scheduling, but does not have the
         -- described issue.
-        ok, err = pcall(_bucket.insert, _bucket, {bucket_id, recvg, from})
+        ok, err = bucket_space_insert({bucket_id, recvg, from})
         lsched.move_end(1)
         if not ok then
-            return nil, lerror.make(err)
+            return nil, err
         end
     elseif b.status ~= recvg then
         local msg = string.format("bucket state is changed: was receiving, "..
@@ -1615,7 +1657,10 @@ local function bucket_recv_xc(bucket_id, from, data, opts)
         bucket_generation = bucket_guard_xc(bucket_generation, bucket_id, recvg)
     end
     if is_last then
-        _bucket:replace({bucket_id, BACTIVE})
+        local ok, err = bucket_space_replace({bucket_id, BACTIVE})
+        if not ok then
+            return nil, err
+        end
         bucket_receiving_quota_add(1)
         if M.errinj.ERRINJ_LONG_RECEIVE then
             box.error(box.error.TIMEOUT)
@@ -1890,7 +1935,6 @@ end
 local function bucket_send_prepare(bid, opts)
     assert(opts and opts.ref_timeout and opts.deadline)
     local ok, err, bucket, ref, timeout
-    local _bucket = box.space._bucket
     local ref_deadline = fiber_clock() + opts.ref_timeout
     local deadline = math.min(ref_deadline, opts.deadline)
 
@@ -1918,7 +1962,7 @@ local function bucket_send_prepare(bid, opts)
     -- * gives the same effect as if move was in the scheduler for the whole
     --   bucket_send() time, because refs won't be able to start anyway - the
     --   bucket is not writable.
-    ok, err = pcall(_bucket.replace, _bucket, {bid, BREADONLY})
+    ok, err = bucket_space_replace({bid, BREADONLY})
     lsched.move_end(1)
     if not ok then
         goto error
@@ -1961,7 +2005,6 @@ local function bucket_send_xc(bucket_id, destination, opts)
     assert(lref.count == 0)
     local id = M.this_replicaset.id
     local status, ok, err, timeout
-    local _bucket = box.space._bucket
     if is_this_replicaset_locked() then
         return nil, lerror.vshard(lerror.code.REPLICASET_IS_LOCKED)
     end
@@ -1979,9 +2022,9 @@ local function bucket_send_xc(bucket_id, destination, opts)
     local bucket_generation = M.bucket_generation
     local sendg = BSENDING
 
-    ok, err = pcall(_bucket.replace, _bucket, {bucket_id, sendg, destination})
+    ok, err = bucket_space_replace({bucket_id, sendg, destination})
     if not ok then
-        return nil, lerror.make(err)
+        return nil, err
     end
 
     local deadline = opts.deadline
@@ -2037,7 +2080,10 @@ local function bucket_send_xc(bucket_id, destination, opts)
     -- doesn't have the bucket. Recovery will then assume that S2 already
     -- deleted B, and will recover it on S1. Now we have S1 {B: active} and
     -- S3 {B: active}, doubled buckets situation (gh-414)
-    _bucket:replace({bucket_id, BSENT, destination})
+    ok, err = bucket_space_replace({bucket_id, BSENT, destination})
+    if not ok then
+        return nil, err
+    end
     -- Always send at least two messages to prevent the case, when
     -- a bucket is sent, hung in the network. Then it is recovered
     -- to active on the source, and then the message arrives and
@@ -2133,7 +2179,10 @@ local function bucket_pin(bucket_id)
     assert(bucket)
     if bucket.status ~= BPINNED then
         assert(bucket.status == BACTIVE)
-        box.space._bucket:update({bucket_id}, {{'=', 2, BPINNED}})
+        local ok, err = bucket_space_update({bucket_id}, {{'=', 2, BPINNED}})
+        if not ok then
+            return nil, err
+        end
     end
     return true
 end
@@ -2155,7 +2204,10 @@ local function bucket_unpin(bucket_id)
     end
     assert(bucket)
     if bucket.status == BPINNED then
-        box.space._bucket:update({bucket_id}, {{'=', 2, BACTIVE}})
+        local ok, err = bucket_space_update({bucket_id}, {{'=', 2, BACTIVE}})
+        if not ok then
+            return nil, err
+        end
     else
         assert(bucket.status == BACTIVE)
     end
@@ -2235,7 +2287,10 @@ local function gc_bucket_drop_xc(status, route_map)
             end
         end
         route_map[id] = b.destination
-        _bucket:delete{id}
+        local ok, err = bucket_space_delete(id)
+        if not ok then
+            error(err)
+        end
     ::continue::
     end
 end
@@ -2314,7 +2369,10 @@ local function gc_bucket_process_sent_one_batch_xc(batch)
             error(lerror.vshard(lerror.code.BUCKET_GC_ERROR, msg))
         end
         assert(ref == nil or ref.rw == 0)
-        _bucket:update({bid}, {{'=', 2, BGARBAGE}})
+        ok, err = bucket_space_update({bid}, {{'=', 2, BGARBAGE}})
+        if not ok then
+            error(err)
+        end
     end
     box.commit()
     return is_done
@@ -4360,6 +4418,7 @@ return {
     bucket_unrefrw = storage_make_api(bucket_unrefrw),
     bucket_delete_garbage = storage_make_api(bucket_delete_garbage),
     _bucket_delete_garbage = bucket_delete_garbage,
+    _bucket_space_op = bucket_space_op,
     buckets_info = storage_make_api(storage_buckets_info),
     buckets_count = storage_make_api(bucket_count_public),
     buckets_discovery = storage_make_api(buckets_discovery),
