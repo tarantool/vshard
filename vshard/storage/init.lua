@@ -1931,6 +1931,16 @@ local function bucket_send_prepare(bid, opts)
             goto error
         end
         lfiber.testcancel()
+        ref = M.bucket_refs[bid]
+        if not ref then
+            -- The ref was dropped, even though it was here. Probably the
+            -- bucket was manually dropped, while we were waiting, or the ref
+            -- itself was manually dropped. Should not happen without user
+            -- intervention. Better exit with error.
+            err = lerror.vshard(lerror.code.WRONG_BUCKET, bid,
+                'ref was deleted while waiting for 0 RW refs', nil)
+            goto error
+        end
     end
     do return true end
 

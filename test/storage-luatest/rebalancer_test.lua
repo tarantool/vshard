@@ -696,3 +696,37 @@ test_group.test_replication_not_broken_when_ref_on_replica = function(g)
         ivshard.storage.bucket_unrefrw(bid)
     end, {bid})
 end
+
+test_group.test_ref_change_noticed_during_bucket_send = function(g)
+    -- With MVCC enabled dirty read of the `rw_lock` is not possible.
+    t.run_only_if(not global_cfg.memtx_use_mvcc_engine)
+    g.replica_1_a:exec(function(uuid)
+        local bid = _G.get_first_bucket()
+        ilt.assert(ivshard.storage.bucket_refrw(bid))
+        local f = ifiber.create(function()
+            ifiber.self():set_joinable(true)
+            local opts = {chunk_timeout = -1}
+            return ivshard.storage.bucket_send(bid, uuid, opts)
+        end)
+        local info
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            info = ivshard.storage.buckets_info(bid)[bid]
+            ilt.assert_equals(info.status, ivconst.BUCKET.READONLY)
+        end)
+        -- See `test_readonly_rw_lock_after_ref_drop` for explanation.
+        ilt.assert_not(info.rw_lock)
+        -- The ref is recreated.
+        ivshard.storage.internal.bucket_refs[bid] = nil
+        ivshard.storage.bucket_refrw(bid)
+        ivshard.storage.bucket_unrefrw(bid)
+        local _, ok, err = f:join()
+        ilt.assert_not(ok, err)
+        ilt.assert(iverror.is_timeout(err))
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.recovery_wakeup()
+            info = ivshard.storage.buckets_info(bid)[bid]
+            ilt.assert_equals(info.status, ivconst.BUCKET.ACTIVE)
+            ilt.assert_not(info.rw_lock)
+        end)
+    end, {g.replica_2_a:replicaset_uuid()})
+end
