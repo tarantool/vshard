@@ -524,6 +524,10 @@ test_group.test_late_worker_wakeup_prepare = function(g)
         ivshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY = false
     end, {g.replica_2_a:replicaset_uuid()})
     wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3 - 4)
+    vtest.cluster_exec_each_master(g, function()
+        _G.bucket_recovery_wait()
+        _G.bucket_gc_wait()
+    end)
 
     vtest.cluster_rebalancer_enable(g)
     wait_n_buckets(g.replica_1_a, cfg_template.bucket_count / 3)
