@@ -6,6 +6,13 @@ local lversion = require('vshard.version')
 local lmsgpack = require('msgpack')
 local luri = require('uri')
 local ltarantool = require('tarantool')
+local consts = require('vshard.consts')
+
+local BACTIVE = consts.BUCKET.ACTIVE
+local BPINNED = consts.BUCKET.PINNED
+local BREADONLY = consts.BUCKET.READONLY
+local BSENDING = consts.BUCKET.SENDING
+local BRECEIVING = consts.BUCKET.RECEIVING
 
 --
 -- Drop all functions from the table. See comment
@@ -523,6 +530,36 @@ local function errinj_countdown(errinj, countdown_name, callback)
     end
 end
 
+--
+-- Check if @a bucket can accept 'write' requests. Writable
+-- buckets can accept 'read' too.
+--
+local function bucket_status_is_writable(status)
+    return status == BACTIVE or status == BPINNED
+end
+
+--
+-- Check if @a bucket can accept 'read' requests.
+--
+local function bucket_status_is_readable(status)
+    return bucket_status_is_writable(status) or status == BSENDING or
+        status == BREADONLY
+end
+
+--
+-- Check if a bucket is sending or receiving.
+--
+local function bucket_status_is_transfer_in_progress(status)
+    return status == BSENDING or status == BRECEIVING or status == BREADONLY
+end
+
+--
+-- Check, whether the bucket should have the destination written.
+--
+local function bucket_status_has_destination(status)
+    return status ~= BACTIVE and status ~= BPINNED and status ~= BREADONLY
+end
+
 return {
     core_version = tnt_version,
     uri_eq = uri_eq,
@@ -550,4 +587,9 @@ return {
     module_unload_functions = module_unload_functions,
     errinj_countdown = errinj_countdown,
     vclock_compare = vclock_compare,
+    bucket_status_is_writable = bucket_status_is_writable,
+    bucket_status_is_readable = bucket_status_is_readable,
+    bucket_status_has_destination = bucket_status_has_destination,
+    bucket_status_is_transfer_in_progress =
+        bucket_status_is_transfer_in_progress,
 }

@@ -468,36 +468,6 @@ local function bucket_transfer_end(bid)
 end
 
 --
--- Check if @a bucket can accept 'write' requests. Writable
--- buckets can accept 'read' too.
---
-local function bucket_status_is_writable(status)
-    return status == BACTIVE or status == BPINNED
-end
-
---
--- Check if @a bucket can accept 'read' requests.
---
-local function bucket_status_is_readable(status)
-    return bucket_status_is_writable(status) or status == BSENDING or
-        status == BREADONLY
-end
-
---
--- Check if a bucket is sending or receiving.
---
-local function bucket_status_is_transfer_in_progress(status)
-    return status == BSENDING or status == BRECEIVING or status == BREADONLY
-end
-
---
--- Check, whether the bucket should have the destination written.
---
-local function bucket_status_has_destination(status)
-    return status ~= BACTIVE and status ~= BPINNED and status ~= BREADONLY
-end
-
---
 -- Handle a bad update of _bucket space.
 --
 local function bucket_reject_update(bid, message, ...)
@@ -528,8 +498,8 @@ local function bucket_commit_update(bucket)
         return
     end
 
-    ref.ro_lock = not bucket_status_is_readable(status)
-    ref.rw_lock = not bucket_status_is_writable(status)
+    ref.ro_lock = not util.bucket_status_is_readable(status)
+    ref.rw_lock = not util.bucket_status_is_writable(status)
 end
 
 local function bucket_commit_delete(bucket)
@@ -997,7 +967,7 @@ local function recovery_local_bucket_is_sent(local_bucket, remote_bucket)
     if not remote_bucket then
         return false
     end
-    return bucket_status_is_writable(remote_bucket.status)
+    return util.bucket_status_is_writable(remote_bucket.status)
 end
 
 --
@@ -1012,7 +982,7 @@ local function recovery_local_bucket_is_garbage(local_bucket, remote_bucket)
     if not remote_bucket then
         return false
     end
-    if bucket_status_is_writable(remote_bucket.status) then
+    if util.bucket_status_is_writable(remote_bucket.status) then
         return true
     end
     if remote_bucket.status == BSENDING then
@@ -1083,7 +1053,7 @@ end
 
 local function bucket_recover(bucket_id, status, recovered_buckets)
     local operation = {{'=', 2, status}}
-    if not bucket_status_has_destination(status) then
+    if not util.bucket_status_has_destination(status) then
         -- Drop the destination, if it exists, but do not touch the opts.
         table.insert(operation, {'=', 3, box.NULL})
     end
@@ -1115,9 +1085,9 @@ local function recovery_step_by_type(type, limiter)
         if M.rebalancer_transfering_buckets[bucket_id] then
             goto continue
         end
-        assert(bucket_status_is_transfer_in_progress(bucket.status))
+        assert(util.bucket_status_is_transfer_in_progress(bucket.status))
         local peer_id, destination, remote_bucket, err
-        if not bucket_status_has_destination(type) then
+        if not util.bucket_status_has_destination(type) then
             -- READONLY bucket status doesn't have destination and doesn't
             -- require checking the remote bucket state, since it's guaranteed,
             -- that the bucket has not been sent yet. Just recover it.
@@ -1184,7 +1154,7 @@ local function recovery_step_by_type(type, limiter)
         -- which finished the transfer.
         bucket = _bucket:get{bucket_id}
         if not bucket or
-           not bucket_status_is_transfer_in_progress(bucket.status) then
+           not util.bucket_status_is_transfer_in_progress(bucket.status) then
             goto continue
         end
         if is_step_empty then
@@ -1195,7 +1165,7 @@ local function recovery_step_by_type(type, limiter)
         if remote_bucket and remote_bucket.generation > generation then
             bucket_recover(bucket_id, BGARBAGE, recovered_buckets)
         elseif remote_bucket and remote_bucket.generation < generation then
-            assert(not bucket_status_is_writable(remote_bucket.status))
+            assert(not util.bucket_status_is_writable(remote_bucket.status))
             bucket_recover(bucket_id, BACTIVE, recovered_buckets)
         else
             assert(not remote_bucket or remote_bucket.generation == generation)
@@ -1417,12 +1387,12 @@ local function bucket_check_state(bucket_id, mode)
     if not bucket then
         reason = 'Not found'
     elseif mode == 'read' then
-        if bucket_status_is_readable(bucket.status) then
+        if util.bucket_status_is_readable(bucket.status) then
             return bucket
         end
         reason = 'read is prohibited'
-    elseif not bucket_status_is_writable(bucket.status) then
-        if bucket_status_is_transfer_in_progress(bucket.status) then
+    elseif not util.bucket_status_is_writable(bucket.status) then
+        if util.bucket_status_is_transfer_in_progress(bucket.status) then
             return bucket, lerror.vshard(lerror.code.TRANSFER_IS_IN_PROGRESS,
                                          bucket_id, bucket.destination)
         end
@@ -1456,7 +1426,7 @@ local function bucket_refro(bucket_id)
         end
         ref = bucket_ref_new()
         ref.ro = 1
-        ref.rw_lock = not bucket_status_is_writable(bucket.status)
+        ref.rw_lock = not util.bucket_status_is_writable(bucket.status)
         M.bucket_refs[bucket_id] = ref
     elseif ref.ro_lock then
         return nil, lerror.vshard(lerror.code.BUCKET_IS_LOCKED, bucket_id)
