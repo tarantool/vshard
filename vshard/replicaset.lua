@@ -355,7 +355,7 @@ local function netbox_wait_connected(conn, timeout)
         end
         timeout = deadline - fiber_clock()
     until conn:is_connected()
-    return timeout
+    return conn_vconnect_wait(conn, timeout)
 end
 
 --
