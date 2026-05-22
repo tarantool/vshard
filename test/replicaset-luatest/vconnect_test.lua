@@ -318,3 +318,10 @@ test_group.test_conn_not_leaks_on_rebind = function(g)
         ivshard.storage._call = _G.old_call
     end)
 end
+
+test_group.test_wait_connected_waits_for_vconnect = function()
+    local rss = vreplicaset.buildall(global_cfg)
+    local _, rs = next(rss)
+    rs:wait_connected(vtest.wait_timeout)
+    t.assert(rs.master.conn.vconnect.future:is_ready())
+end
