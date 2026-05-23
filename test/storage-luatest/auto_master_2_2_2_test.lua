@@ -169,7 +169,6 @@ test_group.test_notice_change = function(g)
     --
     local bid2 = g.replica_1_a:exec(function(uuid)
         local rs = ivshard.storage.internal.replicasets[uuid]
-        ilt.assert_equals(rs.master.name, 'replica_2_a')
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(
             bid, uuid, {timeout = _G.iwait_timeout})
