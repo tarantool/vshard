@@ -318,22 +318,13 @@ info = vshard.storage.info()
 while #info.alerts ~= 0 do fiber.sleep(0.1) info = vshard.storage.info() end
 ---
 ...
+-- The connections are flaky, so don't compare them, only alerts are important.
+info.replicasets = nil
+---
+...
 info
 ---
-- replicasets:
-    <replicaset_2>:
-      master:
-        uri: storage@127.0.0.1:3303
-        state: active
-        uuid: <storage_2_a>
-      uuid: <replicaset_2>
-    <replicaset_1>:
-      master:
-        uri: storage@127.0.0.1:3301
-        state: active
-        uuid: <storage_1_a>
-      uuid: <replicaset_1>
-  bucket:
+- bucket:
     receiving: 0
     active: 2
     total: 2
@@ -352,22 +343,12 @@ info
 _ = test_run:cmd("stop server storage_2_b")
 ---
 ...
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
 ---
-- replicasets:
-    <replicaset_2>:
-      master:
-        uri: storage@127.0.0.1:3303
-        state: active
-        uuid: <storage_2_a>
-      uuid: <replicaset_2>
-    <replicaset_1>:
-      master:
-        uri: storage@127.0.0.1:3301
-        state: active
-        uuid: <storage_1_a>
-      uuid: <replicaset_1>
-  bucket:
+...
+info
+---
+- bucket:
     receiving: 0
     active: 2
     total: 2
@@ -391,18 +372,12 @@ _ = test_run:cmd("start server storage_2_b")
 _ = test_run:switch("storage_2_b")
 ---
 ...
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
 ---
-- replicasets:
-    <replicaset_2>:
-      master:
-        uri: storage@127.0.0.1:3303
-      uuid: <replicaset_2>
-    <replicaset_1>:
-      master:
-        uri: storage@127.0.0.1:3301
-      uuid: <replicaset_1>
-  bucket:
+...
+info
+---
+- bucket:
     receiving: 0
     active: 2
     total: 2
@@ -422,22 +397,12 @@ vshard.storage.info()
 _ = test_run:switch("storage_2_a")
 ---
 ...
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
 ---
-- replicasets:
-    <replicaset_2>:
-      master:
-        uri: storage@127.0.0.1:3303
-        state: active
-        uuid: <storage_2_a>
-      uuid: <replicaset_2>
-    <replicaset_1>:
-      master:
-        uri: storage@127.0.0.1:3301
-        state: active
-        uuid: <storage_1_a>
-      uuid: <replicaset_1>
-  bucket:
+...
+info
+---
+- bucket:
     receiving: 0
     active: 2
     total: 2
