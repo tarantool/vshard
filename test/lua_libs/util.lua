@@ -77,7 +77,22 @@ function collect_timeouts(rs)
     return timeouts
 end
 
-local function wait_master(test_run, replicaset, master)
+local function wait_master_sync(test_run, master)
+    log.info('Waiting until master syncs with replicas')
+    local master_synced
+    repeat
+        -- Wakeup of the master_sync service is not done, since the function
+        -- can be called on unconfigured or old version instances.
+        master_synced = test_run:eval(
+            master, 'vshard.storage.internal.is_bucket_in_sync')[1]
+        if not master_synced then
+            fiber.sleep(0.1)
+        end
+    until master_synced
+    log.info('Master synchronization has finished')
+end
+
+local function wait_master(test_run, replicaset, master, opts)
     log.info('Waiting until slaves are connected to a master')
     local all_is_ok
     while true do
@@ -108,6 +123,9 @@ local function wait_master(test_run, replicaset, master)
         end
     end
     log.info('Slaves are connected to a master "%s"', master)
+    if not opts or not opts.no_sync then
+        wait_master_sync(test_run, master)
+    end
 end
 
 --
@@ -222,6 +240,7 @@ return {
     shuffle_masters = shuffle_masters,
     collect_timeouts = collect_timeouts,
     wait_master = wait_master,
+    wait_master_sync = wait_master_sync,
     has_same_fields = has_same_fields,
     map_evals = map_evals,
     map_bucket_protection = map_bucket_protection,

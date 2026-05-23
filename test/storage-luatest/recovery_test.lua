@@ -103,6 +103,8 @@ test_group.test_recovery_of_bucket_from_receiving_to_garbage = function(g)
         _G.bucket_recovery_pause()
     end)
     -- Start a failed bucket transfer
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bucket_id, generation = g.replica_1_a:exec(function(dest_id)
         local _bucket = box.space._bucket
         local bucket_id = _G.get_first_bucket()
@@ -157,6 +159,8 @@ test_group.test_recovery_of_bucket_from_sending_to_active = function(g)
         ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = true
     end)
     -- Start a failed bucket transfer
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bucket_id = g.replica_1_a:exec(function(dest_id)
         local _bucket = box.space._bucket
         local bucket_id = _G.get_first_bucket()
@@ -195,6 +199,8 @@ test_group.test_recovery_of_bucket_from_receiving_to_active = function(g)
         ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
     end)
     -- Start a failed bucket transfer
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bucket_id, generation = g.replica_1_a:exec(function(dest_id)
         _G.bucket_gc_pause()
         local _bucket = box.space._bucket
@@ -245,6 +251,9 @@ local function resend_hanging_bucket_template(bucket_id, node1, node2, node3)
         ivshard.storage.internal.errinj.ERRINJ_RECEIVE_DELAY = true
     end)
     -- Loose message during tranfering from node1 to node2.
+    vtest.storage_wait_bucket_sync(node1)
+    vtest.storage_wait_bucket_sync(node2)
+    vtest.storage_wait_bucket_sync(node3)
     local generation = node1:exec(function(bucket_id, dest_id)
         _G.bucket_recovery_pause()
         local _bucket = box.space._bucket
@@ -387,4 +396,64 @@ test_group.test_send_several_times = function(g)
             end)
         end, {bucket_id})
     end
+end
+
+--
+-- 1. The rs1 sends the bucket to rs2, message is lost, bucket is recovered.
+--    Generation is N on rs1.
+-- 2. The bucket is sent from the rs1 to the rs3. Generation is N + 1 on rs1
+--    and rs3.
+-- 3. Master switches in the rs3, new node doesn't have the bucket at all.
+-- 4. rs2 gets the message, makes the bucket RECEIVING with generation N, scans
+--    masters only, doesn't find the bucket at all and recovers it to ACTIVE.
+-- 5. New master of rs3 gets the change from the old master, two ACTIVE buckets.
+--
+test_group.test_recovery_with_master_sync = function(g)
+    local bucket_id = vtest.storage_first_bucket(g.replica_1_a)
+    resend_hanging_bucket_template(
+        bucket_id, g.replica_1_a, g.replica_2_a, g.replica_3_a)
+    -- Switch master in rs3.
+    vtest.storage_stop(g.replica_3_a)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[3].replicas.replica_3_a.master = false
+    new_cfg_template.sharding[3].replicas.replica_3_b.master = true
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    for _, r in ipairs({'replica_3_b', 'replica_2_a'}) do
+        vtest.storage_cfg(g[r], new_global_cfg)
+    end
+    g.replica_2_a:exec(function()
+        _G.bucket_recovery_continue()
+    end)
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        g.replica_2_a:exec(function() ivshard.storage.recovery_wakeup() end)
+        t.assert(g.replica_2_a:grep_log('Error during searching.*' ..
+            'has not synchronized yet'))
+    end)
+    g.replica_2_a:exec(function(bucket_id)
+        local info = ivshard.storage.buckets_info(bucket_id)[bucket_id]
+        ilt.assert_equals(info.status, ivconst.BUCKET.RECEIVING)
+    end, {bucket_id})
+    vtest.storage_start(g.replica_3_a, new_global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_3_b)
+    g.replica_2_a:exec(function(bucket_id)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.recovery_wakeup()
+            ivshard.storage.garbage_collector_wakeup()
+            ilt.assert_not(box.space._bucket:get(bucket_id))
+        end)
+    end, {bucket_id})
+    g.replica_1_a:exec(function(bucket_id)
+        _G.bucket_gc_continue()
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.garbage_collector_wakeup()
+            ilt.assert_not(box.space._bucket:get(bucket_id))
+        end)
+    end, {bucket_id})
+    -- Restore balance.
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_3_a)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    g.replica_3_a:exec(function(bucket_id, dest_id)
+        ilt.assert(ivshard.storage.bucket_send(bucket_id, dest_id))
+    end, {bucket_id, g.replica_1_a:replicaset_uuid()})
 end

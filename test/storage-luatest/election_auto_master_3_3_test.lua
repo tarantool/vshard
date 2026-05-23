@@ -91,6 +91,9 @@ test_group.test_bucket_send = function(g)
     --
     -- Send first bucket.
     --
+    --
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bid1 = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         box.space.test:replace{1, bid}
@@ -108,9 +111,13 @@ test_group.test_bucket_send = function(g)
     g.replica_2_b:exec(function()
         box.cfg{election_mode = 'candidate', read_only = false}
     end)
-    g.replica_2_a:stop()
+    -- We must wait for sync, otherwise the replica_2_b won't be able
+    -- to receive a bucket.
+    g.replica_2_a:update_box_cfg{election_mode = 'voter', read_only = true}
     g.replica_2_b:wait_election_leader()
     g.replica_2_b:exec(check_auto_master)
+    vtest.storage_wait_bucket_sync(g.replica_2_b)
+    g.replica_2_a:stop()
     --
     -- Next bucket send should notice the master change and send the bucket to
     -- the new master sooner or later.
@@ -141,6 +148,7 @@ test_group.test_bucket_send = function(g)
         box.cfg{election_mode = 'voter', read_only = true}
     end)
     g.replica_2_a:wait_election_leader()
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
 
     -- Return buckets back using rebalancer.
     vtest.cluster_rebalancer_enable(g)

@@ -76,6 +76,7 @@ build_routes(replicasets)
 -- Test rebalancer local state.
 --
 vshard.storage.internal.is_master = true
+vshard.storage.internal.is_bucket_in_sync = true
 -- We need to initialize the minimal replica object in order to
 -- have a meaningful replica.id in rebalancer_request_state's error.
 vshard.storage.internal.this_replica = {id = util.name_to_uuid.box_1_a}

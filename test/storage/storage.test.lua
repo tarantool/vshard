@@ -346,7 +346,7 @@ _ = test_run:cmd('start server storage_1_a with args="boot_before_cfg"')
 -- IPROTO_VOTE from it, which tries to access box.cfg.read_only for ballot
 -- generation. It won't be able to do that as at this point box.cfg will be
 -- a function, and tarantool will fail with panic.
-util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
+util.wait_master(test_run, REPLICASET_1, 'storage_1_a', {no_sync = true})
 _ = test_run:switch('storage_1_a')
 -- Leaving box.cfg() not called won't work because at 1.10 test-run somewhy
 -- raises an error when try to start an instance without box.cfg(). It can only

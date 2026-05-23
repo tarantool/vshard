@@ -147,6 +147,8 @@ g.test_map_part_ref = function(cg)
     -- As a result, the buckets will be in the SENT state on rs1 and
     -- in the ACTIVE state on rs2.
     local bids1 = vtest.storage_get_n_buckets(cg.replica_1_a, 3)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     cg.replica_1_a:exec(function(bid1, bid2, to)
         _G.bucket_gc_pause()
         _G.bucket_send(bid1, to)
@@ -216,6 +218,8 @@ g.test_map_part_double_ref = function(cg)
     end, {bid1, cg.rs1_uuid})
     -- Then, move the bucket form rs1 to rs2. Now the router has an outdated
     -- route cache.
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     cg.replica_1_a:exec(function(bid, to)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()
@@ -294,6 +298,8 @@ g.test_map_part_ref_timeout = function(cg)
     --     rs1: {b1, b2}, rs2: {b3, b4}
     -- and actually the state is:
     --     rs1: {b1},     rs2: {b2, b3, b4}
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     cg.replica_1_a:exec(function(bid, to)
         _G.bucket_send(bid, to)
         _G.bucket_gc_wait()

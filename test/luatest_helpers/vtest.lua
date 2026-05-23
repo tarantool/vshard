@@ -446,15 +446,22 @@ local function cluster_bootstrap(g, cfg)
     t.assert_equals(errors, {}, 'storage bootstrap')
 end
 
+local function storage_cfg_impl(cfg)
+    ivtest.clear_test_cfg_options(cfg)
+    return ivshard.storage.cfg(cfg, _G.box_vstorage_id(cfg))
+end
+
+local function storage_cfg(storage, cfg)
+    local _, err = storage:exec(storage_cfg_impl, {cfg})
+    t.assert_equals(err, nil, 'single storage reconfig')
+end
+
 --
 -- Apply the config to all vshard storages in the cluster.
 --
 local function cluster_cfg(g, cfg)
     -- No support yet for dynamic node addition and removal. Only reconfig.
-    local _, err = cluster_exec_each(g, function(cfg)
-        ivtest.clear_test_cfg_options(cfg)
-        return ivshard.storage.cfg(cfg, _G.box_vstorage_id(cfg))
-    end, {cfg})
+    local _, err = cluster_exec_each(g, storage_cfg_impl, {cfg})
     t.assert_equals(err, nil, 'storage reconfig')
 end
 
@@ -475,6 +482,19 @@ local function storage_get_n_buckets(storage, n)
     return storage:exec(function(n)
         return _G.get_n_buckets(n)
     end, {n})
+end
+
+--
+-- Wait for _bucket space being synchronized on master. Without synchronization
+-- the buckets cannot be sent or received, rebalancer and recovery doesn't work.
+--
+local function storage_wait_bucket_sync(storage)
+    storage:exec(function()
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ivshard.storage.master_sync_wakeup()
+            ilt.assert(ivshard.storage.internal.is_bucket_in_sync)
+        end)
+    end)
 end
 
 --
@@ -897,8 +917,10 @@ return {
     cluster_rebalancer_find = cluster_rebalancer_find,
     storage_first_bucket = storage_first_bucket,
     storage_get_n_buckets = storage_get_n_buckets,
+    storage_wait_bucket_sync = storage_wait_bucket_sync,
     storage_stop = storage_stop,
     storage_start = storage_start,
+    storage_cfg = storage_cfg,
     router_new = router_new,
     router_cfg = router_cfg,
     router_disconnect = router_disconnect,
