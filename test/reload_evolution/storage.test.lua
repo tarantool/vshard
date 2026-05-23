@@ -40,6 +40,7 @@ package.loaded['vshard.storage'] = nil
 vshard.storage = require("vshard.storage")
 test_run:grep_log('storage_2_a', 'vshard.storage.reload_evolution: upgraded to') ~= nil
 vshard.storage.internal.reload_version
+util.wait_master_sync(test_run, 'storage_2_a')
 --
 -- gh-237: should be only one trigger. During gh-237 the trigger installation
 -- became conditional and therefore required to remember the current trigger

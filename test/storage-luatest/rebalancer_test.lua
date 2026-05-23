@@ -308,6 +308,8 @@ end
 -- gh-573: test the behavior of the READONLY bucket.
 --
 test_group.test_readonly_recovery = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         ilt.assert(ivshard.storage.bucket_refrw(bid))
@@ -339,6 +341,8 @@ end
 --
 test_group.test_pinning_before_readonly = function(g)
     t.run_only_if(global_cfg.memtx_use_mvcc_engine)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local function test_readonly_with_pinning_template(state, first, second)
@@ -394,10 +398,13 @@ test_group.test_pinning_before_readonly = function(g)
     end, {g.replica_2_a:replicaset_uuid()})
     g.replica_2_a:exec(function(uuid)
         ilt.assert(ivshard.storage.bucket_send(_G.get_first_bucket(), uuid))
+        _G.bucket_gc_wait()
     end, {g.replica_1_a:replicaset_uuid()})
 end
 
 test_group.test_readonly_rw_lock_after_ref_drop = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         ilt.assert(ivshard.storage.bucket_refrw(bid))
@@ -448,6 +455,8 @@ test_group.test_send_more_buckets_than_has = function(g)
     vtest.cluster_cfg(g, new_global_cfg)
 
     vtest.cluster_recovery_pause(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     -- Start sending of 11 buckets, when replica has only 10.
     g.replica_1_a:exec(function(uuid)
         ilt.assert_equals(box.space._bucket:count(), 10)
@@ -505,6 +514,8 @@ test_group.test_late_worker_wakeup_prepare = function(g)
     new_global_cfg.rebalancer_max_sending = 3
     vtest.cluster_cfg(g, new_global_cfg)
 
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(function(uuid)
         ivshard.storage.internal.errinj.ERRINJ_LAST_SEND_DELAY_COUNTDOWN = 1
         local errinj = ivshard.storage.internal.errinj
@@ -566,6 +577,8 @@ test_group.test_buckets_with_no_refs_are_preferred = function(g)
     new_cfg_template.sharding[3].weight = cfg_template.bucket_count / 3
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     wait_n_buckets(g.replica_1_a, 9)
     wait_n_buckets(g.replica_2_a, 11)
     g.replica_2_a:exec(function(bid)
@@ -618,6 +631,8 @@ test_group.test_bucket_cannot_be_sent_with_down_replica = function(g)
     new_cfg_template.rebalancer_bucket_send_timeout = 0.1
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_b:update_box_cfg({replication = {}})
     vtest.cluster_rebalancer_enable(g)
 
@@ -669,6 +684,8 @@ test_group.test_replication_not_broken_when_ref_on_replica = function(g)
     new_cfg_template.rebalancer_bucket_send_timeout = 1
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_1_b)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     vtest.cluster_rebalancer_enable(g)
 
     g.replica_1_b:exec(function()
@@ -707,6 +724,8 @@ end
 test_group.test_ref_change_noticed_during_bucket_send = function(g)
     -- With MVCC enabled dirty read of the `rw_lock` is not possible.
     t.run_only_if(not global_cfg.memtx_use_mvcc_engine)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         ilt.assert(ivshard.storage.bucket_refrw(bid))

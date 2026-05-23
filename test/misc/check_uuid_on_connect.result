@@ -119,6 +119,9 @@ test_run:switch('bad_uuid_1_a')
 ---
 - true
 ...
+util.wait_master_sync(test_run, 'bad_uuid_1_a')
+---
+...
 -- Send is ok - now UUID of bad_uuid_2_a is correct.
 vshard.storage.bucket_send(1, replicaset_uuid[2])
 ---
@@ -156,6 +159,9 @@ test_run:cmd('start server bad_uuid_2_b with wait=False, wait_load=False')
 - true
 ...
 util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
+---
+...
+util.wait_master_sync(test_run, 'bad_uuid_1_a')
 ---
 ...
 test_run:switch('bad_uuid_1_a')

@@ -47,6 +47,7 @@ test_run:cmd('start server bad_uuid_2_b with wait_load=False, wait=False')
 util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a_repaired')
 
 test_run:switch('bad_uuid_1_a')
+util.wait_master_sync(test_run, 'bad_uuid_1_a')
 -- Send is ok - now UUID of bad_uuid_2_a is correct.
 vshard.storage.bucket_send(1, replicaset_uuid[2])
 -- Fill log with garbage to separate two 'Mismatch' messages.
@@ -61,6 +62,7 @@ test_run:cmd('start server bad_uuid_2_a with wait=False, wait_load=False')
 test_run:cmd('create server bad_uuid_2_b with script="misc/bad_uuid_2_b.lua", wait=False, wait_load=False')
 test_run:cmd('start server bad_uuid_2_b with wait=False, wait_load=False')
 util.wait_master(test_run, REPLICASET_2, 'bad_uuid_2_a')
+util.wait_master_sync(test_run, 'bad_uuid_1_a')
 
 test_run:switch('bad_uuid_1_a')
 vshard.storage.bucket_force_create(2)

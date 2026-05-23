@@ -2,7 +2,7 @@ test_run = require('test_run').new()
 REPLICASET_1 = { 'box_1_a', 'box_1_b', 'box_1_c' }
 test_run:create_cluster(REPLICASET_1, 'router', {args = 'boot_before_cfg'})
 util = require('util')
-util.wait_master(test_run, REPLICASET_1, 'box_1_a')
+util.wait_master(test_run, REPLICASET_1, 'box_1_a', {no_sync = true})
 _ = test_run:cmd("create server router with script='router/router_2.lua'")
 _ = test_run:cmd("start server router")
 

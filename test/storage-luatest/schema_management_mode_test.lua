@@ -50,6 +50,8 @@ test_group.after_all(function(g)
 end)
 
 test_group.test_boot_with_mode_manual_access = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bid = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(bid, uuid,

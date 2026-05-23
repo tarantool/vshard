@@ -111,6 +111,9 @@ test_group.test_bootstrap = function(g)
 end
 
 test_group.test_locate = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
+    vtest.storage_wait_bucket_sync(g.replica_3_a)
     local bid = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(
@@ -145,6 +148,8 @@ test_group.test_notice_change = function(g)
     --
     -- Send first bucket.
     --
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bid1 = g.replica_1_a:exec(function(uuid)
         local bid = _G.get_first_bucket()
         local ok, err = ivshard.storage.bucket_send(
@@ -163,6 +168,7 @@ test_group.test_notice_change = function(g)
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
     promote_if_needed(g, g.replica_2_b)
+    vtest.storage_wait_bucket_sync(g.replica_2_b)
     --
     -- Next bucket send should notice the master change and send the bucket to
     -- the new master.
@@ -210,6 +216,7 @@ test_group.test_recovery = function(g)
     --
     -- Bucket is stuck in SENDING state on rs1 and RECEIVING on rs2.
     --
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
     local bid = g.replica_1_a:exec(function(uuid)
         _G.bucket_recovery_pause()
         local bid = _G.get_first_bucket()
@@ -232,6 +239,7 @@ test_group.test_recovery = function(g)
     local new_global_cfg = vtest.config_new(new_cfg_template)
     vtest.cluster_cfg(g, new_global_cfg)
     promote_if_needed(g, g.replica_2_b)
+    vtest.storage_wait_bucket_sync(g.replica_2_b)
     --
     -- Recovery on rs1 anyway finds the new master on rs2.
     --
@@ -255,6 +263,8 @@ test_group.test_recovery = function(g)
 end
 
 test_group.test_noactivity_timeout_for_auto_master = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     local bid1, bid2 = g.replica_1_a:exec(function(uuid)
         local bid1 = _G.get_first_bucket()
         --
@@ -320,6 +330,9 @@ test_group.test_conn_manager_connect_self = function(g)
     vtest.cluster_rebalancer_enable(g)
     t.assert_equals(vtest.cluster_rebalancer_find(g), 'replica_1_a')
 
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
+    vtest.storage_wait_bucket_sync(g.replica_3_a)
     g.replica_1_a:exec(function(uuid)
         -- Create connections using rebalancer
         local rebalancer = ivshard.storage.internal.rebalancer_service
@@ -391,6 +404,7 @@ test_group.test_master_discovery_on_disconnect = function(g)
         -- Now the bucket can be sent fine.
         storage_dst:exec(function()
             ivshard.storage.internal.errinj.ERRINJ_RECEIVE_PARTIALLY = false
+            ivshard.storage.garbage_collector_wakeup()
         end)
         storage_src:exec(bucket_send, {bid, storage_dst:replicaset_uuid()})
         storage_src:exec(bucket_gc_wait)
@@ -404,30 +418,141 @@ test_group.test_master_discovery_on_disconnect = function(g)
     -- Discover the master first time.
     --
     local bid = vtest.storage_first_bucket(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     g.replica_1_a:exec(bucket_send, {bid, g.replica_2_a:replicaset_uuid()})
     g.replica_1_a:exec(bucket_gc_wait)
     g.replica_2_a:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
     g.replica_2_a:exec(bucket_gc_wait)
     --
-    -- Blocking call while the known master is disconnected.
+    -- Blocking call while the known master is demoted.
     --
-    g.replica_2_a:stop()
+    g.replica_2_a:update_box_cfg{read_only = true}
     g.replica_2_b:update_box_cfg{read_only = false}
     promote_if_needed(g, g.replica_2_b)
+    vtest.storage_wait_bucket_sync(g.replica_2_b)
     send_bucket_to_new_master(g.replica_1_a, g.replica_2_b)
     -- Can't GC the bucket until the old master is back and can't send it.
 
     -- Restore everything back.
-    g.replica_2_a:start()
     vtest.cluster_cfg(g, global_cfg)
     promote_if_needed(g, g.replica_2_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
     -- `replica_2_a` should get the bucket from `replica_2_b` to send it.
     g.replica_2_a:wait_for_vclock_of(g.replica_2_b)
     g.replica_2_a:exec(bucket_send, {bid, g.replica_1_a:replicaset_uuid()})
     g.replica_2_b:exec(bucket_gc_wait)
     g.replica_2_b:update_box_cfg{read_only = true}
+    g.replica_2_a:update_box_cfg{read_only = false}
     vtest.cluster_exec_each(g, function()
         ivconst.MASTER_SEARCH_IDLE_INTERVAL = _G.test_old_idle_interval
         _G.test_old_idle_interval = nil
     end)
+end
+
+--
+-- Test, that recovery won't do anything until the sender has synchronized.
+--
+test_group.test_recovery_not_sync_remote = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_2_a)
+    vtest.storage_stop(g.replica_2_a)
+    g.replica_2_b:update_box_cfg{read_only = false}
+    promote_if_needed(g, g.replica_2_b)
+    g.replica_1_a:exec(function(bid, uuid)
+        box.space._bucket:insert({bid, ivconst.BUCKET.RECEIVING, uuid})
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+    -- The error is not saved into service, cannot use it here.
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        t.assert(g.replica_1_a:grep_log('Error during recovery of bucket.*' ..
+            'has not synchronized yet'))
+    end)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local rs2_template = new_cfg_template.sharding[2]
+    rs2_template.replicas.replica_2_a.read_only = true
+    rs2_template.replicas.replica_2_b.read_only = false
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.storage_start(g.replica_2_a, new_global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_2_b)
+    g.replica_1_a:exec(function(bid)
+        _G.bucket_recovery_wait()
+        _G.bucket_gc_wait()
+        ilt.assert_not(box.space._bucket:get(bid))
+    end, {bid})
+    vtest.cluster_cfg(g, global_cfg)
+    promote_if_needed(g, g.replica_2_a)
+end
+
+--
+-- Test, that recovery won't do anything until the current node synchronizes.
+--
+test_group.test_recovery_not_sync_local = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_2_a)
+    vtest.storage_stop(g.replica_1_a)
+    g.replica_1_b:update_box_cfg{read_only = false}
+    promote_if_needed(g, g.replica_1_b)
+    g.replica_1_b:exec(function(bid, uuid)
+        box.space._bucket:insert({bid, ivconst.BUCKET.RECEIVING, uuid})
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+    -- The error is not saved into service, cannot use it here.
+    t.helpers.retrying({timeout = vtest.wait_timeout}, function()
+        t.assert(g.replica_1_b:grep_log('Error during receiving buckets ' ..
+            'recovery.*has not synchronized yet'))
+    end)
+    g.replica_1_b:update_box_cfg{read_only = true}
+    vtest.storage_start(g.replica_1_a, global_cfg)
+    promote_if_needed(g, g.replica_1_a)
+    g.replica_1_a:exec(function(bid)
+        _G.bucket_recovery_wait()
+        _G.bucket_gc_wait()
+        ilt.assert_not(box.space._bucket:get(bid))
+    end, {bid})
+end
+
+--
+-- Test, that rebalancer won't be able to send routes if masters aren't in sync.
+--
+test_group.test_rebalancer_not_sync = function(g)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    new_cfg_template.sharding[1].weight = 1
+    new_cfg_template.sharding[2].weight = 0
+    new_cfg_template.sharding[3].weight = 1
+    local new_global_cfg = vtest.config_new(new_cfg_template)
+    vtest.cluster_cfg(g, new_global_cfg)
+    vtest.cluster_rebalancer_enable(g)
+    vtest.storage_stop(g.replica_2_a)
+    g.replica_2_b:update_box_cfg{read_only = false}
+    promote_if_needed(g, g.replica_2_b)
+    g.replica_1_a:exec(function()
+         local rebalancer = ivshard.storage.internal.rebalancer_service
+         ivtest.service_wait_for_error(rebalancer, 'not synchronized',
+             {on_yield = ivshard.storage.rebalancer_wakeup})
+    end)
+    vtest.storage_start(g.replica_2_a, global_cfg)
+    vtest.cluster_cfg(g, global_cfg)
+    promote_if_needed(g, g.replica_2_a)
+    vtest.cluster_rebalancer_disable(g)
+end
+
+--
+-- Test, that gc doesn't work until the sync happens.
+--
+test_group.test_gc_not_sync = function(g)
+    local bid = vtest.storage_first_bucket(g.replica_2_a)
+    vtest.storage_stop(g.replica_1_a)
+    g.replica_1_b:update_box_cfg{read_only = false}
+    promote_if_needed(g, g.replica_1_b)
+    g.replica_1_b:exec(function(bid, uuid)
+        box.space._bucket:insert({bid, ivconst.BUCKET.RECEIVING, uuid})
+        box.space._bucket:replace({bid, ivconst.BUCKET.GARBAGE})
+        local gc = ivshard.storage.internal.gc_service
+        ivtest.service_wait_for_error(gc, 'not synchronized',
+             {on_yield = ivshard.storage.garbage_collector_wakeup})
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+    g.replica_1_b:update_box_cfg{read_only = true}
+    vtest.storage_start(g.replica_1_a, global_cfg)
+    promote_if_needed(g, g.replica_1_a)
+    g.replica_1_a:exec(function(bid)
+        _G.bucket_gc_wait()
+        ilt.assert_not(box.space._bucket:get(bid))
+    end, {bid})
 end

@@ -123,6 +123,12 @@ if not M then
         is_bucket_protected = true,
         -- Number of transactions over the _bucket space.
         bucket_txns_in_progress_count = 0,
+        -- Flag whether a newly elected master is synchronized with other
+        -- replicas in replicaset. It is needed to prevent the doubled buckets
+        -- in the cluster during rebalancing and recovery process.
+        is_bucket_in_sync = false,
+        -- Vclock after a last transaction over the _bucket space.
+        bucket_latest_vclock = nil,
         --
         -- Incremental generation of the _bucket space. It is
         -- incremented on each _bucket change and is used to
@@ -173,6 +179,8 @@ if not M then
         is_enabled = true,
         -- Flag whether this instance right now is in the master role.
         is_master = false,
+        -- Condition variable fired each time `is_master` is changed.
+        is_master_cond = lfiber.cond(),
         -- Reference to the function-proxy to most of the public functions. It
         -- allows to avoid 'if's in each function by adding expensive
         -- conditional checks in one rarely used version of the wrapper and no
@@ -184,6 +192,10 @@ if not M then
         -- to it.
         instance_watch_fiber = nil,
         instance_watch_service = nil,
+        -- Fiber for waiting until newly elected master synchronizes it's
+        -- _bucket space with other replicas in replicaset.
+        master_sync_fiber = nil,
+        master_sync_service = nil,
 
         ------------------- Garbage collection -------------------
         -- Fiber to remove garbage buckets data.
@@ -271,6 +283,9 @@ else
     end
     if M.bucket_txns_in_progress_count == nil then
         M.bucket_txns_in_progress_count = 0
+    end
+    if M.is_master_cond == nil then
+        M.is_master_cond = lfiber.cond()
     end
 end
 
@@ -363,6 +378,10 @@ local function bucket_space_op(name, ...)
         local rs = M.this_replicaset
         return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
                                   rs.id, rs.master.id)
+    end
+    if not M.is_bucket_in_sync then
+        return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
+            M.this_replica.id, M.this_replicaset.id)
     end
     local space = box.space._bucket
     local is_success, res = pcall(space[name], space, ...)
@@ -655,6 +674,7 @@ local function bucket_on_commit_or_rollback_f(row_pairs, is_commit)
     bucket_generation_increment()
     assert(M.bucket_txns_in_progress_count > 0)
     M.bucket_txns_in_progress_count = M.bucket_txns_in_progress_count - 1
+    M.bucket_latest_vclock = box.info.vclock
 end
 
 local function bucket_on_commit_f(row_pairs)
@@ -943,6 +963,10 @@ local function recovery_bucket_stat(bid)
     local ok, err = check_is_master()
     if not ok then
         return nil, err
+    end
+    if not M.is_bucket_in_sync then
+        return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
+            M.this_replica.id, M.this_replicaset.id)
     end
     local b = box.space._bucket:get{bid}
     if b == nil then
@@ -1362,6 +1386,35 @@ local function sync(timeout)
         error('Usage: vshard.storage.sync([timeout: number])')
     end
     return wait_lsn(timeout or M.sync_timeout, 0.001)
+end
+
+--
+-- Waits until the current node stops accepting new data, persists all
+-- committed transactions to disk, and sends the freshest vclock to the
+-- storage that called this function.
+--
+local function storage_bucket_checkpoint(timeout)
+    local deadline = fiber_clock() + timeout
+    while M.is_master do
+        local _, err = fiber_cond_wait(M.is_master_cond, timeout)
+        if err then
+            err.reason = 'waiting for non-master'
+            return nil, err
+        end
+        timeout = deadline - fiber_clock()
+    end
+    while M.bucket_txns_in_progress_count > 0 do
+        local _, err = fiber_cond_wait(M.bucket_generation_cond, timeout)
+        if err then
+            err.reason = 'waiting for 0 bucket transactions'
+            return nil, err
+        end
+        timeout = deadline - fiber_clock()
+    end
+    if not M.bucket_latest_vclock then
+        M.bucket_latest_vclock = box.info.vclock
+    end
+    return {vclock = M.bucket_latest_vclock}
 end
 
 --------------------------------------------------------------------------------
@@ -3061,6 +3114,10 @@ local function rebalancer_apply_routes(routes)
     if not ok then
         return nil, err
     end
+    if not M.is_bucket_in_sync then
+        return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
+            M.this_replica.id, M.this_replicaset.id)
+    end
     assert(not rebalancing_is_in_progress())
     -- Can not apply routes here because of gh-946 in tarantool
     -- about problems with long polling. Apply routes in a fiber.
@@ -3223,6 +3280,10 @@ local function rebalancer_request_state()
     end
     if not M.is_rebalancer_active or rebalancing_is_in_progress() then
         return nil, lerror.make('Rebalancer is not active or is in progress')
+    end
+    if not M.is_bucket_in_sync then
+        return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
+            M.this_replica.id, M.this_replicaset.id)
     end
     local _bucket = box.space._bucket
     local status_index = _bucket.index.status
@@ -3641,6 +3702,7 @@ service_call_api = setmetatable({
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
     storage_map = storage_map,
+    storage_bucket_checkpoint = storage_bucket_checkpoint,
     info = storage_service_info,
     test_api = service_call_test_api,
 }, {__serialize = function(api)
@@ -3660,6 +3722,78 @@ end
 -- Master management
 --------------------------------------------------------------------------------
 
+local function master_sync_service_f(service, limiter)
+    local module_version = M.module_version
+    local err_msg = 'Error during synchronization for _bucket: %s '
+    local call_timeout = consts.CALL_TIMEOUT_MAX
+    local call_opts = {timeout = call_timeout, except = M.this_replica.id}
+    local map_res, err, err_id
+    while module_version == M.module_version do
+        lfiber.testcancel()
+        assert(not M.is_bucket_in_sync)
+        service:set_activity('collecting vclocks')
+        map_res, err, err_id =
+            M.this_replicaset:map_call('vshard.storage._call',
+            {'storage_bucket_checkpoint', call_timeout / 1.5}, call_opts)
+        if err then
+            err.replica_id = err_id
+            limiter:log_warn(err, service:set_status_error(err_msg, err))
+            lfiber.testcancel()
+            goto continue
+        end
+
+        service:set_activity('waiting catchup')
+        for id, res in pairs(map_res) do
+            local curr_vclock = box.info.vclock
+            local remote_vclock = res[1] and res[1].vclock
+            if not remote_vclock then
+                err = res[2]
+                err.replica_id = id
+                limiter:log_warn(err, service:set_status_error(err_msg, err))
+                goto continue
+            end
+            local comparison = util.vclock_compare(curr_vclock, remote_vclock)
+            if not comparison or comparison < 0 then
+                lfiber.testcancel()
+                goto continue
+            end
+        end
+
+        lfiber.testcancel()
+        service:set_activity('synced')
+        assert(M.master_sync_fiber == lfiber.self())
+        M.is_bucket_in_sync = true
+        log.info('New master has synchronized with other replicas')
+        -- Simple return will lead to service restart, so cancel the fiber.
+        M.master_sync_fiber = nil
+        lfiber.self():cancel()
+        do return end
+    ::continue::
+        service:set_activity('idling')
+        lfiber.sleep(consts.MASTER_ENABLE_WAIT_INTERVAL)
+    end
+end
+
+local function master_sync_f()
+    local name = 'master_sync'
+    local service = lservice_info.new(name)
+    M.master_sync_service = service
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(master_sync_service_f, service, ratelimit)
+    if M.master_sync_service == service then
+        M.master_sync_service = nil
+    end
+    if not ok then
+        error(err)
+    end
+end
+
+local function master_sync_wakeup()
+    if M.master_sync_fiber then
+        M.master_sync_fiber:wakeup()
+    end
+end
+
 local function master_role_update()
     if this_is_master() and M.is_configured then
         if not M.collect_bucket_garbage_fiber then
@@ -3669,6 +3803,10 @@ local function master_role_update()
         if not M.recovery_fiber then
             M.recovery_fiber =
                 util.reloadable_fiber_new('vshard.recovery', M, 'recovery_f')
+        end
+        if not M.master_sync_fiber and not M.is_bucket_in_sync then
+            M.master_sync_fiber = util.reloadable_fiber_new(
+                'vshard.master_sync', M, 'master_sync_f')
         end
     else
         if M.collect_bucket_garbage_fiber then
@@ -3681,12 +3819,19 @@ local function master_role_update()
             M.recovery_fiber = nil
             log.info('Recovery stopped')
         end
+        M.is_bucket_in_sync = false
+        if M.master_sync_fiber ~= nil then
+            M.master_sync_fiber:cancel()
+            M.master_sync_fiber = nil
+            log.info('Master sync stopped')
+        end
     end
 end
 
 local function master_on_disable()
     log.info("Stepping down from the master role")
     M.is_master = false
+    M.is_master_cond:broadcast()
     local rs = M.this_replicaset
     if rs.master ~= nil then
         rs:update_master(rs.master.id, nil)
@@ -3699,6 +3844,7 @@ end
 local function master_on_enable()
     log.info("Stepping up into the master role")
     M.is_master = true
+    M.is_master_cond:broadcast()
     local rs = M.this_replicaset
     if rs.master ~= M.this_replica then
         local old_master_id = rs.master and rs.master.id
@@ -4453,6 +4599,7 @@ M.recovery_f = recovery_f
 M.rebalancer_f = rebalancer_f
 M.gc_bucket_f = gc_bucket_f
 M.instance_watch_f = instance_watch_f
+M.master_sync_f = master_sync_f
 
 M.api_call_cache = storage_api_call_unsafe
 
@@ -4527,6 +4674,7 @@ return {
     --
     -- Miscellaneous.
     --
+    master_sync_wakeup = storage_make_api(master_sync_wakeup),
     call = storage_make_api(storage_call),
     _call = storage_make_api(service_call),
     sync = storage_make_api(sync),
