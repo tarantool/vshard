@@ -95,14 +95,19 @@ info = vshard.storage.info()
 -- case.
 --
 while #info.alerts ~= 0 do fiber.sleep(0.1) info = vshard.storage.info() end
+-- The connections are flaky, so don't compare them, only alerts are important.
+info.replicasets = nil
 info
 _ = test_run:cmd("stop server storage_2_b")
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
+info
 _ = test_run:cmd("start server storage_2_b")
 _ = test_run:switch("storage_2_b")
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
+info
 _ = test_run:switch("storage_2_a")
-vshard.storage.info()
+info = vshard.storage.info(); info.replicasets = nil
+info
 
 _ = test_run:switch("storage_1_a")
 
