@@ -1122,7 +1122,7 @@ local function recovery_step_by_type(type, limiter)
                 log.info(start_format, type)
                 limiter:log_error(err,
                     'Error during recovery of bucket %s on replicaset %s: %s',
-                    bucket_id, peer_id, err)
+                    bucket_id, peer_id, json_encode(err))
                 is_step_empty = false
             end
             goto continue
@@ -1138,7 +1138,7 @@ local function recovery_step_by_type(type, limiter)
                     log.info(start_format, type)
                     limiter:log_error(err,
                         'Error during searching in cluster for recovery of ' ..
-                        '%d bucket: %s', bucket_id, err)
+                        '%d bucket: %s', bucket_id, json_encode(err))
                     is_step_empty = false
                 end
                 goto continue
