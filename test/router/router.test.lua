@@ -147,6 +147,10 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 
 _ = test_run:switch('storage_2_a')
 vshard.storage.internal.errinj.ERRINJ_RECOVERY_PAUSE = false
+while box.space._bucket:get{1}.status ~= vshard.consts.BUCKET.ACTIVE do         \
+    vshard.storage.recovery_wakeup()                                            \
+    fiber.sleep(0.1)                                                            \
+end
 
 _ = test_run:switch('router_1')
 
