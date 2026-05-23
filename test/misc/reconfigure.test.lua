@@ -97,7 +97,7 @@ _ = test_run:switch('default')
 
 REPLICASET_1 = {'storage_1_a'}
 util.wait_master(test_run, REPLICASET_1, 'storage_1_a')
-util.wait_master(test_run, REPLICASET_2, 'storage_2_a')
+util.wait_master(test_run, REPLICASET_2, 'storage_2_b')
 util.wait_master(test_run, REPLICASET_3, 'storage_3_a')
 
 -- Check correctness on each replicaset.
