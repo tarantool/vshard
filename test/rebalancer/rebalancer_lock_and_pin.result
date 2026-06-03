@@ -36,7 +36,7 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(51, 50)
 ---
 - true
 ...
@@ -44,7 +44,7 @@ test_run:switch('box_1_a')
 ---
 - true
 ...
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 ---
 - true
 ...
@@ -100,7 +100,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 100
+- 50
 ...
 info.lock
 ---
@@ -138,7 +138,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 100
+- 50
 ...
 info.lock
 ---
@@ -162,7 +162,7 @@ test_run:switch('box_2_a')
 ...
 -- Does not allow to receive either. Send from a non-locked replicaset to a
 -- locked one fails.
-vshard.storage.bucket_send(101, util.replicasets[1])
+vshard.storage.bucket_send(51, util.replicasets[1])
 ---
 - null
 - type: ShardingError
@@ -310,7 +310,7 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 100
+- 50
 ...
 info.lock
 ---
@@ -322,7 +322,7 @@ test_run:switch('box_2_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 33
+- 16
 ...
 test_run:switch('box_3_a')
 ---
@@ -330,7 +330,7 @@ test_run:switch('box_3_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 67
+- 34
 ...
 --
 -- Test bucket pinning. At first, return to the default
@@ -398,7 +398,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 vshard.storage.info().bucket.active
 ---
-- 66
+- 33
 ...
 status = box.space._bucket.index.status
 ---
@@ -507,10 +507,10 @@ vshard.storage.bucket_pin(first_id)
 vshard.storage.bucket_send(first_id, util.replicasets[2])
 ---
 - null
-- bucket_id: 35
+- bucket_id: 18
   code: 24
   type: ShardingError
-  message: Bucket 35 is pinned
+  message: Bucket 18 is pinned
   name: BUCKET_IS_PINNED
 ...
 vshard.storage.bucket_unpin(first_id)
@@ -522,12 +522,12 @@ vshard.storage.bucket_unpin(first_id)
 -- rebalancer will face with unreachability of the perfect
 -- balance.
 --
-for i = 1, 60 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
+for i = 1, 33 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
 ---
 ...
 status:count({vshard.consts.BUCKET.PINNED})
 ---
-- 60
+- 33
 ...
 rs1_cfg.weight = 0.5
 ---
@@ -545,11 +545,11 @@ info = vshard.storage.info().bucket
 ...
 info.active
 ---
-- 60
+- 33
 ...
 info.pinned
 ---
-- 60
+- 33
 ...
 test_run:switch('box_2_a')
 ---
@@ -557,7 +557,7 @@ test_run:switch('box_2_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 70
+- 33
 ...
 test_run:switch('box_3_a')
 ---
@@ -565,7 +565,7 @@ test_run:switch('box_3_a')
 ...
 vshard.storage.info().bucket.active
 ---
-- 70
+- 34
 ...
 test_run:cmd("switch default")
 ---

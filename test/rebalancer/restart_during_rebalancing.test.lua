@@ -38,7 +38,7 @@ vshard.router.cfg(cfg)
 test_run:switch('fullbox_1_a')
 vshard.storage.rebalancer_disable()
 log.info(string.rep('a', 1000))
-vshard.storage.bucket_force_create(1, 200)
+vshard.storage.bucket_force_create(1, 100)
 
 test_run:switch('router_1')
 for i = 1, 4 do vshard.router.discovery_wakeup() end
@@ -105,7 +105,7 @@ while killer:status() ~= 'dead' do fiber.sleep(0.1) end
 test_run:switch('router_1')
 -- Wait until all GC, recovery-discovery finish work.
 start = fiber.time()
-while vshard.router.info().bucket.available_rw ~= 200 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
+while vshard.router.info().bucket.available_rw ~= 100 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 fiber.sleep(10 - (fiber.time() - start))
 info = vshard.router.info()
 total_available_rw = 0

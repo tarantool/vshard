@@ -18,11 +18,11 @@ util.push_rs_filters(test_run)
 
 _ = test_run:switch('box_1_a')
 _bucket = box.space._bucket
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 
 _ = test_run:switch('box_2_a')
 _bucket = box.space._bucket
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(51, 50)
 create_simple_space('test3', {engine = 'vinyl'})
 create_simple_space('test4')
 create_simple_space('test5', {engine = 'vinyl'})
@@ -94,15 +94,15 @@ box.space._bucket:get{1}
 _ = test_run:switch('box_1_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
 _ = test_run:switch('box_2_a')
-_, err = vshard.storage.bucket_send(101, util.replicasets[1],                   \
+_, err = vshard.storage.bucket_send(51, util.replicasets[1],                   \
                                     {chunk_timeout = 0.1})
 util.is_timeout_error(err)
-wait_bucket_is_collected(101)
+wait_bucket_is_collected(51)
 _ = test_run:switch('box_1_a')
 vshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
 test_run:wait_cond(function()                                                   \
     vshard.storage.recovery_wakeup()                                            \
-    return box.space._bucket:get{101}.status == vshard.consts.BUCKET.ACTIVE     \
+    return box.space._bucket:get{51}.status == vshard.consts.BUCKET.ACTIVE     \
 end)
 
 --

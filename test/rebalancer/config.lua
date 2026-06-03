@@ -75,7 +75,7 @@ end
 
 return {
     -- Use small number of buckets to speedup tests.
-    bucket_count = 200,
+    bucket_count = 100,
     sharding = sharding,
     rebalancer_disbalance_threshold = 0.01,
     rebalancer_max_sending = 5,

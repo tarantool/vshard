@@ -35,7 +35,7 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2, REPLICASET_3, REPLICASET_4
 ]])
 
 test_run:switch('box_1_a')
-vshard.storage.bucket_force_create(1, 200)
+vshard.storage.bucket_force_create(1, 100)
 t1 = fiber.time()
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 t2 = fiber.time()

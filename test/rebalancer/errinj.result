@@ -59,7 +59,7 @@ wait_rebalancer_state('Total active bucket count is not equal to total', test_ru
 vshard.storage.rebalancer_disable()
 ---
 ...
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 ---
 - true
 ...
@@ -70,7 +70,7 @@ test_run:switch('box_2_a')
 _bucket = box.space._bucket
 ---
 ...
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(101, 50)
 ---
 - true
 ...
@@ -158,7 +158,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 ---
-- 67
+- 34
 ...
 test_run:switch('box_2_a')
 ---
@@ -166,7 +166,7 @@ test_run:switch('box_2_a')
 ...
 _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE}
 ---
-- 133
+- 66
 ...
 --
 -- Test that it is possible to send multiple bucket at the same

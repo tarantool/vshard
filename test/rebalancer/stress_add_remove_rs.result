@@ -56,7 +56,7 @@ test_run:switch('box_2_a')
 ---
 - true
 ...
-vshard.storage.bucket_force_create(1, 200)
+vshard.storage.bucket_force_create(1, 100)
 ---
 - true
 ...
@@ -72,7 +72,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 100
+- 50
 ...
 --
 -- Test the first case of described above.
@@ -180,7 +180,7 @@ wait_rebalancer_state('The cluster is balanced ok', test_run)
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 66
+- 33
 ...
 test_run:switch('router_1')
 ---
@@ -199,7 +199,7 @@ test_run:switch('box_1_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 66
+- 33
 ...
 check_consistency()
 ---
@@ -211,7 +211,7 @@ test_run:switch('box_2_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 67
+- 33
 ...
 check_consistency()
 ---
@@ -223,7 +223,7 @@ test_run:switch('box_3_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 67
+- 34
 ...
 check_consistency()
 ---
@@ -358,7 +358,7 @@ test_run:switch('box_1_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 100
+- 50
 ...
 check_consistency()
 ---
@@ -370,7 +370,7 @@ test_run:switch('box_2_a')
 ...
 #box.space._bucket.index.status:select{vshard.consts.BUCKET.ACTIVE}
 ---
-- 100
+- 50
 ...
 check_consistency()
 ---

@@ -17,10 +17,10 @@ util.map_evals(test_run, {REPLICASET_1, REPLICASET_2}, 'bootstrap_storage(\'memt
 --
 
 test_run:switch('box_2_a')
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(51, 50)
 
 test_run:switch('box_1_a')
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 
 wait_rebalancer_state('The cluster is balanced ok', test_run)
 
@@ -72,7 +72,7 @@ vshard.storage.bucket_send(1, util.replicasets[2])
 test_run:switch('box_2_a')
 -- Does not allow to receive either. Send from a non-locked replicaset to a
 -- locked one fails.
-vshard.storage.bucket_send(101, util.replicasets[1])
+vshard.storage.bucket_send(51, util.replicasets[1])
 
 --
 -- Vshard ensures that if a replicaset is locked, then it will not
@@ -231,7 +231,7 @@ vshard.storage.bucket_unpin(first_id)
 -- rebalancer will face with unreachability of the perfect
 -- balance.
 --
-for i = 1, 60 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
+for i = 1, 33 do local ok, err = vshard.storage.bucket_pin(first_id - 1 + i) assert(ok) end
 status:count({vshard.consts.BUCKET.PINNED})
 rs1_cfg.weight = 0.5
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
