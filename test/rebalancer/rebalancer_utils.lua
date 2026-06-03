@@ -5,7 +5,7 @@ local write_iterations = 0
 local read_iterations = 0
 local write_fiber = 'none'
 local read_fiber = 'none'
-local bucket_count = 200
+local bucket_count = 100
 -- Set just any limit to ensure it is at least not infinite. We want our disk to
 -- have space even if the test runs too long somewhy.
 local primary_key_max = 10000

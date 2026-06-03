@@ -16,10 +16,10 @@ util.push_rs_filters(test_run)
 --
 _ = test_run:switch('box_1_a')
 vshard.storage.rebalancer_disable()
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 _ = test_run:switch('box_2_a')
 vshard.storage.rebalancer_disable()
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(101, 50)
 _ = test_run:switch('box_1_a')
 
 vshard.storage.bucket_refro(1)

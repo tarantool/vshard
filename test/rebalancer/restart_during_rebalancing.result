@@ -89,7 +89,7 @@ vshard.storage.rebalancer_disable()
 log.info(string.rep('a', 1000))
 ---
 ...
-vshard.storage.bucket_force_create(1, 200)
+vshard.storage.bucket_force_create(1, 100)
 ---
 - true
 ...
@@ -202,7 +202,7 @@ test_run:switch('router_1')
 start = fiber.time()
 ---
 ...
-while vshard.router.info().bucket.available_rw ~= 200 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
+while vshard.router.info().bucket.available_rw ~= 100 do vshard.router.discovery_wakeup() fiber.sleep(0.1) end
 ---
 ...
 fiber.sleep(10 - (fiber.time() - start))
@@ -233,7 +233,7 @@ test_run:cmd("setopt delimiter ''");
 ...
 total_available_rw
 ---
-- 200
+- 100
 ...
 info
 ---
@@ -282,7 +282,7 @@ info
     unreachable: 0
     available_ro: 0
     unknown: 0
-    available_rw: 200
+    available_rw: 100
   identification_mode: uuid_as_key
   status: 0
   is_enabled: true
@@ -302,8 +302,8 @@ test_run:switch('fullbox_1_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 50
-  total: 50
+  active: 25
+  total: 25
   garbage: 0
   pinned: 0
   readonly: 0
@@ -320,8 +320,8 @@ test_run:switch('fullbox_2_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 50
-  total: 50
+  active: 25
+  total: 25
   garbage: 0
   pinned: 0
   readonly: 0
@@ -338,8 +338,8 @@ test_run:switch('fullbox_3_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 50
-  total: 50
+  active: 25
+  total: 25
   garbage: 0
   pinned: 0
   readonly: 0
@@ -356,8 +356,8 @@ test_run:switch('fullbox_4_a')
 vshard.storage.info().bucket
 ---
 - receiving: 0
-  active: 50
-  total: 50
+  active: 25
+  total: 25
   garbage: 0
   pinned: 0
   readonly: 0

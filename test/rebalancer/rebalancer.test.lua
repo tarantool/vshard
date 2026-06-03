@@ -49,17 +49,17 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
 wait_rebalancer_state('Total active bucket count is not equal to total', test_run)
 
 --
--- Fill the cluster with buckets saving the balance 100 buckets
+-- Fill the cluster with buckets saving the balance 50 buckets
 -- per replicaset.
 --
 vshard.storage.rebalancer_disable()
 cfg.rebalancer_max_receiving = 10
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 
 test_run:switch('box_2_a')
 _bucket = box.space._bucket
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(51, 50)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
@@ -71,7 +71,7 @@ wait_rebalancer_state("The cluster is balanced ok", test_run)
 --
 vshard.storage.rebalancer_disable()
 test_run:switch('box_2_a')
-vshard.storage.bucket_force_create(1, 100)
+vshard.storage.bucket_force_create(1, 50)
 
 test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_1}, false)
@@ -104,7 +104,7 @@ test_run:switch('box_1_a')
 cfg.rebalancer_disbalance_threshold = 300
 vshard.storage.rebalancer_disable()
 vshard.storage.cfg(cfg, util.name_to_uuid.box_1_a)
-vshard.storage.bucket_force_create(101, 100)
+vshard.storage.bucket_force_create(51, 50)
 
 test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_2}, false)
@@ -162,14 +162,14 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, false)
 
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_enable()
-_bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
+_bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.RECEIVING}})
 -- We should not check the certain status of buckets (e.g. receiving) because
 -- in rare cases we accidentally can get the wrong one. For example we wait for
 -- "receiving" status, but get "garbage" due to some previous rebalancer error.
 err_msg = string.format('Replica .* has receiving buckets during rebalancing')
 wait_rebalancer_state('Error during downloading rebalancer states:.*' ..  \
                       err_msg, test_run)                                  \
-_bucket:update({150}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
+_bucket:update({100}, {{'=', 2, vshard.consts.BUCKET.ACTIVE}})
 vshard.storage.sync()
 
 test_run:switch('default')
@@ -181,35 +181,35 @@ util.map_bucket_protection(test_run, {REPLICASET_1}, true)
 --
 test_run:switch('box_1_a')
 vshard.storage.rebalancer_disable()
-for i = 91, 100 do wait_bucket_is_collected(i) end
-vshard.storage.bucket_force_create(91, 10)
+for i = 41, 50 do wait_bucket_is_collected(i) end
+vshard.storage.bucket_force_create(41, 10)
 space = box.space.test
-space:replace{1, 91}
-space:replace{2, 92}
-space:replace{3, 93}
-space:replace{4, 150}
-space:replace{5, 151}
+space:replace{1, 41}
+space:replace{2, 42}
+space:replace{3, 43}
+space:replace{4, 50}
+space:replace{5, 51}
 
 test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_2}, false)
 
 test_run:switch('box_2_a')
 space = box.space.test
-for i = 91, 100 do _bucket:delete{i} end
+for i = 41, 50 do _bucket:delete{i} end
 vshard.storage.sync()
 
 test_run:switch('default')
 util.map_bucket_protection(test_run, {REPLICASET_2}, true)
 
 test_run:switch('box_1_a')
-_bucket:get{91}.status
+_bucket:get{41}.status
 vshard.storage.rebalancer_enable()
 vshard.storage.rebalancer_wakeup()
 --
 -- Now rebalancer makes a bucket SENT. After it the garbage
 -- collector cleans it and deletes after a timeout.
 --
-wait_bucket_is_collected(91)
+wait_bucket_is_collected(41)
 wait_rebalancer_state("The cluster is balanced ok", test_run)
 _bucket.index.status:count({vshard.consts.BUCKET.ACTIVE})
 _bucket.index.status:min({vshard.consts.BUCKET.ACTIVE})
@@ -268,7 +268,7 @@ vshard.storage.cfg(cfg, util.name_to_uuid.box_2_a)
 vshard.storage.rebalancer_wakeup()
 _bucket = box.space._bucket
 test_run:cmd("setopt delimiter ';'")
-while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 200 do
+while _bucket.index.status:count{vshard.consts.BUCKET.ACTIVE} ~= 50 do
     fiber.sleep(0.1)
     vshard.storage.rebalancer_wakeup()
 end;
