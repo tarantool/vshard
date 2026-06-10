@@ -336,6 +336,7 @@ local function master_call(replicaset, func, args, opts)
     local deadline = fiber_clock() + opts.timeout
     local did_first_attempt = false
     while true do
+        lfiber.testcancel()
         local res, err = replicaset:callrw(func, args, opts)
         if res ~= nil then
             return res
@@ -1131,7 +1132,6 @@ local function recovery_step_by_type(type, limiter)
             end
             goto continue
         end
-        lfiber.testcancel()
         remote_bucket, err = master_call(
             destination, 'vshard.storage._call',
             {'recovery_bucket_stat', bucket_id},
@@ -3230,7 +3230,6 @@ local function rebalancer_service_f(service, limiter)
         for src_id, src_routes in pairs(routes) do
             service:set_activity('applying routes')
             local rs = M.replicasets[src_id]
-            lfiber.testcancel()
             local status, err = master_call(
                 rs, 'vshard.storage.rebalancer_apply_routes', {src_routes},
                 {timeout = consts.REBALANCER_APPLY_ROUTES_TIMEOUT})
