@@ -42,8 +42,6 @@ local lschema = require('vshard.storage.schema')
 local reload_evolution = require('vshard.storage.reload_evolution')
 local route_dispenser = require('vshard.storage.route_dispenser')
 local fiber_cond_wait = util.fiber_cond_wait
-local index_has = util.index_has
-local cfg_check_option = lcfg.check_option
 local BACTIVE = consts.BUCKET.ACTIVE
 local BPINNED = consts.BUCKET.PINNED
 local BREADONLY = consts.BUCKET.READONLY
@@ -441,6 +439,7 @@ local function bucket_are_all_rw_cache()
 end
 
 local function bucket_are_all_rw_not_cache()
+    local index_has = util.index_has
     local status_index = box.space._bucket.index.status
     local status = consts.BUCKET
     local res = not index_has(status_index, status.SENDING) and
@@ -2039,7 +2038,7 @@ local function bucket_send_build_opts(opts, default_timeout)
     local type = 'number'
     for name, default in pairs(defaults) do
         if opts[name] then
-            cfg_check_option(name, type, nil, opts[name])
+            lcfg.check_option(name, type, nil, opts[name])
         else
             opts[name] = default
         end
