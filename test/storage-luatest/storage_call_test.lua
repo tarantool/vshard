@@ -45,6 +45,16 @@ test_group.after_all(function(g)
     g.cluster:drop()
 end)
 
+test_group.test_unknown_service = function(g)
+    g.replica_1_a:exec(function()
+        local res, err = ivshard.storage._call('unknown_service')
+        ilt.assert_equals(res, nil)
+        ilt.assert_equals(err.code, box.error.UNSUPPORTED)
+        ilt.assert_equals(err.message,
+            'vshard.storage._call does not support unknown_service')
+    end)
+end
+
 local function bucket_gc_wait()
     _G.bucket_gc_wait()
 end

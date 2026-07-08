@@ -33,3 +33,37 @@ g.test_box_error_prev = function()
     t.assert_equals(e2, ve2)
     t.assert_equals(e3, ve3)
 end
+
+g.test_wrap_legacy_storage_call_error = function()
+    for _, error_type in ipairs({'LuajitError', 'ClientError'}) do
+        local prev = {
+            type = error_type,
+            code = box.error.PROC_LUA,
+            message = '/vshard/storage/init.lua:123: ' ..
+                      'attempt to call a nil value',
+        }
+        local err = verror.wrap_storage_call('new_service', prev)
+        t.assert_equals(err.code, box.error.UNSUPPORTED)
+        t.assert_equals(err.message,
+                        'vshard.storage._call does not support new_service')
+        t.assert(rawequal(err.prev, prev))
+    end
+end
+
+g.test_wrap_storage_call_error_ignores_other_errors = function()
+    local errors = {
+        {
+            type = 'LuajitError',
+            code = box.error.PROC_LUA,
+            message = 'some other error',
+        },
+        {
+            type = 'ClientError',
+            code = box.error.ACCESS_DENIED,
+            message = 'attempt to call a nil value',
+        },
+    }
+    for _, err in ipairs(errors) do
+        t.assert(rawequal(verror.wrap_storage_call('new_service', err), err))
+    end
+end
