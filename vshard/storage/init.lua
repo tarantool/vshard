@@ -3734,6 +3734,20 @@ local function master_sync_service_f(service, limiter)
         map_res, err, err_id =
             M.this_replicaset:map_call('vshard.storage._call',
             {'storage_bucket_checkpoint', call_timeout / 1.5}, call_opts)
+        if err and (err.type == 'LuajitError' or err.type == 'ClientError') and
+           err.message and err.message:match(
+               '/vshard/storage/init%.lua:%d+: attempt to call a nil value$')
+            then
+            -- Storages predating storage_bucket_checkpoint() have no
+            -- production capability endpoint. Their service dispatcher fails
+            -- with a plain Lua nil-call error when a service is missing.
+            map_res, err, err_id =
+                M.this_replicaset:map_call('vshard.storage.sync',
+                                           {call_timeout / 1.5}, call_opts)
+            if not err then
+                map_res = {}
+            end
+        end
         if err then
             err.replica_id = err_id
             limiter:log_warn(err, service:set_status_error(err_msg, err))
@@ -4583,6 +4597,13 @@ if not rawget(_G, MODULE_INTERNALS) then
     rawset(_G, MODULE_INTERNALS, M)
 else
     reload_evolution.upgrade(M)
+    -- Hot reload from old vshard can leave master sync internals incompatible
+    -- with the reloaded code. Refresh the function and restart a dead fiber.
+    M.master_sync_f = master_sync_f
+    if M.master_sync_fiber ~= nil and
+       M.master_sync_fiber:status() == 'dead' then
+        M.master_sync_fiber = nil
+    end
     if M.current_cfg then
         storage_cfg(M.current_cfg, M.this_replica.id or M.this_replica.uuid,
                     true)

@@ -146,12 +146,13 @@ local function config_new(templ)
 end
 
 --
--- Build new cluster by a given config.
+-- Build a new cluster by a given config and optional server config.
 --
-local function cluster_new(g, cfg)
+local function cluster_new(g, cfg, server_config)
     if not g.cluster then
         g.cluster = cluster:new({})
     end
+    server_config = server_config or {}
     local all_servers = {}
     local masters = {}
     local replicas = {}
@@ -201,10 +202,11 @@ local function cluster_new(g, cfg)
                 box_cfg.instance_name = replica_name
                 box_cfg.replicaset_name = replicaset_name
             end
-            local server = g.cluster:build_server({
-                alias = replica_name,
-                box_cfg = box_cfg,
-            }, 'storage.lua')
+            local instance_config = table.deepcopy(server_config)
+            instance_config.alias = replica_name
+            instance_config.box_cfg = box_cfg
+            local server = g.cluster:build_server(instance_config,
+                                                  'storage.lua')
             g[replica_name] = server
             -- VShard specific details to use in various helper functions.
             server.vtest = {
@@ -234,8 +236,11 @@ local function cluster_new(g, cfg)
             box.session.su('admin')
 
             local grant_range = cfg.test_user_grant_range
-            ivtest.clear_test_cfg_options(cfg)
-
+            if ivtest.clear_test_cfg_options ~= nil then
+                ivtest.clear_test_cfg_options(cfg)
+            else
+                cfg.test_user_grant_range = nil
+            end
             if cfg.schema_management_mode == 'manual_access' then
                 local vexports = require('vshard.storage.exports')
                 local username = 'storage'
@@ -264,7 +269,11 @@ local function cluster_new(g, cfg)
     for _, replica in pairs(replicas) do
         replica:wait_for_readiness()
         replica:exec(function(cfg)
-            ivtest.clear_test_cfg_options(cfg)
+            if ivtest.clear_test_cfg_options ~= nil then
+                ivtest.clear_test_cfg_options(cfg)
+            else
+                cfg.test_user_grant_range = nil
+            end
             ivshard.storage.cfg(cfg, _G.box_vstorage_id(cfg))
         end, {cfg})
     end
@@ -387,8 +396,12 @@ local function cluster_bootstrap(g, cfg)
     local replicaset_count = 0
     local master_info, err = cluster_exec_each(g, function(is_named)
         local info = box.info
+        local is_master = ivshard.storage.internal.is_master
+        if is_master == nil then
+            is_master = box.cfg.read_only == false
+        end
         return {
-            is_master = ivshard.storage.internal.is_master,
+            is_master = is_master,
             rs_id = is_named and info.replicaset.name or
                 ivutil.replicaset_uuid(info),
             id = is_named and info.name or info.uuid
@@ -447,7 +460,11 @@ local function cluster_bootstrap(g, cfg)
 end
 
 local function storage_cfg_impl(cfg)
-    ivtest.clear_test_cfg_options(cfg)
+    if ivtest.clear_test_cfg_options ~= nil then
+        ivtest.clear_test_cfg_options(cfg)
+    else
+        cfg.test_user_grant_range = nil
+    end
     return ivshard.storage.cfg(cfg, _G.box_vstorage_id(cfg))
 end
 
@@ -676,7 +693,11 @@ end
 local function storage_start(storage, cfg)
     storage:start()
     local _, err = storage:exec(function(cfg)
-        ivtest.clear_test_cfg_options(cfg)
+        if ivtest.clear_test_cfg_options ~= nil then
+            ivtest.clear_test_cfg_options(cfg)
+        else
+            cfg.test_user_grant_range = nil
+        end
         return ivshard.storage.cfg(cfg, _G.box_vstorage_id(cfg))
     end, {cfg})
     t.assert_equals(err, nil, 'storage cfg on start')
@@ -687,7 +708,11 @@ end
 --
 local function router_cfg(router, cfg)
     router:exec(function(cfg)
-        ivtest.clear_test_cfg_options(cfg)
+        if ivtest.clear_test_cfg_options ~= nil then
+            ivtest.clear_test_cfg_options(cfg)
+        else
+            cfg.test_user_grant_range = nil
+        end
         ivshard.router.cfg(cfg)
     end, {cfg})
 end

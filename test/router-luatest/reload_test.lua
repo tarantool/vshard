@@ -88,16 +88,6 @@ g.after_all(function()
     g.cluster:drop()
 end)
 
---
--- `vtest.router_cfg` cannot be used in this test, since
--- `ivtest.clear_test_cfg_options` may be nil on old versions.
---
-local function router_cfg(router, cfg)
-    router:exec(function(cfg)
-        ivshard.router.cfg(cfg)
-    end, {cfg})
-end
-
 local function router_assert_version_equals(router, version)
     router:exec(function(version)
         ilt.assert_equals(ivconst.VERSION, version)
@@ -124,7 +114,7 @@ local function create_router_at(hash)
             ['LUA_PATH'] = g.vshard_lua_path
         },
     })
-    router_cfg(router, global_cfg)
+    vtest.router_cfg(router, global_cfg)
     return router
 end
 
@@ -228,7 +218,7 @@ g.test_discovery = function(g)
 end
 
 local function test_master_search_template(g, router, auto_master_cfg)
-    router_cfg(router, auto_master_cfg)
+    vtest.router_cfg(router, auto_master_cfg)
 
     -- Working with first replicaset (2 instances)
     local rs_uuid = g.replica_1_a:replicaset_uuid()
