@@ -42,5 +42,5 @@ end
 
 return {
     exec = exec,
-    log_hashes = log_hashes
+    log_hashes = log_hashes,
 }
