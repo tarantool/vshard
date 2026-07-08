@@ -2,6 +2,7 @@
 -- Lua bridge for some of the git commands.
 --
 local os = require('os')
+local fio = require('fio')
 
 --
 -- Exec a git command.
@@ -40,7 +41,23 @@ local function log_hashes(params)
     return lines
 end
 
+local function vshard_lua_path(path)
+    return string.format('%s/?.lua;%s/?/init.lua;', path, path) ..
+           (os.getenv('LUA_PATH') or '')
+end
+
+local function vshard_copy_new(sourcedir, copy_path)
+    local copy_path_load = fio.dirname(copy_path)
+    assert(fio.mkdir(copy_path_load) == true)
+    assert(fio.mkdir(copy_path) == true)
+    assert(fio.mkdir(copy_path .. '/.git') == true)
+    assert(fio.copytree(sourcedir .. '/.git', copy_path .. '/.git') == true)
+    return vshard_lua_path(copy_path_load)
+end
+
 return {
     exec = exec,
-    log_hashes = log_hashes
+    log_hashes = log_hashes,
+    vshard_copy_new = vshard_copy_new,
+    vshard_lua_path = vshard_lua_path,
 }
