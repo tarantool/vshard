@@ -85,4 +85,6 @@ return {
 
     TIMEOUT_INFINITY = 500 * 365 * 86400,
     DEADLINE_INFINITY = math.huge,
+
+    STATIC_ROUTER_NAME = '_static_router',
 }
