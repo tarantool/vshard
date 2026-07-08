@@ -108,8 +108,6 @@ local ROUTER_TEMPLATE = {
         api_call_cache = nil,
 }
 
-local STATIC_ROUTER_NAME = '_static_router'
-
 -- Set a bucket to a replicaset.
 local function bucket_set(router, bucket_id, rs_id)
     local replicaset = router.replicasets[rs_id]
@@ -1796,10 +1794,10 @@ end
 -- static `vshard.router.cfg()` API.
 --
 local function legacy_cfg(cfg)
-    local router = M.routers[STATIC_ROUTER_NAME]
+    local router = M.routers[consts.STATIC_ROUTER_NAME]
     if not router then
         -- Create new static instance.
-        local router, err = router_new(STATIC_ROUTER_NAME, cfg)
+        local router, err = router_new(consts.STATIC_ROUTER_NAME, cfg)
         if router then
             M.static_router = router
             module_mt.__index.static = router
