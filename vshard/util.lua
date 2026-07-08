@@ -465,6 +465,13 @@ local feature = {
         return ok and res.replicaset ~= nil
     end)(),
     persistent_names = version_is_at_least(3, 0, 0, 'entrypoint', 0, 0),
+    recovery_point = (function()
+        -- box.backup is not accessible before box.cfg() on old versions.
+        local ok1, ok2 = pcall(function()
+            return box.backup.recovery_point ~= nil
+        end)
+        return ok1 and ok2
+    end)(),
 }
 
 local schema_version = function()

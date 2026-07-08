@@ -1171,6 +1171,27 @@ local function router_map_callrw(router, func, args, opts)
 end
 
 --
+-- Create a cluster-consistent recovery point on every master via map_callrw.
+--
+-- @param label Point identifier passed to the storages.
+-- @param opts Options forwarded to map_callrw (timeout, ...).
+-- @retval On success - a map {[replicaset_id] = {point}}.
+-- @retval On error - nil and an error object
+--
+local function router_create_cluster_recovery_point(router, label, opts)
+    if type(label) ~= 'string' then
+        error('Usage: router.create_cluster_recovery_point(label, opts)')
+    end
+    local res, err, rs_id = router_map_callrw(router, 'vshard.storage._call',
+        {'create_replicaset_recovery_point', label}, opts)
+    if err ~= nil then
+        err.replicaset = rs_id
+        return nil, err
+    end
+    return res
+end
+
+--
 -- Get replicaset object by bucket identifier.
 -- @param bucket_id Bucket identifier.
 -- @retval Netbox connection.
@@ -1730,6 +1751,8 @@ local router_mt = {
         discovery_wakeup = router_make_api(discovery_wakeup),
         master_search_wakeup = router_make_api(master_search_wakeup),
         discovery_set = router_make_api(discovery_set),
+        create_cluster_recovery_point =
+            router_make_api(router_create_cluster_recovery_point),
         _route_map_clear = router_make_api(route_map_clear),
         _bucket_reset = router_make_api(bucket_reset),
         _buckets_group = router_make_api(buckets_group),

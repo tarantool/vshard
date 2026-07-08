@@ -3682,6 +3682,18 @@ local function storage_service_info(opts)
     return info
 end
 
+--
+-- Create a recovery point on this master. Called via the vshard-router recovery
+-- point backend (map_callrw) so the point is created on every master with no
+-- rebalancing in progress.
+--
+local function create_replicaset_recovery_point(label)
+    if not util.feature.recovery_point then
+        box.error(box.error.UNSUPPORTED, 'vshard', 'recovery point creation')
+    end
+    return box.backup.recovery_point.create({label = label})
+end
+
 local service_call_api
 
 local function service_call_test_api(...)
@@ -3701,6 +3713,7 @@ service_call_api = setmetatable({
     storage_unref = storage_unref,
     storage_map = storage_map,
     storage_bucket_checkpoint = storage_bucket_checkpoint,
+    create_replicaset_recovery_point = create_replicaset_recovery_point,
     info = storage_service_info,
     test_api = service_call_test_api,
 }, {__serialize = function(api)

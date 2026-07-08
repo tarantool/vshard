@@ -22,5 +22,10 @@ set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -Wextra")
 
 # Build module
 add_subdirectory(vshard)
+# Install the roles directory, so the core config roles can require() them
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/roles
+  DESTINATION ${TARANTOOL_INSTALL_LUADIR}
+)
 # Enable tests
 add_subdirectory(test)
