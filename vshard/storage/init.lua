@@ -204,6 +204,10 @@ if not M then
         gc_service = nil,
         -- How many times the GC fiber performed the garbage collection.
         bucket_gc_count = 0,
+        -- Maximum number of tuples deleted in a single bucket GC transaction.
+        bucket_gc_batch_size = consts.DEFAULT_BUCKET_GC_BATCH_SIZE,
+        -- Delay between bucket GC transactions which delete data.
+        bucket_gc_batch_delay = consts.DEFAULT_BUCKET_GC_BATCH_DELAY,
 
         -------------------- Bucket recovery ---------------------
         recovery_fiber = nil,
@@ -2350,7 +2354,7 @@ end
 -- @param bucket_id Id of the bucket to cleanup.
 -- @param status Bucket status for guard checks.
 --
-local function gc_bucket_in_space_xc(space, bucket_id, status)
+local function gc_bucket_in_space_xc(space, bucket_id, status, pacing)
     local bucket_index = space.index[lschema.shard_index]
     if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
         return
@@ -2358,7 +2362,22 @@ local function gc_bucket_in_space_xc(space, bucket_id, status)
     local bucket_generation = M.bucket_generation
     local pk_parts = space.index[0].parts
 ::restart::
-    local limit = consts.BUCKET_CHUNK_SIZE
+    if pacing.needs_delay then
+        local delay = M.bucket_gc_batch_delay
+        if delay > 0 then
+            -- Avoid a trailing delay when the preceding batch deleted the last
+            -- tuple. Keep the old fast path unchanged when pacing is disabled.
+            if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
+                return
+            end
+            lfiber.sleep(delay)
+        end
+        pacing.needs_delay = false
+        bucket_generation =
+            bucket_guard_xc(bucket_generation, bucket_id, status)
+    end
+    local limit = M.bucket_gc_batch_size
+    local initial_limit = limit
     box.begin()
     M._on_bucket_event:run(consts.BUCKET_EVENT.GC, bucket_id,
                            {spaces = {space.name}})
@@ -2367,19 +2386,20 @@ local function gc_bucket_in_space_xc(space, bucket_id, status)
         limit = limit - 1
         if limit == 0 then
             box.commit()
-            bucket_generation =
-                bucket_guard_xc(bucket_generation, bucket_id, status)
+            pacing.needs_delay = true
             goto restart
         end
     end
     box.commit()
+    pacing.needs_delay = limit < initial_limit
 end
 
 --
 -- Exception safe version of gc_bucket_in_space_xc.
 --
-local function gc_bucket_in_space(space, bucket_id, status)
-    local ok, err = pcall(gc_bucket_in_space_xc, space, bucket_id, status)
+local function gc_bucket_in_space(space, bucket_id, status, pacing)
+    local ok, err = pcall(gc_bucket_in_space_xc, space, bucket_id, status,
+                          pacing)
     if not ok then
         box.rollback()
     end
@@ -2395,6 +2415,10 @@ local function gc_bucket_drop_xc(status, route_map)
     local limit = consts.BUCKET_CHUNK_SIZE
     local _bucket = box.space._bucket
     local sharded_spaces = lschema.find_sharded_spaces()
+    -- Share the pacing state so the delay applies between any two non-empty
+    -- data deletion transactions, including transactions for different spaces
+    -- or buckets.
+    local pacing = {needs_delay = false}
     for _, b in _bucket.index.status:pairs(status) do
         local id = b.id
         local ref = M.bucket_refs[id]
@@ -2406,7 +2430,7 @@ local function gc_bucket_drop_xc(status, route_map)
             end
         end
         for _, space in pairs(sharded_spaces) do
-            gc_bucket_in_space_xc(space, id, status)
+            gc_bucket_in_space_xc(space, id, status, pacing)
             limit = limit - 1
             if limit == 0 then
                 lfiber.sleep(0)
@@ -2725,8 +2749,10 @@ local function bucket_delete_garbage(bucket_id, opts)
               'ignore this attention')
     end
     local sharded_spaces = lschema.find_sharded_spaces()
+    local pacing = {needs_delay = false}
     for _, space in pairs(sharded_spaces) do
-        local status, err = gc_bucket_in_space(space, bucket_id, bucket_status)
+        local status, err = gc_bucket_in_space(space, bucket_id, bucket_status,
+                                               pacing)
         if not status then
             error(err)
         end
@@ -4195,6 +4221,8 @@ local function storage_cfg_xc(cfgctx)
     M.rebalancer_receiving_quota = new_cfg.rebalancer_max_receiving
     M.rebalancer_worker_count = new_cfg.rebalancer_max_sending
     M.rebalancer_bucket_send_timeout = new_cfg.rebalancer_bucket_send_timeout
+    M.bucket_gc_batch_size = new_cfg.bucket_gc_batch_size
+    M.bucket_gc_batch_delay = new_cfg.bucket_gc_batch_delay
     M.sync_timeout = new_cfg.sync_timeout
     M.current_cfg = new_cfg
     storage_cfg_master_commit(cfgctx)
