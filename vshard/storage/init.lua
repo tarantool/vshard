@@ -2351,20 +2351,26 @@ end
 --
 local function gc_bucket_in_space_xc(space, bucket_id, status)
     local bucket_index = space.index[lschema.shard_index]
-    if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
+    local first = bucket_index:select({bucket_id}, {limit = 1})[1]
+    if first == nil then
         return
     end
     local bucket_generation = M.bucket_generation
     local pk_parts = space.index[0].parts
+    local use_cursor = util.index_can_paginate(bucket_index, first)
+    local after
 ::restart::
     local limit = consts.BUCKET_CHUNK_SIZE
     box.begin()
     M._on_bucket_event:run(consts.BUCKET_EVENT.GC, bucket_id,
                            {spaces = {space.name}})
-    for _, tuple in bucket_index:pairs({bucket_id}) do
+    for _, tuple in bucket_index:pairs({bucket_id}, {after = after}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
         limit = limit - 1
         if limit == 0 then
+            if use_cursor then
+                after = bucket_index:tuple_pos(tuple)
+            end
             box.commit()
             bucket_generation =
                 bucket_guard_xc(bucket_generation, bucket_id, status)
