@@ -441,12 +441,11 @@ end
 local function bucket_are_all_rw_not_cache()
     local index_has = util.index_has
     local status_index = box.space._bucket.index.status
-    local status = consts.BUCKET
-    local res = not index_has(status_index, status.SENDING) and
-       not index_has(status_index, status.SENT) and
-       not index_has(status_index, status.RECEIVING) and
-       not index_has(status_index, status.GARBAGE) and
-       not index_has(status_index, status.READONLY)
+    local res = not index_has(status_index, BSENDING) and
+       not index_has(status_index, BSENT) and
+       not index_has(status_index, BRECEIVING) and
+       not index_has(status_index, BGARBAGE) and
+       not index_has(status_index, BREADONLY)
 
     M.bucket_are_all_rw_cache = res
     bucket_are_all_rw = bucket_are_all_rw_cache
@@ -3493,6 +3492,27 @@ local function storage_call(bucket_id, mode, name, args)
     return ok, ret1, ret2, ret3
 end
 
+local function storage_ref_check_existing(rid, bucket_ids)
+    local ok, err = lref.check(rid, box.session.id())
+    if not ok then
+        return nil, err
+    end
+    bucket_ids = bucket_ids or {}
+    local res = {}
+    local limit = consts.BUCKET_CHUNK_SIZE + 1
+    for i, bucket_id in pairs(bucket_ids) do
+        local bucket = M.bucket_refs[bucket_id] or
+                       box.space._bucket:get{bucket_id}
+        if bucket then
+            table.insert(res, bucket_id)
+        end
+        if i % limit == 0 then
+            fiber_yield()
+        end
+    end
+    return res
+end
+
 --
 -- Bind a new storage ref to the current box session. Is used as a part of
 -- Map-Reduce API.
@@ -3510,7 +3530,6 @@ end
 -- under any circumstances.
 --
 local function bucket_get_moved(bucket_ids)
-    local allstatus = consts.BUCKET
     local res = {}
     for _, bucket_id in pairs(bucket_ids) do
         local bucket = box.space._bucket:get{bucket_id}
@@ -3519,7 +3538,7 @@ local function bucket_get_moved(bucket_ids)
             is_moved = true
         else
             local status = bucket.status
-            is_moved = status == allstatus.GARBAGE or status == allstatus.SENT
+            is_moved = status == BGARBAGE or status == BSENT
         end
         if is_moved then
             table.insert(res, {
@@ -3553,28 +3572,29 @@ end
 --         are absent, the reference is not created and a nil reference id
 --         with the list of absent buckets is returned.
 --
-local function storage_ref_make_with_buckets(rid, timeout, bucket_ids)
+local function storage_ref_make_with_buckets(rid, timeout, bucket_ids, opts)
+    local force = opts and opts.force
     local moved = bucket_get_moved(bucket_ids)
-    if #moved == #bucket_ids then
+    if not force and #moved == #bucket_ids then
         -- If all the passed buckets are absent, there is no need to create a
         -- ref.
-        return {moved = moved}
+        return {moved = moved, total = bucket_count()}
     end
     local bucket_generation = M.bucket_generation
-    local ok, err = storage_ref(rid, timeout)
-    if not ok then
+    local bucket_count, err = storage_ref(rid, timeout)
+    if not bucket_count then
         return nil, err
     end
     if M.bucket_generation ~= bucket_generation then
         -- Need to redo it. Otherwise there is a risk that some buckets were
         -- moved while waiting for the ref.
         moved = bucket_get_moved(bucket_ids)
-        if #moved == #bucket_ids then
+        if not force and #moved == #bucket_ids then
             storage_unref(rid)
-            return {moved = moved}
+            return {moved = moved, total = bucket_count}
         end
     end
-    return {is_done = true, moved = moved}
+    return {is_done = true, moved = moved, total = bucket_count}
 end
 
 --
@@ -3708,6 +3728,7 @@ service_call_api = setmetatable({
     rebalancer_request_state = rebalancer_request_state,
     recovery_bucket_stat = recovery_bucket_stat,
     storage_ref = storage_ref,
+    storage_ref_check_existing = storage_ref_check_existing,
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
