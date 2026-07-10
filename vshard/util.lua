@@ -438,6 +438,7 @@ end
 local feature = {
     msgpack_object = lmsgpack.object ~= nil,
     netbox_return_raw = version_is_at_least(2, 10, 0, 'beta', 2, 86),
+    index_pagination = version_is_at_least(2, 11, 0, nil, 0, 0),
     multilisten = luri.parse_many ~= nil,
     -- It appeared earlier but at 2.9.0 there is a strange bug about an immortal
     -- tuple - after :delete(pk) it still stays in the space. That makes the
@@ -473,6 +474,19 @@ local feature = {
         return ok1 and ok2
     end)(),
 }
+
+--
+-- Check whether an index supports pagination using a tuple position. Pagination
+-- is a TREE index feature, but functional and multikey TREE indexes reject
+-- tuple positions. Probe the index so callers can safely fall back.
+--
+local function index_can_paginate(index, tuple)
+    if not feature.index_pagination or index.type ~= 'TREE' then
+        return false
+    end
+    local ok = pcall(index.tuple_pos, index, tuple)
+    return ok
+end
 
 local schema_version = function()
     return box.info.schema_version
@@ -587,6 +601,7 @@ return {
     fiber_is_self_canceled = fiber_is_self_canceled,
     index_min = index_min,
     index_has = index_has,
+    index_can_paginate = index_can_paginate,
     feature = feature,
     schema_version = schema_version,
     replicaset_uuid = replicaset_uuid,
