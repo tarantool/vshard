@@ -1074,3 +1074,159 @@ test_group.test_route_map_is_cleared = function(g)
     vtest.cluster_wait_vclock_all(g)
     g.replica_1_b:exec(bucket_set_protection, {true})
 end
+
+--
+-- gh-661: bucket GC resumes after the last tuple deleted by the preceding
+-- transaction on Tarantool versions with index pagination. Older versions and
+-- indexes that do not support positions keep restarting from the bucket prefix.
+--
+local function test_resumable_cursor_template(g, expected_resumes)
+    g.replica_1_a:exec(function(expected_resumes)
+        _G.bucket_gc_pause()
+        local s = box.space.test
+        local bucket_index = s.index.bucket_id
+        local bid = _G.get_first_bucket()
+        local old_chunk_size = ivconst.BUCKET_CHUNK_SIZE
+        local old_pairs = bucket_index.pairs
+        local chunk_size = 10
+        local tuple_count = chunk_size * 2 + 5
+
+        -- Two full chunks and a non-empty tail make GC open three iterators.
+        -- Record whether each one resumed from a position (1) or restarted at
+        -- the bucket prefix (0). The first iterator always starts at the
+        -- prefix. The next two resume only on cores with index pagination.
+        -- 'after' is opaque, so its presence is the observable signal.
+        local resumes = {}
+        bucket_index.pairs = function(self, key, opts)
+            local after = opts and opts.after
+            table.insert(resumes, after ~= nil and 1 or 0)
+            if opts == nil then
+                return old_pairs(self, key)
+            end
+            return old_pairs(self, key, opts)
+        end
+
+        local ok, err = pcall(function()
+            ivconst.BUCKET_CHUNK_SIZE = chunk_size
+            box.begin()
+            for i = 1, tuple_count do
+                s:replace{100000 + i, bid}
+            end
+            box.commit()
+            ivshard.storage.bucket_delete_garbage(bid, {force = true})
+            ilt.assert_equals(bucket_index:count({bid}), 0)
+            ilt.assert_equals(resumes, expected_resumes)
+        end)
+
+        bucket_index.pairs = old_pairs
+        ivconst.BUCKET_CHUNK_SIZE = old_chunk_size
+        _G.bucket_gc_continue()
+        ilt.assert(ok, err)
+    end, {expected_resumes})
+    vtest.cluster_wait_vclock_all(g)
+end
+
+--
+-- gh-661: pagination-capable cores resume the second and third iterators after
+-- the preceding chunk instead of restarting at the bucket prefix.
+--
+test_group.test_resumable_cursor_supported = function(g)
+    t.run_only_if(vutil.feature.index_pagination)
+    test_resumable_cursor_template(g, {0, 1, 1})
+end
+
+--
+-- gh-661: without index pagination (Tarantool < 2.11) every iterator restarts
+-- at the bucket prefix.
+--
+test_group.test_resumable_cursor_unsupported = function(g)
+    t.run_only_if(not vutil.feature.index_pagination)
+    test_resumable_cursor_template(g, {0, 0, 0})
+end
+
+--
+-- gh-661: functional and multikey sharding indexes report type == 'TREE' and
+-- pass find_sharded_spaces(), but reject positions with "does not support
+-- position by tuple"; hash indexes are not TREE at all. GC must fall back to
+-- restarting from the bucket prefix for them and still delete the bucket.
+--
+test_group.test_resumable_cursor_unsupported_index = function(g)
+    t.run_only_if(vutil.feature.index_pagination)
+    g.replica_1_a:exec(function()
+        _G.bucket_gc_pause()
+        local bid = _G.get_first_bucket()
+        local spaces = {}
+        local func_name = 'test_extract_bucket'
+        local old_chunk_size = ivconst.BUCKET_CHUNK_SIZE
+
+        -- Each case fills exactly one chunk, so GC has to open a second
+        -- iterator after committing the delete. Cleanup succeeds only if an
+        -- index which cannot derive a position from a tuple falls back to
+        -- restarting at the bucket prefix.
+        local function run(name, space_opts, index_opts, tuple)
+            local space = box.schema.create_space(name, space_opts)
+            table.insert(spaces, space)
+            space:create_index('pk')
+            space:create_index('bucket_id', index_opts)
+            space:replace(tuple)
+            ivshard.storage.bucket_delete_garbage(bid, {force = true})
+            ilt.assert_equals(space:count(), 0)
+            space:drop()
+            spaces[#spaces] = nil
+        end
+
+        local ok, err = pcall(function()
+            ivconst.BUCKET_CHUNK_SIZE = 1
+
+            run('test_hash', {
+                engine = 'memtx',
+                format = {{'id', 'unsigned'}, {'bid', 'unsigned'}},
+            }, {
+                type = 'hash', unique = true, parts = {2},
+            }, {300000, bid})
+
+            run('test_multikey', {
+                engine = 'vinyl',
+                format = {
+                    {'id', 'unsigned'},
+                    {'bid', 'unsigned'},
+                    {'tags', 'array'},
+                },
+            }, {
+                unique = false,
+                parts = {
+                    {field = 2, type = 'unsigned'},
+                    {field = 3, type = 'string', path = '[*]'},
+                },
+            }, {300001, bid, {'tag'}})
+
+            -- Memtx MVCC does not support functional indexes.
+            if not box.cfg.memtx_use_mvcc_engine then
+                box.schema.func.create(func_name, {
+                    body = [[function(tuple) return {tuple[2]} end]],
+                    is_deterministic = true,
+                    is_sandboxed = true,
+                })
+                run('test_functional', {
+                    engine = 'memtx',
+                    format = {{'id', 'unsigned'}, {'bid', 'unsigned'}},
+                }, {
+                    unique = false,
+                    func = func_name,
+                    parts = {{field = 1, type = 'unsigned'}},
+                }, {300002, bid})
+            end
+        end)
+
+        ivconst.BUCKET_CHUNK_SIZE = old_chunk_size
+        for _, space in ipairs(spaces) do
+            space:drop()
+        end
+        if box.func[func_name] ~= nil then
+            box.schema.func.drop(func_name)
+        end
+        _G.bucket_gc_continue()
+        ilt.assert(ok, err)
+    end)
+    vtest.cluster_wait_vclock_all(g)
+end

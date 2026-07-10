@@ -438,6 +438,7 @@ end
 local feature = {
     msgpack_object = lmsgpack.object ~= nil,
     netbox_return_raw = version_is_at_least(2, 10, 0, 'beta', 2, 86),
+    index_pagination = version_is_at_least(2, 11, 0, nil, 0, 0),
     multilisten = luri.parse_many ~= nil,
     -- It appeared earlier but at 2.9.0 there is a strange bug about an immortal
     -- tuple - after :delete(pk) it still stays in the space. That makes the

@@ -2351,20 +2351,36 @@ end
 --
 local function gc_bucket_in_space_xc(space, bucket_id, status)
     local bucket_index = space.index[lschema.shard_index]
-    if #bucket_index:select({bucket_id}, {limit = 1}) == 0 then
+    local first = bucket_index:select({bucket_id}, {limit = 1})[1]
+    if first == nil then
         return
     end
     local bucket_generation = M.bucket_generation
     local pk_parts = space.index[0].parts
+    -- A new iterator started at the bucket prefix has to walk past the
+    -- tombstones left by all preceding batches, which is expensive on Vinyl.
+    -- Resume from the position of the last committed tuple instead. The tuple
+    -- is deleted, but its position stays valid once the tuple is gone.
+    -- Pagination is a TREE-index feature, but functional and multikey TREE
+    -- indexes still reject positions with "does not support position by tuple"
+    -- even though find_sharded_spaces() accepts them. Probe the index once and
+    -- fall back to restarting from the bucket prefix when it is unsupported.
+    local use_cursor = util.feature.index_pagination and
+                       bucket_index.type == 'TREE' and
+                       pcall(bucket_index.tuple_pos, bucket_index, first)
+    local after
 ::restart::
     local limit = consts.BUCKET_CHUNK_SIZE
     box.begin()
     M._on_bucket_event:run(consts.BUCKET_EVENT.GC, bucket_id,
                            {spaces = {space.name}})
-    for _, tuple in bucket_index:pairs({bucket_id}) do
+    for _, tuple in bucket_index:pairs({bucket_id}, {after = after}) do
         space:delete(util.tuple_extract_key(tuple, pk_parts))
         limit = limit - 1
         if limit == 0 then
+            if use_cursor then
+                after = bucket_index:tuple_pos(tuple)
+            end
             box.commit()
             bucket_generation =
                 bucket_guard_xc(bucket_generation, bucket_id, status)
