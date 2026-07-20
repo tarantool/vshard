@@ -10,7 +10,7 @@ on:
   workflow_call:
     inputs:
       artifact_name:
-        description: The name of the tarantool build artifact
+        description: The name of the vshard rock artifact
         required: true
         type: string
       tarantool_version:
