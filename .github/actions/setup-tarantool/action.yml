@@ -1,0 +1,68 @@
+name: Setup Tarantool
+description: Install or build Tarantool
+
+inputs:
+  tarantool_version:
+    description: Tarantool version or release-<branch>
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install tarantool ${{ inputs.tarantool_version }}
+      if: startsWith(inputs.tarantool_version, 'release') != true
+      uses: tarantool/setup-tarantool@v3
+      with:
+        tarantool-version: ${{ inputs.tarantool_version }}
+
+    - name: Create variables for Tarantool ${{ inputs.tarantool_version }}
+      if: startsWith(inputs.tarantool_version, 'release')
+      run: |
+        branch=$(echo ${{ inputs.tarantool_version }} | cut -d- -f2)
+        commit_hash=$(git ls-remote \
+          https://github.com/tarantool/tarantool.git \
+          --branch ${branch} | head -c 8)
+        echo "TNT_BRANCH=${branch}" >> $GITHUB_ENV
+        echo "VERSION_POSTFIX=-${commit_hash}" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Cache tarantool build
+      if: startsWith(inputs.tarantool_version, 'release')
+      id: cache-tnt-release
+      uses: actions/cache@v3
+      with:
+        path: /home/runner/tnt-release
+        key: cache-tnt-${{ inputs.tarantool_version }}${{ env.VERSION_POSTFIX }}
+
+    - name: Clone tarantool ${{ inputs.tarantool_version }}
+      if: |
+        startsWith(inputs.tarantool_version, 'release') &&
+        steps.cache-tnt-release.outputs.cache-hit != 'true'
+      uses: actions/checkout@v3
+      with:
+        repository: tarantool/tarantool
+        ref: ${{ env.TNT_BRANCH }}
+        path: tarantool
+        fetch-depth: 0
+        submodules: true
+
+    - name: Build tarantool ${{ inputs.tarantool_version }}
+      if: |
+        startsWith(inputs.tarantool_version, 'release') &&
+        steps.cache-tnt-release.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get -y install \
+          build-essential cmake make zlib1g-dev libreadline-dev \
+          libncurses5-dev libssl-dev libunwind-dev libicu-dev python3 \
+          python3-yaml python3-six python3-gevent
+        cd ${GITHUB_WORKSPACE}/tarantool
+        mkdir build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_DIST=ON
+        make && make DESTDIR=/home/runner/tnt-release install
+      shell: bash
+
+    - name: Install tarantool ${{ inputs.tarantool_version }}
+      if: startsWith(inputs.tarantool_version, 'release')
+      # Workaround as actions/cache cannot restore data to /usr/local
+      run: sudo cp -rvP /home/runner/tnt-release/usr/local/* /usr/local/
+      shell: bash
