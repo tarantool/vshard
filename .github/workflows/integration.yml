@@ -49,3 +49,10 @@ jobs:
     with:
       artifact_name: vshard-${{ needs.vshard.outputs.sha }}
       tarantool_version: '2.11'
+
+  tarantool:
+    needs: vshard
+    uses: ./.github/workflows/tarantool_integration.yml
+    with:
+      artifact_name: vshard-${{ needs.vshard.outputs.sha }}
+      tarantool_version: 'release-master'

@@ -1,0 +1,91 @@
+name: tarantool_integration
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: The name of the vshard rock artifact
+        required: true
+        type: string
+      tarantool_version:
+        description: Version for the Tarantool binary
+        required: false
+        default: 'release-master'
+        type: string
+
+jobs:
+  run_tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    env:
+      # Mirroring tarantool's own CI.
+      VARDIR: /tmp/t
+      TEST_RUN_RETRIES: 3
+      SERVER_START_TIMEOUT: 290
+      REPLICATION_SYNC_TIMEOUT: 300
+      TEST_TIMEOUT: 310
+      NO_OUTPUT_TIMEOUT: 320
+
+    steps:
+      - name: Check out vshard
+        uses: actions/checkout@v4
+
+      - name: Resolve Tarantool branch
+        id: tnt
+        run: echo "branch=${TNT_VERSION#release-}" >> "$GITHUB_OUTPUT"
+        env:
+          TNT_VERSION: ${{ inputs.tarantool_version }}
+
+      # test-run.py runs Tarantool's own config-luatest suite, so the sources
+      # must be present. setup-tarantool only clones them on a build-cache
+      # miss, so check them out here to have them available in every case.
+      - name: Check out Tarantool sources
+        uses: actions/checkout@v4
+        with:
+          repository: tarantool/tarantool
+          ref: ${{ steps.tnt.outputs.branch }}
+          path: tarantool
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Tarantool ${{ inputs.tarantool_version }}
+        uses: ./.github/actions/setup-tarantool
+        with:
+          tarantool_version: ${{ inputs.tarantool_version }}
+
+      - name: Install test requirements
+        run: pip3 install --user -r tarantool/test-run/requirements.txt
+
+      - name: Download the vshard build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+
+      - name: Setup tt
+        run: |
+          curl -L https://tarantool.io/release/2/installer.sh | sudo bash
+          sudo apt install -y tt
+          tt version
+
+      - name: Install vshard
+        working-directory: tarantool
+        run: sudo tt rocks --tree /usr/local install ../vshard*.all.rock
+
+      # Only config tests can depend on vshard.
+      - name: Run config-luatest tests
+        run: |
+          cd tarantool/test
+          ./test-run.py \
+            --force \
+            --verbose \
+            --executable "$(command -v tarantool)" \
+            config-luatest/
+
+      - name: Upload Tarantool test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarantool-vshard-integration-artifacts
+          if-no-files-found: warn
+          path: /tmp/t
