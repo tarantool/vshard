@@ -35,8 +35,6 @@ g.before_all(function()
 
     -- The test works in the following directory
     local vardir = vtest.vardir or fio.tempdir()
-    g.vshard_copy_path_load =  vardir .. '/vshard_copy'
-    t.assert_equals(fio.mkdir(g.vshard_copy_path_load), true)
     --
     -- Tarantool searches for compilation units in the following order:
     --   1. preload --> override --> builtin
@@ -53,12 +51,9 @@ g.before_all(function()
     -- So we can use package.setsearchroot() to change cwd, luatest's `chdir`
     -- or override. The last one is used here, since it's the easiest.
     --
-    g.vshard_copy_path =  vardir .. '/vshard_copy/override'
-    t.assert_equals(fio.mkdir(g.vshard_copy_path), true)
-    -- Copy source to the temporary directory
-    t.assert_equals(fio.mkdir(g.vshard_copy_path .. '/.git'), true)
-    t.assert_equals(fio.copytree(vtest.sourcedir .. '/.git',
-        g.vshard_copy_path .. '/.git'), true)
+    g.vshard_copy_path = vardir .. '/vshard_copy/override'
+    g.vshard_lua_path = git_util.vshard_copy_new(vtest.sourcedir,
+                                                 g.vshard_copy_path)
 
     -- Hash of the latest commit for testing router on the latest version.
     g.latest_hash = git_util.log_hashes({args = '-1', dir = vtest.sourcedir})[1]
@@ -93,16 +88,6 @@ g.after_all(function()
     g.cluster:drop()
 end)
 
---
--- `vtest.router_cfg` cannot be used in this test, since
--- `ivtest.clear_test_cfg_options` may be nil on old versions.
---
-local function router_cfg(router, cfg)
-    router:exec(function(cfg)
-        ivshard.router.cfg(cfg)
-    end, {cfg})
-end
-
 local function router_assert_version_equals(router, version)
     router:exec(function(version)
         ilt.assert_equals(ivconst.VERSION, version)
@@ -123,15 +108,13 @@ end
 --
 local function create_router_at(hash)
     git_util.exec('checkout', {args = hash .. ' -f', dir = g.vshard_copy_path})
-    local path = g.vshard_copy_path_load
-    local lua_path = string.format("%s/?.lua;%s/?/init.lua;", path, path)
     local router = vtest.router_new(g, 'router', nil, {
         env = {
             -- Force 'require' to use new directory
-            ['LUA_PATH'] = lua_path .. os.getenv('LUA_PATH')
+            ['LUA_PATH'] = g.vshard_lua_path
         },
     })
-    router_cfg(router, global_cfg)
+    vtest.router_cfg(router, global_cfg)
     return router
 end
 
@@ -235,7 +218,7 @@ g.test_discovery = function(g)
 end
 
 local function test_master_search_template(g, router, auto_master_cfg)
-    router_cfg(router, auto_master_cfg)
+    vtest.router_cfg(router, auto_master_cfg)
 
     -- Working with first replicaset (2 instances)
     local rs_uuid = g.replica_1_a:replicaset_uuid()
