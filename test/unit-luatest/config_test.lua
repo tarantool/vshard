@@ -1,5 +1,6 @@
 local t = require('luatest')
 local vcfg = require('vshard.cfg')
+local vconsts = require('vshard.consts')
 local vutil = require('vshard.util')
 local luuid = require('uuid')
 
@@ -391,4 +392,43 @@ g.test_identification_mode_uuid_as_key = function()
     t.assert_error_msg_content_equals(
         'uuid option can be specified only when ' ..
         'identification_mode = "name_as_key"', vcfg.check, config)
+end
+
+g.test_bucket_gc_pacing = function()
+    local config = {
+        sharding = {
+            storage_1_uuid = {
+                replicas = {},
+            },
+        },
+    }
+    local checked = vcfg.check(config)
+    t.assert_equals(checked.bucket_gc_batch_size,
+                    vconsts.DEFAULT_BUCKET_GC_BATCH_SIZE)
+    t.assert_equals(checked.bucket_gc_batch_delay,
+                    vconsts.DEFAULT_BUCKET_GC_BATCH_DELAY)
+
+    config.bucket_gc_batch_size = 100
+    config.bucket_gc_batch_delay = 0.01
+    checked = vcfg.check(config)
+    t.assert_equals(checked.bucket_gc_batch_size, 100)
+    t.assert_equals(checked.bucket_gc_batch_delay, 0.01)
+
+    config.bucket_gc_batch_size = 0
+    t.assert_error_msg_content_equals(
+        'Bucket GC batch size must be positive integer', vcfg.check, config)
+    config.bucket_gc_batch_size = 1.5
+    t.assert_error_msg_content_equals(
+        'Bucket GC batch size must be positive integer', vcfg.check, config)
+    config.bucket_gc_batch_size = '100'
+    t.assert_error_msg_content_equals(
+        'Bucket GC batch size must be positive integer', vcfg.check, config)
+    config.bucket_gc_batch_size = 100
+
+    config.bucket_gc_batch_delay = -0.01
+    t.assert_error_msg_content_equals(
+        'Bucket GC batch delay must be non-negative number', vcfg.check, config)
+    config.bucket_gc_batch_delay = '0.01'
+    t.assert_error_msg_content_equals(
+        'Bucket GC batch delay must be non-negative number', vcfg.check, config)
 end
