@@ -427,6 +427,14 @@ local cfg_template = {
         default = 'auto',
         enum = {'auto', 'manual', 'off'},
     },
+    bucket_gc_batch_size = {
+        type = 'positive integer', name = 'Bucket GC batch size',
+        is_optional = true, default = consts.DEFAULT_BUCKET_GC_BATCH_SIZE,
+    },
+    bucket_gc_batch_delay = {
+        type = 'non-negative number', name = 'Bucket GC batch delay',
+        is_optional = true, default = consts.DEFAULT_BUCKET_GC_BATCH_DELAY,
+    },
     collect_bucket_garbage_interval = {
         name = 'Garbage bucket collect interval', is_deprecated = true,
         reason = 'Has no effect anymore'

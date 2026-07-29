@@ -160,6 +160,177 @@ test_group.test_basic = function(g)
     end)
 end
 
+--
+-- Bucket GC can limit transaction size and pause between delete batches.
+--
+test_group.test_pacing = function(g)
+    local batch_size = 10
+    local batch_delay = 0.5
+    local cfg = table.deepcopy(global_cfg)
+    cfg.bucket_gc_batch_size = batch_size
+    cfg.bucket_gc_batch_delay = batch_delay
+    vtest.cluster_cfg(g, cfg)
+
+    g.replica_1_a:exec(function(batch_size, batch_delay)
+        local s = box.space.test
+        local bid = _G.get_first_bucket()
+        ilt.assert_not_equals(bid, nil, 'get any bucket')
+
+        local tuple_count = batch_size * 2
+        box.begin()
+        for i = 1, tuple_count do
+            s:replace{i, bid}
+        end
+        box.commit()
+
+        local gc = ifiber.new(function()
+            ivshard.storage.bucket_delete_garbage(bid, {force = true})
+        end)
+        gc:set_joinable(true)
+
+        local bucket_index = s.index.bucket_id
+        local expected_count = tuple_count - batch_size
+        local deadline = ifiber.clock() + batch_delay * 3 + 1
+        while bucket_index:count({bid}) == tuple_count and
+              ifiber.clock() < deadline do
+            ifiber.sleep(0.01)
+        end
+        ilt.assert_equals(bucket_index:count({bid}), expected_count,
+                          'first GC batch is committed')
+        ifiber.sleep(batch_delay / 2)
+        ilt.assert_equals(bucket_index:count({bid}), expected_count,
+                          'GC waits before the next batch')
+
+        local ok, err = gc:join()
+        ilt.assert(ok, err)
+        ilt.assert_equals(bucket_index:count({bid}), 0,
+                          'all bucket data is deleted')
+    end, {batch_size, batch_delay})
+
+    vtest.cluster_wait_vclock_all(g)
+    vtest.cluster_cfg(g, global_cfg)
+end
+
+--
+-- Automatic bucket GC uses one pacing state across buckets.
+--
+test_group.test_pacing_automatic_gc = function(g)
+    local batch_size = 10
+    local batch_delay = 0.5
+    local cfg = table.deepcopy(global_cfg)
+    cfg.bucket_gc_batch_size = batch_size
+    cfg.bucket_gc_batch_delay = batch_delay
+    vtest.cluster_cfg(g, cfg)
+    g.replica_1_b:exec(bucket_set_protection, {false})
+
+    g.replica_1_a:exec(function(batch_size, batch_delay)
+        _G.bucket_gc_pause()
+        local s = box.space.test
+        local _bucket = box.space._bucket
+        local active = _bucket.index.status:select({ivconst.BUCKET.ACTIVE},
+                                                   {limit = 2})
+        ilt.assert_equals(#active, 2, 'get two active buckets')
+        local bids = {active[1].id, active[2].id}
+        local tuple_counts = {batch_size + 1, 1}
+        local id = 100000
+        box.begin()
+        for i, bid in ipairs(bids) do
+            for _ = 1, tuple_counts[i] do
+                s:replace{id, bid}
+                id = id + 1
+            end
+        end
+        box.commit()
+
+        ivshard.storage.internal.is_bucket_protected = false
+        for _, bid in ipairs(bids) do
+            _bucket:replace{bid, ivconst.BUCKET.GARBAGE}
+        end
+        ivshard.storage.internal.is_bucket_protected = true
+        _G.bucket_gc_continue()
+
+        local bucket_index = s.index.bucket_id
+        local function tuple_count()
+            return bucket_index:count({bids[1]}) +
+                   bucket_index:count({bids[2]})
+        end
+        local total_count = tuple_counts[1] + tuple_counts[2]
+        local expected_count = total_count - batch_size
+        local deadline = ifiber.clock() + batch_delay * 3 + 1
+        while tuple_count() == total_count and ifiber.clock() < deadline do
+            ifiber.sleep(0.01)
+        end
+        ilt.assert_equals(tuple_count(), expected_count,
+                          'first automatic GC batch is committed')
+        ifiber.sleep(batch_delay / 2)
+        ilt.assert_equals(tuple_count(), expected_count,
+                          'automatic GC waits before the next batch')
+
+        _G.bucket_gc_wait()
+        ilt.assert_equals(tuple_count(), 0, 'all bucket data is deleted')
+        for _, bid in ipairs(bids) do
+            ilt.assert_equals(_bucket:get({bid}), nil, 'bucket is deleted')
+            ivshard.storage.bucket_force_create(bid)
+        end
+    end, {batch_size, batch_delay})
+
+    vtest.cluster_wait_vclock_all(g)
+    g.replica_1_b:exec(bucket_set_protection, {true})
+    vtest.cluster_cfg(g, global_cfg)
+end
+
+--
+-- Bucket state is checked again after the pacing delay.
+--
+test_group.test_pacing_checks_bucket_state = function(g)
+    local batch_size = 10
+    local batch_delay = 0.5
+    local cfg = table.deepcopy(global_cfg)
+    cfg.bucket_gc_batch_size = batch_size
+    cfg.bucket_gc_batch_delay = batch_delay
+    vtest.cluster_cfg(g, cfg)
+
+    g.replica_1_a:exec(function(batch_size, batch_delay)
+        local s = box.space.test
+        local bid = _G.get_first_bucket()
+        ilt.assert_not_equals(bid, nil, 'get any bucket')
+        local tuple_count = batch_size + 1
+        box.begin()
+        for i = 1, tuple_count do
+            s:replace{i, bid}
+        end
+        box.commit()
+
+        local gc = ifiber.new(function()
+            return pcall(ivshard.storage.bucket_delete_garbage, bid,
+                         {force = true})
+        end)
+        gc:set_joinable(true)
+
+        local bucket_index = s.index.bucket_id
+        local deadline = ifiber.clock() + batch_delay * 3 + 1
+        while bucket_index:count({bid}) == tuple_count and
+              ifiber.clock() < deadline do
+            ifiber.sleep(0.01)
+        end
+        ilt.assert_equals(bucket_index:count({bid}), 1,
+                          'first GC batch is committed')
+        ilt.assert(ivshard.storage.bucket_pin(bid))
+
+        local joined, ok, err = gc:join()
+        ilt.assert(joined, err)
+        ilt.assert_not(ok, 'GC must fail after the bucket changes')
+        ilt.assert_str_contains(err.message, 'bucket status is changed')
+        ilt.assert_equals(bucket_index:count({bid}), 1,
+                          'GC does not delete after the bucket changes')
+        ilt.assert(ivshard.storage.bucket_unpin(bid))
+        s:truncate()
+    end, {batch_size, batch_delay})
+
+    vtest.cluster_wait_vclock_all(g)
+    vtest.cluster_cfg(g, global_cfg)
+end
+
 test_group.test_yield_before_send_commit = function(g)
     t.run_only_if(global_cfg.memtx_use_mvcc_engine)
     g.replica_1_b:exec(bucket_set_protection, {false})
