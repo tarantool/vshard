@@ -42,6 +42,7 @@ function Cluster:drop()
             server:cleanup()
         end
     end
+    self.servers = {}
 end
 
 function Cluster:get_index(server)
