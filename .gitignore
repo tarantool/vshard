@@ -21,3 +21,7 @@ build
 .rocks
 build.luarocks
 .DS_Store
+
+# TLA+ files
+states/
+*_TTrace_*
