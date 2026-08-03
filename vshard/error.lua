@@ -295,6 +295,30 @@ local function make_error(e)
 end
 
 --
+-- Convert an error raised by an old vshard.storage._call() dispatcher when the
+-- requested service is missing. Old dispatchers call a nil table value, so the
+-- only information available to the caller is a generic Lua error.
+--
+-- A nil call inside an existing service has the same error text. This ambiguity
+-- is unavoidable until all supported previous versions check the service before
+-- calling it.
+--
+local function wrap_storage_call_error(service_name, err)
+    err = make_error(err)
+    if err == nil or
+       (err.type ~= 'LuajitError' and err.type ~= 'ClientError') or
+       err.code ~= box.error.PROC_LUA or
+       type(err.message) ~= 'string' or
+       not err.message:match('attempt to call a nil value$') then
+        return err
+    end
+    local res = make_error(box.error.new(
+        box.error.UNSUPPORTED, 'vshard.storage._call', service_name))
+    res.prev = err
+    return res
+end
+
+--
 -- Restore an error object from its string serialization.
 --
 local function from_string(str)
@@ -343,6 +367,7 @@ return {
     box = box_error,
     vshard = vshard_error,
     make = make_error,
+    wrap_storage_call = wrap_storage_call_error,
     from_string = from_string,
     alert = make_alert,
     timeout = make_timeout,

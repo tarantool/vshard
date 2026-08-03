@@ -1852,9 +1852,9 @@ else
         if router.is_enabled == nil then
             router.is_enabled = true
         end
-        if router.api_call_cache == nil then
-            router.api_call_cache = router_api_call_unsafe
-        end
+        -- After reloading from an old vshard version, api_call_cache
+        -- can be nil or point to the old router_api_call signature.
+        router.api_call_cache = router_api_call_unsafe
         router_cfg_fiber_safe(router, router.current_cfg, true)
         setmetatable(router, router_mt)
     end
