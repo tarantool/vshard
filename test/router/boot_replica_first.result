@@ -77,6 +77,14 @@ vshard.storage.cfg(cfg, instance_uuid)
  | ---
  | ...
 
+test_run:switch('box_1_c')
+ | ---
+ | - true
+ | ...
+vshard.storage.cfg(cfg, instance_uuid)
+ | ---
+ | ...
+
 test_run:switch('box_1_b')
  | ---
  | - true

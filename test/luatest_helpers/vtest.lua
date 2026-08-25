@@ -372,8 +372,20 @@ local function cluster_exec_each_master(g, func, args)
     end)
 end
 
+--
+-- Wait for _bucket space being synchronized on master. Without synchronization
+-- the buckets cannot be sent or received, rebalancer and recovery doesn't work.
+--
+local function storage_wait_bucket_sync(storage)
+    storage:exec(function()
+        local _, err = ivshard.storage._call('storage_wait_bucket_sync',
+                                                 iwait_timeout)
+        ilt.assert_equals(err, nil)
+    end)
+end
+
 local function storage_boot_one_f(first, count)
-    return ivshard.storage.bucket_force_create(first, count)
+    return ivshard.storage.bucket_create(first, count)
 end
 
 --
@@ -419,6 +431,8 @@ local function cluster_bootstrap(g, cfg)
         replicaset_count = replicaset_count + 1
     end
     t.assert_not_equals(masters, {}, 'have masters')
+    local _, sync_err = cluster_for_each_in(masters, storage_wait_bucket_sync)
+    t.assert_equals(sync_err, nil, 'storage master synchronization')
     vrepset.calculate_etalon_balance(etalon_balance, cfg.bucket_count)
     local fibers = table.new(0, replicaset_count)
     local bid = 1
@@ -488,15 +502,6 @@ end
 -- Wait for _bucket space being synchronized on master. Without synchronization
 -- the buckets cannot be sent or received, rebalancer and recovery doesn't work.
 --
-local function storage_wait_bucket_sync(storage)
-    storage:exec(function()
-        ilt.helpers.retrying({timeout = iwait_timeout}, function()
-            ivshard.storage.master_sync_wakeup()
-            ilt.assert(ivshard.storage.internal.is_bucket_in_sync)
-        end)
-    end)
-end
-
 --
 -- Disable rebalancer on all storages.
 --

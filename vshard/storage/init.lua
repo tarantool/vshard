@@ -123,6 +123,9 @@ if not M then
         -- replicas in replicaset. It is needed to prevent the doubled buckets
         -- in the cluster during rebalancing and recovery process.
         is_bucket_in_sync = false,
+        -- Condition variable fired when bucket synchronization finishes or
+        -- the master role is lost.
+        bucket_sync_cond = lfiber.cond(),
         -- Vclock after a last transaction over the _bucket space.
         bucket_latest_vclock = nil,
         --
@@ -381,6 +384,29 @@ local function bucket_check_is_synced()
             M.this_replica.id, M.this_replicaset.id)
     end
     return true
+end
+
+--
+-- Wait until this instance is a synchronized master and return its bucket
+-- count.
+--
+local function storage_wait_bucket_sync(timeout)
+    local deadline = fiber_clock() + timeout
+    while true do
+        local ok, err = bucket_check_is_synced()
+        if ok then
+            return bucket_count()
+        end
+        if err.code ~= lerror.code.MASTER_NOT_SYNCED then
+            return nil, err
+        end
+
+        timeout = deadline - fiber_clock()
+        if timeout <= 0 then
+            return nil, err
+        end
+        M.bucket_sync_cond:wait(timeout)
+    end
 end
 
 local function bucket_space_op(name, ...)
@@ -3762,6 +3788,7 @@ service_call_api = setmetatable({
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
+    storage_wait_bucket_sync = storage_wait_bucket_sync,
     storage_map = storage_map,
     storage_bucket_checkpoint = storage_bucket_checkpoint,
     create_replicaset_recovery_point = create_replicaset_recovery_point,
@@ -3825,6 +3852,7 @@ local function master_sync_service_f(service, limiter)
         service:set_activity('synced')
         assert(M.master_sync_fiber == lfiber.self())
         M.is_bucket_in_sync = true
+        M.bucket_sync_cond:broadcast()
         log.info('New master has synchronized with other replicas')
         -- Simple return will lead to service restart, so cancel the fiber.
         M.master_sync_fiber = nil
@@ -3893,6 +3921,7 @@ end
 local function master_on_disable()
     log.info("Stepping down from the master role")
     M.is_master = false
+    M.bucket_sync_cond:broadcast()
     M.is_master_cond:broadcast()
     local rs = M.this_replicaset
     if rs.master ~= nil then

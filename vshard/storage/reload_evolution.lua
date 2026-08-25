@@ -33,6 +33,10 @@ migrations[#migrations + 1] = function(M)
     end
 end
 
+migrations[#migrations + 1] = function(M)
+    M.bucket_sync_cond = M.bucket_sync_cond or fiber.cond()
+end
+
 --
 -- Perform an update based on a version stored in `M` (internals).
 -- @param M Old module internals which should be updated.
