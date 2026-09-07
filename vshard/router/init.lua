@@ -309,7 +309,7 @@ local function discovery_service_f(router, service, limiter)
             if not future then
                 limiter:log_warn(err, service:set_status_error(
                     'Error during discovery %s, retry will be done later: %s',
-                    rs_id, err))
+                    rs_id, tostring(lerror.make(err))))
                 goto continue
             end
             iter.future = future
@@ -339,7 +339,7 @@ local function discovery_service_f(router, service, limiter)
                 future:discard()
                 limiter:log_warn(err, service:set_status_error(
                           'Error during discovery %s, retry will be done '..
-                          'later: %s', rs_id, err))
+                          'later: %s', rs_id, tostring(lerror.make(err))))
                 goto continue
             end
             local replicaset = router.replicasets[rs_id]

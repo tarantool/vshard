@@ -1145,7 +1145,7 @@ local function recovery_step_by_type(type, limiter)
                 log.info(start_format, type)
                 limiter:log_error(err,
                     'Error during recovery of bucket %s on replicaset %s: %s',
-                    bucket_id, peer_id, json_encode(err))
+                    bucket_id, peer_id, tostring(lerror.make(err)))
                 is_step_empty = false
             end
             goto continue
@@ -1161,7 +1161,7 @@ local function recovery_step_by_type(type, limiter)
                     log.info(start_format, type)
                     limiter:log_error(err,
                         'Error during searching in cluster for recovery of ' ..
-                        '%d bucket: %s', bucket_id, json_encode(err))
+                        '%d bucket: %s', bucket_id, tostring(lerror.make(err)))
                     is_step_empty = false
                 end
                 goto continue
@@ -1251,7 +1251,8 @@ local function recovery_service_f(service, limiter)
             if not ok then
                 is_all_recovered = false
                 limiter:log_error(total, service:set_status_error(
-                    'Error during %s buckets recovery: %s', status, total))
+                    'Error during %s buckets recovery: %s', status,
+                    tostring(lerror.make(total))))
             elseif total ~= recovered then
                 is_all_recovered = false
             end
@@ -2621,7 +2622,8 @@ local function gc_bucket_service_f(service, limiter)
             if not status then
                 box.rollback()
                 limiter:log_error(err, service:set_status_error(
-                           'Error during garbage collection step: %s', err))
+                           'Error during garbage collection step: %s',
+                           tostring(lerror.make(err))))
             elseif is_done then
                 -- Don't use global generation. During the collection it could
                 -- already change. Instead, remember the generation known before
@@ -2996,7 +2998,7 @@ local function rebalancer_worker_f(worker_id, dispenser, quit_cond)
         if err.type ~= 'ShardingError' or
            err.code ~= lerror.code.TOO_MANY_RECEIVING then
             log.error('Error during rebalancer routes applying: receiver %s, '..
-                      'error %s', id, err)
+                      'error %s', id, tostring(lerror.make(err)))
             log.info('Can not finish transfers to %s, skip to next round', id)
             worker_throttle_count = 0
             dispenser.error = dispenser.error or err
@@ -3056,7 +3058,8 @@ local function rebalancer_service_apply_routes_f(service, routes)
         local ok, res = f:join()
         if not ok then
             log.error(service:set_status_error(
-                'Rebalancer worker %d threw an exception: %s', i, res))
+                'Rebalancer worker %d threw an exception: %s', i,
+                tostring(lerror.make(res))))
         end
     end
     -- There may be prepared bucket left due to send errors, which caused
@@ -3069,10 +3072,12 @@ local function rebalancer_service_apply_routes_f(service, routes)
         service:set_status_ok()
     elseif dispenser.error then
         log.info(service:set_status_error(
-            "Couldn't apply some rebalancer routes: %s", dispenser.error))
+            "Couldn't apply some rebalancer routes: %s",
+            tostring(lerror.make(dispenser.error))))
     elseif dispenser.prepare_error then
         log.info(service:set_status_error(
-            "Couldn't prepare buckets: %s", dispenser.prepare_error))
+            "Couldn't prepare buckets: %s",
+            tostring(lerror.make(dispenser.prepare_error))))
     end
     local throttled = {}
     for id, dst in pairs(dispenser.map) do
@@ -3195,7 +3200,7 @@ local function rebalancer_service_f(service, limiter)
             local err = status and total_bucket_active_count or replicasets
             limiter:log_error(err, service:set_status_error(
                 'Error during downloading rebalancer states: %s, ' ..
-                'retry rebalancing later', err))
+                'retry rebalancing later', tostring(lerror.make(err))))
             service:set_activity('idling')
             lfiber.testcancel()
             lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
@@ -3241,7 +3246,7 @@ local function rebalancer_service_f(service, limiter)
             if not status then
                 log.error(service:set_status_error(
                     'Error during routes appying on "%s": %s. '..
-                    'Try rebalance later', rs, lerror.make(err)))
+                    'Try rebalance later', rs, tostring(lerror.make(err))))
                 service:set_activity('idling')
                 lfiber.sleep(consts.REBALANCER_WORK_INTERVAL)
                 goto continue
@@ -3754,7 +3759,8 @@ local function master_sync_service_f(service, limiter)
             {'storage_bucket_checkpoint', call_timeout / 1.5}, call_opts)
         if err then
             err.replica_id = err_id
-            limiter:log_warn(err, service:set_status_error(err_msg, err))
+            limiter:log_warn(err, service:set_status_error(
+                err_msg, tostring(lerror.make(err))))
             lfiber.testcancel()
             goto continue
         end
@@ -3766,7 +3772,8 @@ local function master_sync_service_f(service, limiter)
             if not remote_vclock then
                 err = res[2]
                 err.replica_id = id
-                limiter:log_warn(err, service:set_status_error(err_msg, err))
+                limiter:log_warn(err, service:set_status_error(
+                    err_msg, tostring(lerror.make(err))))
                 goto continue
             end
             local comparison = util.vclock_compare(curr_vclock, remote_vclock)

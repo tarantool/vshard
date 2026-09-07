@@ -226,6 +226,54 @@ for code, err in pairs(error_message_template) do
 end
 
 --
+-- Copy only the parts of the value, which are guaranteed to be encodable into
+-- json: strings, numbers, booleans and tables with string keys. Everything else
+-- is dropped.
+--
+local ERROR_PLAIN_MAX_DEPTH = 8
+local function error_plain_copy(value, depth)
+    local value_type = type(value)
+    if value_type == 'string' or value_type == 'number' or
+       value_type == 'boolean' then
+        return value
+    end
+    if value_type ~= 'table' or depth == 0 then
+        return nil
+    end
+    local res = {}
+    for k, v in pairs(value) do
+        if type(k) == 'string' then
+            res[k] = error_plain_copy(v, depth - 1)
+        end
+    end
+    return res
+end
+
+--
+-- Stringify an error object into json.
+--
+-- It is used as __tostring of all the errors and, hence, is called while
+-- logging them, so it must never throw. An error can carry arbitrary data, for
+-- example a payload of a custom box.error, and json.encode() raises on the
+-- values it can't encode: functions, tables with non-string keys, etc. Failing
+-- to print an error in the middle of the incident handling is much worse than
+-- printing it less nicely, so fall back to the encodable part of the error.
+--
+local function error_tostring(err)
+    local ok, res = pcall(json.encode, err)
+    if ok then
+        return res
+    end
+    ok, res = pcall(json.encode, error_plain_copy(err, ERROR_PLAIN_MAX_DEPTH))
+    if ok then
+        return res
+    end
+    return 'unencodable error: ' .. tostring(rawget(err, 'message'))
+end
+
+local error_mt = {__tostring = error_tostring}
+
+--
 -- There are 2 error types:
 -- * box_error - it is created on tarantool errors: client error,
 --   oom error, socket error etc. It has type = one of tarantool
@@ -235,13 +283,12 @@ end
 --   'ShardingError', one of codes below and optional
 --   message.
 --
-local box_error_mt = {__tostring = json.encode}
 local function box_error(original_error)
-    local res = setmetatable(original_error:unpack(), box_error_mt)
+    local res = setmetatable(original_error:unpack(), error_mt)
     local pos = res
     local prev = pos.prev
     while prev ~= nil do
-        prev = setmetatable(prev:unpack(), box_error_mt)
+        prev = setmetatable(prev:unpack(), error_mt)
         pos.prev = prev
         pos = prev
         prev = pos.prev
@@ -265,7 +312,7 @@ local function vshard_error(code, ...)
     assert(#args == args_passed_cnt,
            string.format('Wrong number of arguments are passed to %s error',
                          format.name))
-    local ret = setmetatable({}, {__tostring = json.encode})
+    local ret = setmetatable({}, error_mt)
     -- Save error arguments.
     for i = 1, #args do
         ret[args[i]] = select(i, ...)
@@ -288,7 +335,7 @@ local function make_error(e)
     elseif type(e) == 'string' then
         return box_error(box.error.new(box.error.PROC_LUA, e))
     elseif type(e) == 'table' then
-        return setmetatable(e, {__tostring = json.encode})
+        return setmetatable(e, error_mt)
     else
         return e
     end

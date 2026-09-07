@@ -224,7 +224,7 @@ local function conn_vconnect_check_or_close(conn)
     if not ok and err and not (err.type == 'ShardingError' and
        err.code == lerror.code.VHANDSHAKE_NOT_COMPLETE) then
         log.warn('Closing the connection to %s due to failed initial ' ..
-                 'handshake: %s', conn.replica, err)
+                 'handshake: %s', conn.replica, tostring(lerror.make(err)))
         conn:close()
     end
     return ok, err
@@ -265,7 +265,8 @@ local function conn_vconnect_wait_or_close(conn, timeout)
     local ok, err = conn_vconnect_wait(conn, timeout)
     if not ok and not lerror.is_timeout(err) then
         log.warn('Closing the connection to %s after waiting due to failed ' ..
-                 'initial handshake: %s', conn.replica, err)
+                 'initial handshake: %s', conn.replica,
+                 tostring(lerror.make(err)))
         conn:close()
     end
     return ok, err
@@ -708,9 +709,11 @@ local function replica_call(replica, func, args, opts)
            err.type == 'ClientError') then
             err = lerror.from_string(err.message) or err
         end
+        err = lerror.make(err)
         replica.limiter:log_error(err,
-            "Exception during calling '%s' on '%s': %s", func, replica, err)
-        return false, nil, lerror.make(err)
+            "Exception during calling '%s' on '%s': %s", func, replica,
+            tostring(err))
+        return false, nil, err
     else
         replica_on_success_request(replica)
     end
@@ -981,7 +984,8 @@ local function replicaset_template_multicallro(prefer_replica, balance)
                     if not replica.backoff_ts then
                         log.warn('Replica %s goes into backoff for %s sec '..
                                  'after error %s', replica.id,
-                                 consts.REPLICA_BACKOFF_INTERVAL, retval)
+                                 consts.REPLICA_BACKOFF_INTERVAL,
+                                 tostring(lerror.make(retval)))
                         replica.backoff_ts = now
                         replica.backoff_err = retval
                         local msg = string.format(health_status_msgs.BACKOFF,
@@ -1253,7 +1257,7 @@ local function replicaset_locate_master(replicaset)
         elseif not ok and cur_master == master then
             log.info('Master of replicaset %s, node %s, does not respond: ' ..
                      '%s. Trying to find a new one',
-                      replicaset.id, master.id, err)
+                      replicaset.id, master.id, tostring(lerror.make(err)))
             -- Try to search for a new master. Master is not nullified, since
             -- we are unsure that there's a new one in the replicaset, but we
             -- must anyway check, because the connection may be shown as
@@ -1810,7 +1814,8 @@ local function replica_failover_ping(replica, opts)
     local net_status, info, err =
         replica:call('vshard.storage._call', {'info', info_opts}, opts)
     if not info then
-        replica:update_status(status_name, SYELLOW, err)
+        replica:update_status(status_name, SYELLOW,
+                             tostring(lerror.make(err)))
         return net_status, info, err
     elseif not info.health then
         local msg = 'Health state in ping is missing - please upgrade storage'
@@ -1852,7 +1857,7 @@ local function replica_failover_service_step(replica, data)
     if not net_status then
         data.limiter:log_error(err, data.info:set_status_error(
                    'Ping error from %s: perhaps a connection is down: %s',
-                   replica, err))
+                   replica, tostring(lerror.make(err))))
         -- Connection hangs. Recreate it to be able to
         -- fail over to a replica next by priority. The
         -- old connection is not closed in case if it just
@@ -1986,7 +1991,7 @@ local function replicaset_failover_service_step(replicaset, data)
     if not ok then
         data.limiter:log_error(replica_is_changed, data.info:set_status_error(
                    'Error during failovering: %s',
-                   lerror.make(replica_is_changed)))
+                   tostring(lerror.make(replica_is_changed))))
         replica_is_changed = true
     else
         data.info:set_status_ok()
@@ -2113,7 +2118,8 @@ local function replicaset_master_search_service_step(replicaset, data)
         replicaset_master_search_step(replicaset, {mode = mode})
     if err then
         data.limiter:log_error(err, data.info:set_status_error(
-                   'Error during master search: %s', lerror.make(err)))
+                   'Error during master search: %s',
+                   tostring(lerror.make(err))))
     end
     if is_done then
         timeout = consts.MASTER_SEARCH_IDLE_INTERVAL
@@ -2171,7 +2177,8 @@ local function worker_f(owner)
                 local ok, ret = pcall(service.func, owner, service.data)
                 fiber.testcancel()
                 if not ok then
-                    log.error('%s failed: %s', service.func_name, ret)
+                    log.error('%s failed: %s', service.func_name,
+                              tostring(lerror.make(ret)))
                     -- Immediately retry after yield. Works as reloadable fiber.
                     service.deadline = 0
                     goto next_service
