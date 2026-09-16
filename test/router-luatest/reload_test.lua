@@ -329,3 +329,14 @@ g.test_master_search = function(g)
     test_master_search_template(g, router, auto_master_cfg)
     vtest.drop_instance(g, router)
 end
+
+g.test_api_call_cache_reload = function(g)
+    -- Last commit before router API wrappers gained an options argument.
+    local hash = 'f6ad311691a417fec11be15d674837fa0099268c'
+    local router = create_router_at(hash)
+    reload_router(router)
+    router:exec(function()
+        ilt.assert_not_equals(ivshard.router.route(1), nil)
+    end)
+    vtest.drop_instance(g, router)
+end
