@@ -726,3 +726,17 @@ test_group.test_unknown_service = function(g)
             'vshard.storage._call does not support unknown_service')
     end)
 end
+
+test_group.test_hot_reload_initializes_worker_errinj = function(g)
+    g.replica_1_a:exec(function()
+        local errinj = ivshard.storage.internal.errinj
+        errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY = nil
+
+        package.loaded['vshard.storage'] = nil
+        ivshard.storage = require('vshard.storage')
+
+        errinj = ivshard.storage.internal.errinj
+        ilt.assert_type(errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY,
+                        'table')
+    end)
+end

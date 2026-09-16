@@ -285,6 +285,11 @@ else
     if M.is_master_cond == nil then
         M.is_master_cond = lfiber.cond()
     end
+    -- It could be nil when reloaded from an old vshard version,
+    -- but current vshard thinks that it's a table.
+    if M.errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY == nil then
+        M.errinj.ERRINJ_WORKER_PREPARE_WAKEUP_DELAY = {}
+    end
 end
 
 --
