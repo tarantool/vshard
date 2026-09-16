@@ -4615,26 +4615,44 @@ end
 -- attributes.
 --
 
-if not rawget(_G, MODULE_INTERNALS) then
-    rawset(_G, MODULE_INTERNALS, M)
-else
-    reload_evolution.upgrade(M)
-    if M.current_cfg then
-        storage_cfg(M.current_cfg, M.this_replica.id or M.this_replica.uuid,
-                    true)
+local function module_init(reloadable_fiber_functions)
+    if not rawget(_G, MODULE_INTERNALS) then
+        rawset(_G, MODULE_INTERNALS, M)
+    else
+        reload_evolution.upgrade(M)
+        -- Reconfiguration may start services before the regular function
+        -- assignments at module end. Publish callbacks absent from the old
+        -- module, but keep existing callbacks unchanged until the reload
+        -- succeeds.
+        for name, func in pairs(reloadable_fiber_functions) do
+            if M[name] == nil then
+                M[name] = func
+            end
+        end
+        if M.current_cfg then
+            storage_cfg(M.current_cfg,
+                        M.this_replica.id or M.this_replica.uuid,
+                        true)
+        end
+        M.module_version = M.module_version + 1
+        -- Background fibers could sleep waiting for bucket changes.
+        -- Let them know it is time to reload.
+        bucket_generation_increment()
+        util.module_unload_functions(M)
     end
-    M.module_version = M.module_version + 1
-    -- Background fibers could sleep waiting for bucket changes.
-    -- Let them know it is time to reload.
-    bucket_generation_increment()
-    util.module_unload_functions(M)
+
+    for name, func in pairs(reloadable_fiber_functions) do
+        M[name] = func
+    end
 end
 
-M.recovery_f = recovery_f
-M.rebalancer_f = rebalancer_f
-M.gc_bucket_f = gc_bucket_f
-M.instance_watch_f = instance_watch_f
-M.master_sync_f = master_sync_f
+module_init({
+    recovery_f = recovery_f,
+    rebalancer_f = rebalancer_f,
+    gc_bucket_f = gc_bucket_f,
+    instance_watch_f = instance_watch_f,
+    master_sync_f = master_sync_f,
+})
 
 M.api_call_cache = storage_api_call_unsafe
 

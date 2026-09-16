@@ -740,3 +740,17 @@ test_group.test_hot_reload_initializes_worker_errinj = function(g)
                         'table')
     end)
 end
+
+test_group.test_hot_reload_registers_missing_fiber_callback = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        ilt.assert_equals(internal.master_sync_fiber, nil)
+        internal.master_sync_f = nil
+        internal.is_bucket_in_sync = false
+
+        package.loaded['vshard.storage'] = nil
+        ivshard.storage = require('vshard.storage')
+    end)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+end
