@@ -4,6 +4,7 @@ return {
     _VERSION = consts.VERSION,
     router = require('vshard.router'),
     storage = require('vshard.storage'),
+    vector = require('vshard.vector'),
     consts = consts,
     error = require('vshard.error'),
 }
