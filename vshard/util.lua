@@ -126,7 +126,8 @@ local function reloadable_fiber_main_loop(module, func_name, data)
     --  * prevents 100% cpu consumption
     fiber.yield()
     if not ok then
-        log.error('%s has been failed: %s', func_name, err)
+        log.error('%s has been failed: %s', func_name,
+                  tostring(lerror.make(err)))
         if func == module[func_name] then
             goto restart_loop
         end

@@ -1,4 +1,5 @@
 local t = require('luatest')
+local json = require('json')
 local vutil = require('vshard.util')
 local verror = require('vshard.error')
 
@@ -32,4 +33,53 @@ g.test_box_error_prev = function()
     t.assert_equals(e1, ve1)
     t.assert_equals(e2, ve2)
     t.assert_equals(e3, ve3)
+end
+
+--
+-- gh-651: __tostring of an error is json, and it never throws.
+--
+g.test_tostring = function()
+    local errs = {
+        verror.make('string error'),
+        verror.make(box.error.new(box.error.PROC_LUA, 'box error')),
+        verror.vshard(verror.code.NO_SUCH_REPLICASET, 'rs1'),
+        verror.make({message = 'table error', type = 'CustomError'}),
+    }
+    for _, err in pairs(errs) do
+        t.assert_equals(tostring(err), json.encode(err))
+        t.assert_equals(json.decode(tostring(err)).message, err.message)
+    end
+end
+
+g.test_tostring_unencodable = function()
+    -- Function can't be encoded.
+    local err = verror.make({message = 'msg', context = function() end})
+    t.assert_equals(json.decode(tostring(err)), {message = 'msg'})
+    -- Table key must be a number or a string.
+    err = verror.make({message = 'msg', [false] = 'value'})
+    t.assert_equals(json.decode(tostring(err)), {message = 'msg'})
+    -- The nested errors are not lost, when some other part is unencodable.
+    err = verror.make({
+        message = 'msg',
+        payload = {[false] = 'value'},
+        prev = {message = 'prev', context = function() end},
+    })
+    t.assert_equals(json.decode(tostring(err)), {
+        message = 'msg',
+        payload = {},
+        prev = {message = 'prev'},
+    })
+end
+
+g.test_tostring_never_throws = function()
+    -- NaN can be encoded only when the json is configured to do so.
+    local old_cfg = json.cfg.encode_invalid_numbers
+    json.cfg{encode_invalid_numbers = false}
+    local ok, res = pcall(function()
+        local err = verror.make({message = 'msg', invalid = 0 / 0})
+        return tostring(err)
+    end)
+    json.cfg{encode_invalid_numbers = old_cfg}
+    t.assert(ok, res)
+    t.assert_str_contains(res, 'msg')
 end
