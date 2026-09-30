@@ -1,15 +1,12 @@
 local log = require('log')
-local luri = require('uri')
 local lfiber = require('fiber')
 local lmsgpack = require('msgpack')
-local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local json_encode = require('json').encode
-local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
-local netbox_self = netbox.self
+local netbox_self = require('net.box').self
 local netbox_self_call = netbox_self.call
 
 local MODULE_INTERNALS = '__module_vshard_storage'
@@ -33,7 +30,6 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
-local lregistry = require('vshard.registry')
 local lservice_info = require('vshard.service_info')
 local lratelimit = require('vshard.log_ratelimit')
 local lref = require('vshard.storage.ref')
@@ -886,7 +882,7 @@ local function schema_install_triggers_delayed()
 end
 
 local function schema_upgrade_master()
-    local uri = luri.parse(M.this_replica.uri)
+    local uri = require('uri').parse(M.this_replica.uri)
     lschema.upgrade(lschema.latest_version, uri.login, uri.password)
     schema_install_triggers()
 end
@@ -3052,7 +3048,7 @@ local function rebalancer_service_apply_routes_f(service, routes)
     local worker_count = M.rebalancer_worker_count
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
-             yaml_encode(routes))
+             require('yaml').encode(routes))
     local dispenser = route_dispenser.new(routes)
     local _status = box.space._bucket.index.status
     assert(_status:count({BSENDING}) == 0)
@@ -4671,7 +4667,7 @@ M.bucket_state_edges = bucket_state_edges
 M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
 M.bucket_get_moved = bucket_get_moved
-lregistry.storage = M
+require('vshard.registry').storage = M
 
 --
 -- Not all methods are public here. Private methods should not be exposed if
