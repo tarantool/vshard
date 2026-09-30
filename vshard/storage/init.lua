@@ -2,14 +2,12 @@ local log = require('log')
 local luri = require('uri')
 local lfiber = require('fiber')
 local lmsgpack = require('msgpack')
-local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local json_encode = require('json').encode
-local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
-local netbox_self = netbox.self
+local netbox_self = require('net.box').self
 local netbox_self_call = netbox_self.call
 
 local MODULE_INTERNALS = '__module_vshard_storage'
@@ -125,6 +123,9 @@ if not M then
         -- replicas in replicaset. It is needed to prevent the doubled buckets
         -- in the cluster during rebalancing and recovery process.
         is_bucket_in_sync = false,
+        -- Condition variable fired when bucket synchronization finishes or
+        -- the master role is lost.
+        bucket_sync_cond = lfiber.cond(),
         -- Vclock after a last transaction over the _bucket space.
         bucket_latest_vclock = nil,
         --
@@ -372,7 +373,7 @@ end
 --
 local bucket_count
 
-local function bucket_space_op(name, ...)
+local function bucket_check_is_synced()
     if not M.is_master then
         local rs = M.this_replicaset
         return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
@@ -381,6 +382,37 @@ local function bucket_space_op(name, ...)
     if not M.is_bucket_in_sync then
         return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
             M.this_replica.id, M.this_replicaset.id)
+    end
+    return true
+end
+
+--
+-- Wait until this instance is a synchronized master and return its bucket
+-- count.
+--
+local function storage_wait_bucket_sync(timeout)
+    local deadline = fiber_clock() + timeout
+    while true do
+        local ok, err = bucket_check_is_synced()
+        if ok then
+            return bucket_count()
+        end
+        if err.code ~= lerror.code.MASTER_NOT_SYNCED then
+            return nil, err
+        end
+
+        timeout = deadline - fiber_clock()
+        if timeout <= 0 then
+            return nil, err
+        end
+        M.bucket_sync_cond:wait(timeout)
+    end
+end
+
+local function bucket_space_op(name, ...)
+    local ok, err = bucket_check_is_synced()
+    if not ok then
+        return nil, err
     end
     local space = box.space._bucket
     local is_success, res = pcall(space[name], space, ...)
@@ -394,8 +426,24 @@ local function bucket_space_insert(tuple)
     return bucket_space_op('insert', tuple)
 end
 
+local function bucket_space_insert_xc(tuple)
+    local bucket, err = bucket_space_insert(tuple)
+    if not bucket then
+        error(err)
+    end
+    return bucket
+end
+
 local function bucket_space_replace(tuple)
     return bucket_space_op('replace', tuple)
+end
+
+local function bucket_space_replace_xc(tuple)
+    local bucket, err = bucket_space_replace(tuple)
+    if not bucket then
+        error(err)
+    end
+    return bucket
 end
 
 local function bucket_space_update(key, ops)
@@ -1607,8 +1655,10 @@ end
 -- are inserted.
 -- @param first_bucket_id Identifier of a first bucket in a range.
 -- @param count Bucket range length to insert. By default is 1.
+-- @param is_safe Whether to refuse each write unless the instance is a
+-- synchronized master.
 --
-local function bucket_force_create_impl(first_bucket_id, count)
+local function bucket_create_impl(first_bucket_id, count, is_safe)
     local _bucket = box.space._bucket
     box.begin()
     local limit = consts.BUCKET_CHUNK_SIZE
@@ -1619,8 +1669,13 @@ local function bucket_force_create_impl(first_bucket_id, count)
         -- work of vshard. So, as we don't want to disable the protection
         -- of the buckets for the whole replicaset for bootstrap, a bucket's
         -- status must go the following way: none -> RECEIVING -> ACTIVE.
-        _bucket:insert({i, BRECEIVING})
-        _bucket:replace({i, BACTIVE})
+        if is_safe then
+            bucket_space_insert_xc({i, BRECEIVING})
+            bucket_space_replace_xc({i, BACTIVE})
+        else
+            _bucket:insert({i, BRECEIVING})
+            _bucket:replace({i, BACTIVE})
+        end
         limit = limit - 1
         if limit == 0 then
             box.commit()
@@ -1631,19 +1686,33 @@ local function bucket_force_create_impl(first_bucket_id, count)
     box.commit()
 end
 
-local function bucket_force_create(first_bucket_id, count)
+local function bucket_create_internal(first_bucket_id, count, is_safe)
+    local name
+    if is_safe then
+        name = 'bucket_create'
+    else
+        name = 'bucket_force_create'
+    end
     if type(first_bucket_id) ~= 'number' or
        (count ~= nil and (type(count) ~= 'number' or
                           math.floor(count) ~= count)) then
-        error('Usage: bucket_force_create(first_bucket_id, count)')
+        error(string.format('Usage: %s(first_bucket_id, count)', name))
     end
     count = count or 1
-    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
+    local ok, err = pcall(bucket_create_impl, first_bucket_id, count, is_safe)
     if not ok then
         box.rollback()
         return nil, err
     end
     return true
+end
+
+local function bucket_force_create(first_bucket_id, count)
+    return bucket_create_internal(first_bucket_id, count, false)
+end
+
+local function bucket_create(first_bucket_id, count)
+    return bucket_create_internal(first_bucket_id, count, true)
 end
 
 --
@@ -3028,6 +3097,7 @@ end
 -- logs total results.
 --
 local function rebalancer_service_apply_routes_f(service, routes)
+    local yaml_encode = require('yaml').encode
     lfiber.name('vshard.rebalancer_applier')
     service:set_activity('applying routes')
     local worker_count = M.rebalancer_worker_count
@@ -3707,6 +3777,7 @@ local function service_call_test_api(...)
 end
 
 service_call_api = setmetatable({
+    bucket_create = bucket_create,
     bucket_recv = bucket_recv,
     bucket_test_gc = bucket_test_gc,
     bucket_test_send = bucket_test_send,
@@ -3717,6 +3788,7 @@ service_call_api = setmetatable({
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
+    storage_wait_bucket_sync = storage_wait_bucket_sync,
     storage_map = storage_map,
     storage_bucket_checkpoint = storage_bucket_checkpoint,
     create_replicaset_recovery_point = create_replicaset_recovery_point,
@@ -3780,6 +3852,7 @@ local function master_sync_service_f(service, limiter)
         service:set_activity('synced')
         assert(M.master_sync_fiber == lfiber.self())
         M.is_bucket_in_sync = true
+        M.bucket_sync_cond:broadcast()
         log.info('New master has synchronized with other replicas')
         -- Simple return will lead to service restart, so cancel the fiber.
         M.master_sync_fiber = nil
@@ -3848,6 +3921,7 @@ end
 local function master_on_disable()
     log.info("Stepping down from the master role")
     M.is_master = false
+    M.bucket_sync_cond:broadcast()
     M.is_master_cond:broadcast()
     local rs = M.this_replicaset
     if rs.master ~= nil then
@@ -4642,6 +4716,7 @@ return {
     --
     -- Bucket methods.
     --
+    bucket_create = storage_make_api(bucket_create),
     bucket_force_create = storage_make_api(bucket_force_create),
     bucket_force_drop = storage_make_api(bucket_force_drop),
     bucket_collect = storage_make_api(bucket_collect),

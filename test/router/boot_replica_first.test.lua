@@ -32,6 +32,9 @@ util.map_evals(test_run, {REPLICASET_1}, 'bootstrap_storage(\'memtx\')')
 test_run:switch('box_1_a')
 vshard.storage.cfg(cfg, instance_uuid)
 
+test_run:switch('box_1_c')
+vshard.storage.cfg(cfg, instance_uuid)
+
 test_run:switch('box_1_b')
 test_run:wait_lsn('box_1_b', 'box_1_a')
 -- Fails, but gracefully. Because the bucket is not found here.
