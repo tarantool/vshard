@@ -92,7 +92,7 @@ end
 
 g.before_all(function(g)
     t.run_only_if(ok_cbuilder and ok_cluster, 'cbuilder is not available')
-    t.run_only_if(vutil.feature.ssl, 'SSL is Enterprise-only')
+    t.run_only_if(vutil.feature.ssl, 'SSL is not available')
 
     local root = fio.abspath(os.getenv('SOURCEDIR') or '.')
     g.cert_dir = fio.pathjoin(root, 'test/certs/mtls')
@@ -294,7 +294,7 @@ end
 
 g_mtls.before_each(function(g)
     t.run_only_if(ok_cbuilder and ok_cluster, 'cbuilder is not available')
-    t.run_only_if(vutil.feature.ssl, 'SSL is Enterprise-only')
+    t.run_only_if(vutil.feature.ssl, 'SSL is not available')
     local root = fio.abspath(os.getenv('SOURCEDIR') or '.')
     g.cert_dir = fio.pathjoin(root, 'test/certs/mtls')
 end)
