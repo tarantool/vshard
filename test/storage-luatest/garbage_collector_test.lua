@@ -1227,3 +1227,42 @@ test_group.test_resumable_cursor_unsupported_index = function(g)
     end)
     vtest.cluster_wait_vclock_all(g)
 end
+
+test_group.test_replica_error = function(g)
+    g.replica_1_b:exec(function()
+        rawset(_G, 'storage_call_saved', ivshard.storage._call)
+        ivshard.storage._call = function()
+            local err = box.error.new(box.error.UNSUPPORTED,
+                                      'test', 'remote call')
+            return nil, iverror.make(err)
+        end
+        ivshard.storage.internal.is_bucket_protected = false
+    end)
+
+    local bid = g.replica_1_a:exec(function()
+        local bid = _G.get_first_bucket()
+        local internal = ivshard.storage.internal
+        internal.is_bucket_protected = false
+        box.space._bucket:replace{bid, ivconst.BUCKET.SENT}
+        internal.is_bucket_protected = true
+
+        local service = internal.gc_service
+        ivtest.service_wait_for_error(service,
+            'test does not support remote call',
+            {on_yield = ivshard.storage.garbage_collector_wakeup})
+        return bid
+    end)
+
+    g.replica_1_b:exec(function()
+        ivshard.storage._call = rawget(_G, 'storage_call_saved')
+        rawset(_G, 'storage_call_saved', nil)
+    end)
+    g.replica_1_a:exec(function(bid_to_restore)
+        _G.bucket_gc_wait()
+        ivshard.storage.bucket_force_create(bid_to_restore)
+    end, {bid})
+    g.replica_1_b:wait_vclock_of(g.replica_1_a)
+    g.replica_1_b:exec(function()
+        ivshard.storage.internal.is_bucket_protected = true
+    end)
+end
