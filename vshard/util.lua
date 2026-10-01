@@ -446,7 +446,8 @@ local feature = {
     memtx_mvcc = version_is_at_least(2, 10, 0, nil, 0, 0),
     ssl = (function()
         if not is_enterprise then
-            return false
+            -- Opensourced in CE 3.9.0-entrypoint-165-g89993db1f7.
+            return version_is_at_least(3, 9, 0, 'entrypoint', 0, 165)
         end
         -- Beforehand there is a bug which can kill replication on SSL reconfig.
         -- Fixed in EE 2.11.0-entrypoint-2-gffeb093.
