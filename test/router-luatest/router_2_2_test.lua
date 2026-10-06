@@ -1,4 +1,5 @@
 local t = require('luatest')
+local verror = require('vshard.error')
 local vtest = require('test.luatest_helpers.vtest')
 local vutil = require('vshard.util')
 local vconsts = require('vshard.consts')
@@ -1383,4 +1384,126 @@ g.test_no_router_alerts_on_initial_conn_during_storage_error = function(g)
     assert_no_alerts_in_router(g.router)
     vtest.cluster_cfg(g, global_cfg)
     vtest.router_cfg(g.router, global_cfg)
+end
+
+local function storage_bucket_count(storage)
+    return storage:exec(function()
+        return box.space._bucket:count()
+    end)
+end
+
+local function replicaset_truncate_buckets(master, replica)
+    local storages = {master, replica}
+    local function set_protection(value)
+        for _, storage in ipairs(storages) do
+            storage:exec(function(value)
+                ivshard.storage.internal.is_bucket_protected = value
+            end, {value})
+        end
+    end
+    set_protection(false)
+    master:exec(function()
+        box.space._bucket:truncate()
+    end)
+    replica:wait_vclock_of(master)
+    set_protection(true)
+end
+
+local function storage_set_master(storage, is_master)
+    storage:update_box_cfg({read_only = not is_master})
+    storage:exec(function(is_master)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(ivshard.storage.internal.is_master, is_master)
+        end)
+    end, {is_master})
+end
+
+local function router_bootstrap(router, timeout)
+    return router:exec(function(timeout)
+        return ivshard.router.bootstrap({timeout = timeout})
+    end, {timeout or vtest.wait_timeout})
+end
+
+g.test_bootstrap_unsynced_master = function(g)
+    vtest.cluster_rebalancer_disable(g)
+    replicaset_truncate_buckets(g.replica_1_a, g.replica_1_b)
+    replicaset_truncate_buckets(g.replica_2_a, g.replica_2_b)
+
+    local auto_cfg = get_auto_master_global_cfg()
+    vtest.cluster_cfg(g, auto_cfg)
+
+    local replication = g.replica_1_b:exec(function()
+        local replication = box.cfg.replication
+        box.cfg({replication = {}})
+        return replication
+    end)
+
+    local res, err = router_bootstrap(g.router)
+    t.assert(res and not err, 'initial bootstrap')
+
+    -- Only the replica_1_a has buckets.
+    replicaset_truncate_buckets(g.replica_2_a, g.replica_2_b)
+    t.assert_equals(storage_bucket_count(g.replica_1_b), 0)
+
+    -- The old master remains writable, so the new master cannot synchronize.
+    storage_set_master(g.replica_1_b, true)
+    g.replica_1_b:exec(function()
+        ilt.assert_not(ivshard.storage.internal.is_bucket_in_sync)
+    end)
+    local new_cfg_template = table.deepcopy(cfg_template)
+    local replicas = new_cfg_template.sharding[1].replicas
+    replicas.replica_1_a.master = nil
+    replicas.replica_1_b.master = true
+    vtest.router_cfg(g.router, vtest.config_new(new_cfg_template))
+
+    res, err = router_bootstrap(g.router, 0.1)
+    t.assert_equals(res, nil)
+    t.assert_equals(err and err.code, verror.code.MASTER_NOT_SYNCED)
+    t.assert_equals(storage_bucket_count(g.replica_2_a), 0)
+
+    g.replica_1_b:exec(function(replication)
+        box.cfg({replication = replication})
+        -- Restoring replication can temporarily make the master read-only.
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_not(box.info.ro)
+            ilt.assert(ivshard.storage.internal.is_master)
+        end)
+    end, {replication})
+    storage_set_master(g.replica_1_a, false)
+    vtest.storage_wait_bucket_sync(g.replica_1_b)
+
+    replicaset_truncate_buckets(g.replica_1_b, g.replica_1_a)
+    res, err = router_bootstrap(g.router)
+    t.assert(res and not err, 'bootstrap after synchronization')
+
+    -- Restore everything back.
+    g.replica_1_a:wait_vclock_of(g.replica_1_b)
+    storage_set_master(g.replica_1_b, false)
+    storage_set_master(g.replica_1_a, true)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.router_cfg(g.router, global_cfg)
+    vtest.cluster_cfg(g, global_cfg)
+    vtest.cluster_wait_vclock_all(g)
+    vtest.cluster_rebalancer_enable(g)
+end
+
+g.test_bootstrap_if_not_bootstrapped_with_unavailable_master = function(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    t.assert(storage_bucket_count(g.replica_1_a) > 0)
+
+    g.replica_2_a:stop()
+    local called, res, err = pcall(g.router.exec, g.router, function()
+        local res, err = ivshard.router.bootstrap({timeout = 1})
+        ilt.assert_equals(res, nil)
+        ilt.assert_not_equals(err, nil)
+        return ivshard.router.bootstrap({
+            if_not_bootstrapped = true,
+            timeout = 1,
+        })
+    end)
+    g.replica_2_a:start()
+
+    t.assert(called, res)
+    t.assert_equals(res, true)
+    t.assert_equals(err, nil)
 end

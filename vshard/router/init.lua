@@ -1337,7 +1337,6 @@ end
 --------------------------------------------------------------------------------
 
 local function cluster_bootstrap(router, opts)
-    local replicasets = {}
     local count, err, last_err, ok, if_not_bootstrapped
     if opts then
         if type(opts) ~= 'table' then
@@ -1352,9 +1351,25 @@ local function cluster_bootstrap(router, opts)
         if_not_bootstrapped = false
     end
 
-    for _, replicaset in pairs(router.replicasets) do
-        table.insert(replicasets, replicaset)
-        count, err = replicaset:callrw('vshard.storage.buckets_count', {}, opts)
+    -- The master's network timeout is normally used by default, but the master
+    -- may be unavailable or change during bootstrap.
+    local timeout = opts and opts.timeout or consts.CALL_TIMEOUT_MIN
+    local wait_timeout = timeout / 1.5
+    local results, map_err = lreplicaset.masters_map_call(
+        router.replicasets, 'vshard.storage._call',
+        {'storage_wait_bucket_sync', wait_timeout}, {timeout = timeout})
+    if not results and not if_not_bootstrapped then
+        return nil, map_err
+    end
+    for id, replicaset in pairs(router.replicasets) do
+        if results then
+            count, err = unpack(results[id])
+        else
+            -- A reachable master can still confirm the cluster is non-empty.
+            count, err = replicaset:callrw(
+                'vshard.storage._call',
+                {'storage_wait_bucket_sync', wait_timeout}, {timeout = timeout})
+        end
         if count == nil then
             -- If the client considers a bootstrapped cluster ok,
             -- then even one count > 0 is enough. So don't stop
@@ -1375,15 +1390,17 @@ local function cluster_bootstrap(router, opts)
     if last_err then
         return nil, err
     end
+    -- A master can change after the synchronization above. The new master may
+    -- still be synchronizing _bucket, which bucket_create() catches below.
     lreplicaset.calculate_etalon_balance(router.replicasets,
                                          router.total_bucket_count)
     local bucket_id = 1
     for id, replicaset in pairs(router.replicasets) do
         if replicaset.etalon_bucket_count > 0 then
             ok, err =
-                replicaset:callrw('vshard.storage.bucket_force_create',
-                                  {bucket_id, replicaset.etalon_bucket_count},
-                                  opts)
+                replicaset:callrw('vshard.storage._call',
+                                  {'bucket_create', bucket_id,
+                                   replicaset.etalon_bucket_count}, opts)
             if not ok then
                 return nil, err
             end

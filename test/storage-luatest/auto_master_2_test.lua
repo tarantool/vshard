@@ -149,3 +149,21 @@ test_group.test_master_search_in_services = function(g)
     g.replica_1_b:exec(function() box.cfg{read_only = true} end)
     vtest.cluster_rebalancer_disable(g)
 end
+
+test_group.test_bucket_create_without_known_master = function(g)
+    g.replica_1_b:exec(function(bid)
+        local internal = ivshard.storage.internal
+        local rs = internal.this_replicaset
+        ilt.assert_not(internal.is_master)
+        ilt.assert(rs.is_master_auto)
+        local master = rs.master
+        rs.master = nil
+        local status, ok, err = pcall(ivshard.storage.bucket_create, bid)
+        rs.master = master
+        ilt.assert(status)
+        ilt.assert_equals(ok, nil)
+        ilt.assert_equals(err.code, iverror.code.NON_MASTER)
+        ilt.assert_equals(err.master, nil)
+        ilt.assert_equals(box.space._bucket:get(bid), nil)
+    end, {cfg_template.bucket_count + 1})
+end
