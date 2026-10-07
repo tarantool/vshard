@@ -5,6 +5,7 @@
 --
 local log = require('log')
 local fiber = require('fiber')
+local lerror = require('vshard.error')
 
 --
 -- Array of upgrade functions.
@@ -57,7 +58,8 @@ local function upgrade(M)
         else
             local err_msg = string.format(
                 'vshard.storage.reload_evolution: ' ..
-                'error during upgrade to %d version: %s', i, err
+                'error during upgrade to %d version: %s', i,
+                tostring(lerror.make(err))
             )
             log.error(err_msg)
             error(err_msg)
