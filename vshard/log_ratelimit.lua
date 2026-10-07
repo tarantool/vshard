@@ -107,12 +107,25 @@ local function ratelimit_sign_entry(entry)
     }
 end
 
+-- Tables, e.g. errors, are stringified here, so that they are logged the same
+-- way by the old Tarantool too.
+local function ratelimit_stringify_args(...)
+    local args = {...}
+    local count = select('#', ...)
+    for i = 1, count do
+        if type(args[i]) == 'table' then
+            args[i] = tostring(args[i])
+        end
+    end
+    return unpack(args, 1, count)
+end
+
 local function ratelimit_log_template(log_lvl)
     return function (limiter, entry, format, ...)
         ratelimit_flush(limiter)
         if consts.LOG_RATELIMIT_INTERVAL <= 0 then
             -- Ratelimiter is disabled.
-            log[log_lvl](format, ...)
+            log[log_lvl](format, ratelimit_stringify_args(...))
             return
         end
         local level = 'verbose'
@@ -133,7 +146,7 @@ local function ratelimit_log_template(log_lvl)
                 ratelimit_suppress_entry(limiter, signed_entry)
             end
         end
-        log[level](format, ...)
+        log[level](format, ratelimit_stringify_args(...))
     end
 end
 
