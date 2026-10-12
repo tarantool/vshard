@@ -3862,6 +3862,9 @@ local function master_role_update()
 end
 
 local function master_on_disable()
+    if not this_is_master() then
+        return
+    end
     log.info("Stepping down from the master role")
     M.is_master = false
     M.is_master_cond:broadcast()
@@ -3875,6 +3878,9 @@ local function master_on_disable()
 end
 
 local function master_on_enable()
+    if this_is_master() then
+        return
+    end
     log.info("Stepping up into the master role")
     M.is_master = true
     M.is_master_cond:broadcast()
@@ -3903,6 +3909,11 @@ local function master_auto_synchronize()
         return
     end
     if is_master then
+        schema_upgrade_master()
+        -- Schema preparation can yield while the instance becomes read-only.
+        if box.info.ro then
+            return
+        end
         master_on_enable()
     else
         master_on_disable()
@@ -3913,7 +3924,7 @@ end
 -- Instance state management
 --------------------------------------------------------------------------------
 
-local function instance_watch_service_f(service)
+local function instance_watch_service_f(service, limiter)
     local module_version = M.module_version
     while module_version == M.module_version do
         service:next_iter()
@@ -3938,15 +3949,26 @@ local function instance_watch_service_f(service)
         end
 
         service:set_activity('master switch')
-        master_auto_synchronize()
-        service:set_status_ok()
+        local ok, err = pcall(master_auto_synchronize)
+        lfiber.testcancel()
+        if ok then
+            service:set_status_ok()
+        else
+            err = lerror.make(err)
+            limiter:log_error(err, service:set_status_error(
+                'Error during automatic master synchronization: %s', err))
+            service:set_activity('backoff')
+            lfiber.sleep(consts.MASTER_ENABLE_WAIT_INTERVAL)
+        end
     end
 end
 
 local function instance_watch_f()
-    local service = lservice_info.new('instance_watch')
+    local name = 'instance_watch'
+    local service = lservice_info.new(name)
     M.instance_watch_service = service
-    local ok, err = pcall(instance_watch_service_f, service)
+    local ratelimit = lratelimit.create{name = name}
+    local ok, err = pcall(instance_watch_service_f, service, ratelimit)
     if M.instance_watch_service == service then
         M.instance_watch_service = nil
     end
