@@ -266,9 +266,13 @@ local function find_sharded_spaces()
     return spaces
 end
 
-local function schema_cfg(cfg)
+local function schema_cfg_impl(cfg)
     M.shard_index = cfg.shard_index
     M.management_mode = cfg.schema_management_mode
+end
+
+local function schema_cfg(cfg)
+    return lutil.latch_exec(M.upgrade_latch, schema_cfg_impl, cfg)
 end
 
 M.current_version = schema_current_version
