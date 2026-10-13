@@ -885,6 +885,12 @@ local function schema_install_triggers_delayed()
     M.schema_on_replace = schema_install_on_replace
 end
 
+local function schema_upgrade_master()
+    local uri = luri.parse(M.this_replica.uri)
+    lschema.upgrade(lschema.latest_version, uri.login, uri.password)
+    schema_install_triggers()
+end
+
 local function schema_upgrade_replica()
     local version = lschema.current_version()
     -- Replica can't do upgrade - it is read-only. And it
@@ -903,6 +909,11 @@ local function schema_upgrade_replica()
         log.info('Replica\' vshard schema version is not latest - current '..
                  '%s vs latest %s, but the replica still can work', version,
                  lschema.latest_version)
+    end
+    if box.space._bucket then
+        schema_install_triggers()
+    else
+        schema_install_triggers_delayed()
     end
     -- In future for hard changes the replica may be suspended
     -- until its schema is synced with master. Or it may
@@ -4226,19 +4237,9 @@ local function storage_cfg_xc(cfgctx)
     storage_cfg_services_update()
 
     if this_is_master() then
-        local uri = luri.parse(M.this_replica.uri)
-        lschema.upgrade(lschema.latest_version, uri.login, uri.password)
+        schema_upgrade_master()
     else
         schema_upgrade_replica()
-    end
-
-    -- Check for master specifically. On master _bucket space must exist.
-    -- Because it should have done the schema bootstrap. Shall not ever try to
-    -- do anything delayed.
-    if this_is_master() or box.space._bucket then
-        schema_install_triggers()
-    else
-        schema_install_triggers_delayed()
     end
 
     M.is_configured = true
