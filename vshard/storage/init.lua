@@ -3909,23 +3909,25 @@ local function instance_watch_service_f(service)
         service:set_activity('idling')
 
         lfiber.testcancel()
-        local is_ro = box.info.ro
-        if is_ro then
+        if not M.this_replicaset.is_master_auto then
+            -- Configuration can disable auto master and yield before
+            -- cancelling the watcher. Stop it now to avoid a busy loop.
+            local self = lfiber.self()
+            if M.instance_watch_fiber == self then
+                M.instance_watch_fiber = nil
+            end
+            self:cancel()
+            return
+        end
+        local is_replica = not this_is_master()
+        if is_replica then
             box.ctl.wait_rw()
         else
             box.ctl.wait_ro()
         end
 
-        if is_ro ~= box.info.ro then
-            local prefix = 'Instance state has changed from '
-            if is_ro then
-                log.info(prefix .. 'read-only to writable')
-            else
-                log.info(prefix .. 'writable to read-only')
-            end
-            service:set_activity('master switch')
-            master_auto_synchronize()
-        end
+        service:set_activity('master switch')
+        master_auto_synchronize()
         service:set_status_ok()
     end
 end

@@ -149,3 +149,76 @@ test_group.test_master_search_in_services = function(g)
     g.replica_1_b:exec(function() box.cfg{read_only = true} end)
     vtest.cluster_rebalancer_disable(g)
 end
+
+--
+-- If writability is lost while an on_master_enable callback yields, the
+-- watcher must notice the new role after the callback returns.
+--
+test_group.test_master_change_during_enable = function(g)
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        local was_read_only = box.info.ro
+        box.cfg{read_only = true}
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_not(internal.is_master)
+        end)
+
+        local entered = ifiber.channel(1)
+        local resume = ifiber.channel(1)
+        local function on_enable()
+            entered:put(true)
+            resume:get()
+        end
+        ivshard.storage.on_master_enable(on_enable)
+        box.cfg{read_only = false}
+        ilt.assert(entered:get(iwait_timeout))
+        box.cfg{read_only = true}
+        ivshard.storage.on_master_enable(nil, on_enable)
+        resume:put(true)
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_not(internal.is_master)
+        end)
+
+        box.cfg{read_only = was_read_only}
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(internal.is_master, not was_read_only)
+        end)
+    end)
+end
+
+--
+-- Switching to explicit master configuration must stop the old watcher even
+-- while the role callback keeps cfg() suspended. Otherwise it can busy-loop.
+--
+test_group.test_turn_off_during_enable = function(g)
+    g.replica_1_a:exec(function(cfg)
+        local internal = ivshard.storage.internal
+        box.cfg{read_only = true}
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_not(internal.is_master)
+        end)
+
+        local watcher = internal.instance_watch_fiber
+        local new_cfg = table.deepcopy(cfg)
+        local rs_cfg = new_cfg.sharding[internal.this_replicaset.id]
+        rs_cfg.master = nil
+        rs_cfg.replicas[box.info.uuid].master = true
+        rs_cfg.replicas[box.info.uuid].read_only = false
+
+        local is_checked = false
+        local function on_enable()
+            ilt.assert(internal.is_cfg_in_progress)
+            ilt.assert_not(internal.this_replicaset.is_master_auto)
+            ilt.helpers.retrying({timeout = iwait_timeout}, function()
+                ilt.assert_equals(watcher:status(), 'dead')
+            end)
+            is_checked = true
+        end
+        ivshard.storage.on_master_enable(on_enable)
+        ivshard.storage.cfg(new_cfg, box.info.uuid)
+        ilt.assert_equals(internal.instance_watch_fiber, nil)
+        ivshard.storage.on_master_enable(nil, on_enable)
+        ilt.assert(is_checked)
+        ivshard.storage.cfg(cfg, box.info.uuid)
+    end, {global_cfg})
+end
