@@ -77,3 +77,32 @@ g.test_concurrent_lower_target = function(g)
         ilt.assert(schema.is_core_up_to_date)
     end)
 end
+
+--
+-- Changing schema options must wait for an active upgrade, so the upgrade
+-- keeps the management mode with which it started.
+--
+g.test_configuration_during_upgrade = function(g)
+    g.server:exec(function()
+        local fiber = require('fiber')
+        local schema = require('vshard.storage.schema')
+        schema.errinj.ERRINJ_UPGRADE_DELAY = true
+        local upgrader = fiber.create(schema.upgrade, schema.latest_version,
+                                      'storage', 'storage')
+        upgrader:set_joinable(true)
+        local configurer = fiber.create(schema.cfg, {
+            shard_index = 'bucket_id',
+            schema_management_mode = 'manual_access',
+        })
+        configurer:set_joinable(true)
+        ilt.assert_equals(schema.shard_index, nil)
+        ilt.assert_equals(schema.management_mode, 'auto')
+        ilt.assert_not_equals(configurer:status(), 'dead')
+        schema.errinj.ERRINJ_UPGRADE_DELAY = false
+        ilt.assert(upgrader:join())
+        ilt.assert(configurer:join())
+        ilt.assert_equals(schema.shard_index, 'bucket_id')
+        ilt.assert_equals(schema.management_mode, 'manual_access')
+        ilt.assert(box.schema.user.exists('storage'))
+    end)
+end
