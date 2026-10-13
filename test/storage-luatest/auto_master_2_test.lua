@@ -222,3 +222,54 @@ test_group.test_turn_off_during_enable = function(g)
         ivshard.storage.cfg(cfg, box.info.uuid)
     end, {global_cfg})
 end
+
+--
+-- Failing role callbacks must not leave master services partly started or
+-- stopped. The watcher reports the error after completing the role change.
+--
+test_group.test_master_trigger_errors = function(g)
+    g.replica_1_a:exec(function()
+        local internal = ivshard.storage.internal
+        local service = internal.instance_watch_service
+        local was_read_only = box.info.ro
+        box.cfg{read_only = true}
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_not(internal.is_master)
+        end)
+
+        local function on_enable()
+            error('injected master enable failure')
+        end
+        ivshard.storage.on_master_enable(on_enable)
+        box.cfg{read_only = false}
+        ivtest.service_wait_for_error(service,
+                                      'injected master enable failure')
+        ivshard.storage.on_master_enable(nil, on_enable)
+        ilt.assert(internal.is_master)
+        ilt.assert_not_equals(internal.collect_bucket_garbage_fiber, nil)
+        ilt.assert_not_equals(internal.recovery_fiber, nil)
+        ilt.assert_not_equals(internal.rebalancer_fiber, nil)
+        ilt.assert(internal.master_sync_fiber ~= nil or
+                   internal.is_bucket_in_sync)
+
+        local function on_disable()
+            error('injected master disable failure')
+        end
+        ivshard.storage.on_master_disable(on_disable)
+        box.cfg{read_only = true}
+        ivtest.service_wait_for_error(service,
+                                      'injected master disable failure')
+        ivshard.storage.on_master_disable(nil, on_disable)
+        ilt.assert_not(internal.is_master)
+        ilt.assert_equals(internal.collect_bucket_garbage_fiber, nil)
+        ilt.assert_equals(internal.recovery_fiber, nil)
+        ilt.assert_equals(internal.rebalancer_fiber, nil)
+        ilt.assert_equals(internal.master_sync_fiber, nil)
+        ilt.assert_not(internal.is_bucket_in_sync)
+
+        box.cfg{read_only = was_read_only}
+        ilt.helpers.retrying({timeout = iwait_timeout}, function()
+            ilt.assert_equals(internal.is_master, not was_read_only)
+        end)
+    end)
+end
