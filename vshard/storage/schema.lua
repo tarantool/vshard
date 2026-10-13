@@ -1,4 +1,5 @@
 local llog = require('log')
+local lfiber = require('fiber')
 local lutil = require('vshard.util')
 local lvexports = require('vshard.storage.exports')
 
@@ -13,6 +14,8 @@ if not M then
         -- Flag whether Tarantool core version was already checked and the
         -- schema is up to date with this version.
         is_core_up_to_date = false,
+        -- Latch shared by schema upgrades across module reloads.
+        upgrade_latch = lutil.latch_new(),
         -- Index which is a trigger to shard its space by numbers in this index.
         -- It must have at first part either unsigned, or integer or number type
         -- and be not nullable. Values in this part are considered as bucket
@@ -23,11 +26,15 @@ if not M then
         management_mode = 'auto',
         errinj = {
             ERRINJ_UPGRADE = false,
+            ERRINJ_UPGRADE_DELAY = false,
         },
     }
 else
     M.module_version = M.module_version + 1
     M.is_core_up_to_date = false
+    if M.upgrade_latch == nil then
+        M.upgrade_latch = lutil.latch_new()
+    end
 end
 
 --
@@ -179,7 +186,7 @@ local schema_upgrade_handlers = {
     }
 }
 
-local function schema_upgrade(target_version, username, password)
+local function schema_upgrade_impl(target_version, username, password)
     local _schema = box.space._schema
     local is_old_versioning = _schema:get({'oncevshard:storage:1'}) ~= nil
     local version = schema_current_version()
@@ -203,6 +210,9 @@ local function schema_upgrade(target_version, username, password)
             llog.info("Upgrade vshard schema to %s", next_version)
             local exports = schema_find_exports_for_vshard_version(next_version)
             exports = lvexports.compile(exports)
+            while M.errinj.ERRINJ_UPGRADE_DELAY do
+                lfiber.sleep(0.01)
+            end
             box.atomic(function()
                 if errinj == 'begin' then
                     error('Errinj in begin')
@@ -221,6 +231,11 @@ local function schema_upgrade(target_version, username, password)
         end
     end
     schema_upgrade_core_features()
+end
+
+local function schema_upgrade(target_version, username, password)
+    return lutil.latch_exec(M.upgrade_latch, schema_upgrade_impl,
+                           target_version, username, password)
 end
 
 --

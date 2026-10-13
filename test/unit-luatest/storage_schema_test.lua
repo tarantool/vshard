@@ -45,3 +45,35 @@ g.test_read_only_upgrade = function(g)
         ilt.assert_equals(schema.current_version(), schema.latest_version)
     end)
 end
+
+--
+-- A waiting upgrade to an older target must succeed when the first upgrade
+-- fails after reaching that target.
+--
+g.test_concurrent_lower_target = function(g)
+    g.server:exec(function()
+        local fiber = require('fiber')
+        local schema = require('vshard.storage.schema')
+        local old_version = schema.version_make({0, 1, 16, 0})
+        schema.upgrade_handlers[2].upgrade = function()
+            error('injected upgrade failure')
+        end
+        schema.errinj.ERRINJ_UPGRADE_DELAY = true
+        local upgrader = fiber.create(pcall, schema.upgrade,
+                                      schema.latest_version,
+                                      'storage', 'storage')
+        upgrader:set_joinable(true)
+        local waiter = fiber.create(schema.upgrade, old_version,
+                                    'storage', 'storage')
+        waiter:set_joinable(true)
+        ilt.assert_not_equals(waiter:status(), 'dead')
+        schema.errinj.ERRINJ_UPGRADE_DELAY = false
+        local joined, ok, err = upgrader:join()
+        ilt.assert(joined)
+        ilt.assert_not(ok)
+        ilt.assert_str_contains(err, 'injected upgrade failure')
+        ilt.assert(waiter:join())
+        ilt.assert_equals(schema.current_version(), old_version)
+        ilt.assert(schema.is_core_up_to_date)
+    end)
+end
