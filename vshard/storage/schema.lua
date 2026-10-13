@@ -3,14 +3,13 @@ local lutil = require('vshard.util')
 local lvexports = require('vshard.storage.exports')
 
 local MODULE_INTERNALS = '__module_vshard_storage_schema'
--- Update when change behaviour of anything in the file, to be able to reload.
-local MODULE_VERSION = 1
 
 local M = rawget(_G, MODULE_INTERNALS)
 if not M then
     M = {
         ----------------------- Common module attributes -----------------------
-        module_version = MODULE_VERSION,
+        -- Reload counter used to distinguish old and new upgrade code.
+        module_version = 0,
         -- Flag whether Tarantool core version was already checked and the
         -- schema is up to date with this version.
         is_core_up_to_date = false,
@@ -27,8 +26,16 @@ if not M then
         },
     }
 else
-    return M
+    M.module_version = M.module_version + 1
+    M.is_core_up_to_date = false
 end
+
+--
+-- Capture the counter at module load: an upgrade may yield before reaching
+-- schema_upgrade_core_features(). Reading M.module_version there could let
+-- old code mark the new module's exports as deployed after a reload.
+--
+local module_version = M.module_version
 
 local schema_version_mt = {
     __tostring = function(self)
@@ -148,7 +155,11 @@ local function schema_upgrade_core_features()
     local version = schema_current_version()
     local exports = schema_find_exports_for_vshard_version(version)
     box.atomic(lvexports.deploy_funcs, lvexports.compile(exports))
-    M.is_core_up_to_date = true
+    -- An upgrade started before reload must not mark the new code's core
+    -- features as deployed.
+    if M.module_version == module_version then
+        M.is_core_up_to_date = true
+    end
 end
 
 local schema_latest_version = schema_version_make({0, 1, 41, 0})
@@ -254,4 +265,5 @@ M.version_make = schema_version_make
 M.bootstrap_first_version = schema_init_0_1_15_0
 M.cfg = schema_cfg
 
+rawset(_G, MODULE_INTERNALS, M)
 return M
