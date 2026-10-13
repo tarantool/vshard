@@ -3872,9 +3872,12 @@ local function master_on_disable()
     if rs.master ~= nil then
         rs:update_master(rs.master.id, nil)
     end
-    M._on_master_disable:run()
+    local ok, err = pcall(M._on_master_disable.run, M._on_master_disable)
     master_role_update()
     rebalancer_role_update()
+    if not ok then
+        error(err, 0)
+    end
 end
 
 local function master_on_enable()
@@ -3889,9 +3892,12 @@ local function master_on_enable()
         local old_master_id = rs.master and rs.master.id
         M.this_replicaset:update_master(old_master_id, M.this_replica.id)
     end
-    M._on_master_enable:run()
+    local ok, err = pcall(M._on_master_enable.run, M._on_master_enable)
     master_role_update()
     rebalancer_role_update()
+    if not ok then
+        error(err, 0)
+    end
 end
 
 local function master_auto_synchronize()
