@@ -1,4 +1,5 @@
 local t = require('luatest')
+local fiber = require('fiber')
 local luuid = require('uuid')
 local server = require('test.luatest_helpers.server')
 local vutil = require('vshard.util')
@@ -318,4 +319,101 @@ test_group.test_vclock_compare = function()
     -- vclock is nil
     t.assert_not(vclock_compare({[1] = 2}, nil, 1))
     t.assert_not(vclock_compare(nil, {[1] = 2}, 1))
+end
+
+--
+-- Only one fiber may hold the latch, even if the holder yields. Waiting
+-- fibers must resume after it is released.
+--
+test_group.test_latch = function()
+    local latch = vutil.latch_new()
+    local count = 0
+    local workers = {}
+    vutil.latch_exec(latch, function()
+        for i = 1, 2 do
+            workers[i] = fiber.create(vutil.latch_exec, latch, function()
+                count = count + 1
+                local value = count
+                fiber.sleep(0)
+                t.assert_equals(count, value)
+            end)
+            workers[i]:set_joinable(true)
+        end
+        t.assert_equals(count, 0)
+    end)
+    for _, worker in ipairs(workers) do
+        t.assert(worker:join())
+    end
+    t.assert_equals(count, 2)
+end
+
+--
+-- Canceling the first waiter after unlock but before it resumes must not leave
+-- the other waiter asleep, as would happen if unlock used signal().
+--
+test_group.test_latch_cancel_waiter = function()
+    local latch = vutil.latch_new()
+    local count = 0
+    local workers = {}
+    vutil.latch_exec(latch, function()
+        for i = 1, 2 do
+            workers[i] = fiber.create(vutil.latch_exec, latch, function()
+                count = count + 1
+            end)
+            workers[i]:set_joinable(true)
+        end
+    end)
+    workers[1]:cancel()
+    local ok, err = workers[1]:join()
+    t.assert_not(ok)
+    t.assert_equals(err.type, 'FiberIsCancelled')
+    t.assert(workers[2]:join())
+    t.assert_equals(count, 1)
+end
+
+test_group.test_latch_exec_results = function()
+    local latch = vutil.latch_new()
+    local function echo(...)
+        return ...
+    end
+    local function pack(...)
+        return {n = select('#', ...), ...}
+    end
+    t.assert_equals(pack(vutil.latch_exec(latch, echo)), {n = 0})
+    t.assert_not(latch.is_locked)
+    t.assert_equals(pack(vutil.latch_exec(latch, echo, nil, false, 42, nil)),
+                    {n = 4, [2] = false, [3] = 42})
+    t.assert_not(latch.is_locked)
+end
+
+test_group.test_latch_exec_error = function()
+    local latch = vutil.latch_new()
+    for _, expected in ipairs({'injected error', {}}) do
+        local ok, err = pcall(vutil.latch_exec, latch, error, expected, 0)
+        t.assert_not(ok)
+        t.assert(err == expected)
+        t.assert_not(latch.is_locked)
+    end
+end
+
+--
+-- Canceling a yielding callback must release the latch and wake its waiters.
+--
+test_group.test_latch_exec_cancel_holder = function()
+    local latch = vutil.latch_new()
+    local cond = fiber.cond()
+    local holder = fiber.create(vutil.latch_exec, latch, function()
+        cond:wait()
+    end)
+    holder:set_joinable(true)
+    local waiter = fiber.create(vutil.latch_exec, latch, function()
+        return 42
+    end)
+    waiter:set_joinable(true)
+    holder:cancel()
+    local ok, err = holder:join()
+    t.assert_not(ok)
+    t.assert_equals(err.type, 'FiberIsCancelled')
+    t.assert_equals({waiter:join()}, {true, 42})
+    t.assert_not(latch.is_locked)
 end
