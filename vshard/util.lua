@@ -298,6 +298,51 @@ local function table_keys(src)
     return keys
 end
 
+local function latch_lock(latch)
+    while latch.is_locked do
+        fiber.testcancel()
+        latch.cond:wait()
+    end
+    latch.is_locked = true
+end
+
+local function latch_unlock(latch)
+    assert(latch.is_locked)
+    latch.is_locked = false
+    -- A canceled waiter must not prevent the others from acquiring the latch.
+    latch.cond:broadcast()
+end
+
+--
+-- A separate helper keeps callback results in varargs while unlocking, so
+-- trailing nils are preserved without allocating a temporary results table.
+--
+local function latch_exec_complete(latch, ok, ...)
+    latch_unlock(latch)
+    if not ok then
+        error((...), 0)
+    end
+    return ...
+end
+
+--
+-- Release the latch even if func raises, including fiber cancellation.
+-- Preserve all return values and the original error object.
+--
+local function latch_exec(latch, func, ...)
+    latch_lock(latch)
+    return latch_exec_complete(latch, pcall(func, ...))
+end
+
+--
+-- A fiber latch with cancellable waits and no FIFO ordering. Unlocking does
+-- not yield. Keep the state separate from the implementation so it can survive
+-- module reloads.
+--
+local function latch_new()
+    return {is_locked = false, cond = fiber.cond()}
+end
+
 local function fiber_cond_wait_xc(cond, timeout)
     -- Handle negative timeout specifically - otherwise wait() will throw an
     -- ugly usage error.
@@ -597,6 +642,8 @@ return {
     table_equals = table_equals,
     table_is_numeric = table_is_numeric,
     table_keys = table_keys,
+    latch_new = latch_new,
+    latch_exec = latch_exec,
     fiber_cond_wait = fiber_cond_wait,
     fiber_is_self_canceled = fiber_is_self_canceled,
     index_min = index_min,
