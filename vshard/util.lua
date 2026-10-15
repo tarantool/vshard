@@ -219,8 +219,8 @@ local function version_is_at_least(...)
     return tnt_version >= lversion.new(...)
 end
 
-if not version_is_at_least(1, 10, 1) then
-    error("VShard supports only Tarantool >= 1.10.1")
+if not version_is_at_least(2, 11, 0, nil, 0, 0) then
+    error("VShard supports only Tarantool >= 2.11.0")
 end
 
 --
