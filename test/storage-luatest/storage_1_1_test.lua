@@ -763,3 +763,28 @@ test_group.test_bucket_generation_is_bumped_on_send = function(g)
         _G.bucket_gc_wait()
     end, {bid, gen, g.replica_1_a:replicaset_uuid()})
 end
+
+--
+-- Switching between auto and manual_access must preserve the permissions
+-- needed to transfer buckets in both directions.
+--
+test_group.test_bucket_send_after_management_mode_change = function(g)
+    local cfg = table.deepcopy(global_cfg)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
+    local bid = vtest.storage_first_bucket(g.replica_1_a)
+    for _, mode in ipairs({'manual_access', 'auto'}) do
+        cfg.schema_management_mode = mode
+        vtest.cluster_cfg(g, cfg)
+        for _, pair in ipairs({{g.replica_1_a, g.replica_2_a},
+                               {g.replica_2_a, g.replica_1_a}}) do
+            pair[1]:exec(function(bid, uuid)
+                local ok, err = ivshard.storage.bucket_send(
+                    bid, uuid, {timeout = iwait_timeout})
+                ilt.assert_equals(err, nil)
+                ilt.assert(ok)
+                _G.bucket_gc_wait()
+            end, {bid, pair[2]:replicaset_uuid()})
+        end
+    end
+end
