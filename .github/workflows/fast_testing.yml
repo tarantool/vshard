@@ -28,7 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         tarantool:
-          - '1.10'
           - '2.11'
           - '3.2'
           - '3.3'
