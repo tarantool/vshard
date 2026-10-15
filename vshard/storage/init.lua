@@ -838,25 +838,30 @@ local function schema_install_triggers()
     M.bucket_on_truncate = bucket_on_truncate_f
 end
 
-local function schema_install_on_replace(_, new)
-    -- Wait not just for _bucket to appear, but for the entire
-    -- schema. This might be important if the schema will ever
-    -- consist of more than just _bucket.
-    if new == nil or new[1] ~= 'vshard_version' then
-        return
-    end
+local function schema_install_on_commit_xc()
     schema_install_triggers()
-
     local _schema = box.space._schema
-    local ok, err = pcall(_schema.on_replace, _schema, nil, M.schema_on_replace)
-    if not ok then
-        log.warn('Could not drop trigger from _schema inside of the '..
-                 'trigger: %s', err)
-    end
+    _schema:on_replace(nil, M.schema_on_replace)
     M.schema_on_replace = nil
     -- Drop the caches which might have been created while the
     -- schema was being replicated.
     bucket_generation_increment()
+end
+
+local function schema_install_on_commit()
+    -- An exception escaping an on_commit trigger would panic the instance.
+    local ok, err = pcall(schema_install_on_commit_xc)
+    if not ok then
+        log.error('Could not install schema triggers after commit: %s', err)
+    end
+end
+
+local function schema_install_on_replace(_, new)
+    -- Wait for the entire schema to commit. Lua triggers survive rollback
+    -- and could otherwise remain on a space reusing the aborted _bucket ID.
+    if new ~= nil and new[1] == 'vshard_version' then
+        box.on_commit(schema_install_on_commit)
+    end
 end
 
 --
