@@ -59,6 +59,15 @@ test_group.before_each(function(g)
             end)
         end)
     end
+    g.replica_1_a:exec(function(cfg)
+        require('vshard.storage.schema').cfg(cfg)
+        rawset(_G, 'schema_upgrade', function()
+            local schema = require('vshard.storage.schema')
+            box.session.su('admin', schema.upgrade,
+                           schema.latest_version,
+                           'storage', 'storage')
+        end)
+    end, {g.cfg})
 end)
 
 test_group.after_each(function(g)
@@ -89,4 +98,81 @@ test_group.test_change_management_mode = function(g)
         ilt.assert_equals(schema.current_version(), schema.latest_version)
         ilt.assert_equals(ivshard.storage.buckets_count(), 3)
     end, {cfg})
+end
+
+--
+-- gh-671: failing after _bucket creation must leave no partial schema, so a
+-- later bootstrap attempt can succeed.
+--
+test_group.test_bootstrap_rollback = function(g)
+    g.replica_1_a:exec(function()
+        local is_called = false
+        local function fail_index(_, new)
+            local bucket = box.space._bucket
+            if new and bucket and new[1] == bucket.id then
+                ilt.assert_equals(#bucket:format(), 3)
+                is_called = true
+                error('injected bootstrap failure')
+            end
+            return new
+        end
+        box.space._index:before_replace(fail_index)
+        ilt.assert_error_msg_contains('injected bootstrap failure',
+                                      _G.schema_upgrade)
+        box.space._index:before_replace(nil, fail_index)
+        ilt.assert(is_called)
+        ilt.assert_equals(box.space._bucket, nil)
+
+        _G.schema_upgrade()
+        local bucket = box.space._bucket
+        ilt.assert(bucket.index.pk)
+        ilt.assert(bucket.index.status)
+        ilt.assert(box.schema.user.exists('storage'))
+        bucket:insert{1, 'active'}
+        ilt.assert_equals(bucket.index.status:count{'active'}, 1)
+    end)
+end
+
+--
+-- Triggers installed during failed bootstrap must not survive rollback or
+-- attach to another space that reuses the aborted _bucket ID.
+--
+test_group.test_delayed_triggers_after_rollback = function(g)
+    g.replica_1_a:exec(function(cfg)
+        local storage = ivshard.storage
+        local bucket_id
+        local function fail_version(_, new)
+            if new and new[1] == 'vshard_version' then
+                bucket_id = box.space._bucket.id
+                error('injected bootstrap failure')
+            end
+        end
+        -- Register before cfg() so the delayed installer runs before failure.
+        -- Tarantool runs triggers in reverse registration order, so VShard
+        -- registers its on_commit callback before fail_version() throws.
+        box.space._schema:on_replace(fail_version)
+        local _, rs = next(cfg.sharding)
+        rs.master = nil
+        rs.replicas[box.info.uuid].read_only = true
+        storage.cfg(cfg, box.info.uuid)
+        local internal = storage.internal
+        local delayed = internal.schema_on_replace
+        ilt.assert(delayed)
+        box.cfg{read_only = false}
+        ilt.assert_error_msg_contains('injected bootstrap failure',
+                                      _G.schema_upgrade)
+        box.space._schema:on_replace(nil, fail_version)
+        ilt.assert_equals(box.space._bucket, nil)
+        ilt.assert_is(internal.schema_on_replace, delayed)
+        ilt.assert_equals(#box.space._truncate:on_replace(), 0)
+
+        local other = box.schema.space.create('other')
+        ilt.assert_equals(other.id, bucket_id)
+        ilt.assert_equals(#other:on_replace(), 0)
+        _G.schema_upgrade()
+        ilt.assert_equals(#box.space._bucket:on_replace(), 1)
+        ilt.assert_equals(#box.space._truncate:on_replace(), 1)
+        ilt.assert_equals(internal.schema_on_replace, nil)
+        ilt.assert_equals(#box.space._schema:on_replace(), 0)
+    end, {g.cfg})
 end

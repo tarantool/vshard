@@ -79,7 +79,7 @@ end
 -- The schema first time appeared with 0.1.16. So this function describes schema
 -- before that - 0.1.15.
 --
-local function schema_init_0_1_15_0(username, password)
+local function schema_init_0_1_15_0_impl(username, password)
     llog.info("Initializing schema %s", schema_version_make({0, 1, 15, 0}))
 
     local bucket = box.schema.space.create('_bucket')
@@ -107,18 +107,15 @@ local function schema_init_0_1_15_0(username, password)
     box.space._schema:replace({'vshard_version', 0, 1, 15, 0})
 end
 
+local function schema_init_0_1_15_0(username, password)
+    box.atomic(schema_init_0_1_15_0_impl, username, password)
+end
+
 local function schema_upgrade_to_0_1_16_0()
     -- Since 0.1.16.0 the old versioning by 'oncevshard:storage:<number>' is
     -- dropped because it is not really extendible nor understandable.
-    llog.info("Insert 'vshard_version' into _schema")
-    box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
+    llog.info("Remove the legacy schema version record")
     box.space._schema:delete({'oncevshard:storage:1'})
-end
-
-local function schema_downgrade_from_0_1_16_0()
-    llog.info("Remove 'vshard_version' from _schema")
-    box.space._schema:replace({'oncevshard:storage:1'})
-    box.space._schema:delete({'vshard_version'})
 end
 
 local function schema_upgrade_to_0_1_41_0()
@@ -129,17 +126,6 @@ local function schema_upgrade_to_0_1_41_0()
         {'destination', 'string', is_nullable = true},
         {'opts', 'map', is_nullable = true}
     })
-    box.space._schema:replace({'vshard_version', 0, 1, 41, 0})
-end
-
-local function schema_downgrade_from_0_1_41_0()
-    llog.info("Remove 'opts' attribute from _bucket space")
-    box.space._bucket:format({
-        {'id', 'unsigned'},
-        {'status', 'string'},
-        {'destination', 'string', is_nullable = true},
-    })
-    box.space._schema:replace({'vshard_version', 0, 1, 16, 0})
 end
 
 local function schema_current_version()
@@ -161,27 +147,24 @@ local function schema_upgrade_core_features()
     end
     local version = schema_current_version()
     local exports = schema_find_exports_for_vshard_version(version)
-    lvexports.deploy_funcs(lvexports.compile(exports))
+    box.atomic(lvexports.deploy_funcs, lvexports.compile(exports))
     M.is_core_up_to_date = true
 end
 
 local schema_latest_version = schema_version_make({0, 1, 41, 0})
 
--- Every handler should be atomic. It is either applied whole, or not applied at
--- all. Atomic upgrade helps to downgrade in case something goes wrong. At least
--- by doing restart with the latest successfully applied version. However,
--- atomicity does not prohibit yields, in case the upgrade, for example, affects
--- huge number of tuples (_bucket records, maybe).
+-- Each handler runs in a transaction with its exports, grants, and version
+-- update. A yielding DDL operation, such as a format check on a non-empty
+-- space, must be the first statement. Handlers must not yield explicitly,
+-- because this aborts transactions without MVCC.
 local schema_upgrade_handlers = {
     {
         version = schema_version_make({0, 1, 16, 0}),
         upgrade = schema_upgrade_to_0_1_16_0,
-        downgrade = schema_downgrade_from_0_1_16_0
     },
     {
         version = schema_version_make({0, 1, 41, 0}),
         upgrade = schema_upgrade_to_0_1_41_0,
-        downgrade = schema_downgrade_from_0_1_41_0
     }
 }
 
@@ -199,8 +182,6 @@ local function schema_upgrade(target_version, username, password)
     end
     assert(schema_upgrade_handlers[#schema_upgrade_handlers].version ==
            schema_latest_version)
-    local prev_version = version
-    local ok, err1, err2
     local errinj = M.errinj.ERRINJ_UPGRADE
     for _, handler in pairs(schema_upgrade_handlers) do
         local next_version = handler.version
@@ -209,57 +190,24 @@ local function schema_upgrade(target_version, username, password)
         end
         if next_version > version then
             llog.info("Upgrade vshard schema to %s", next_version)
-            if errinj == 'begin' then
-                ok, err1 = false, 'Errinj in begin'
-            else
-                ok, err1 = pcall(function()
-                    local exports = schema_find_exports_for_vshard_version(
-                        next_version)
-                    exports = lvexports.compile(exports)
-                    handler.upgrade()
-                    if M.management_mode == 'auto' then
-                        lvexports.deploy_funcs(exports)
-                        lvexports.deploy_privs(exports, username)
-                    end
-                end)
-                if ok and errinj == 'end' then
-                    ok, err1 = false, 'Errinj in end'
+            local exports = schema_find_exports_for_vshard_version(next_version)
+            exports = lvexports.compile(exports)
+            box.atomic(function()
+                if errinj == 'begin' then
+                    error('Errinj in begin')
                 end
-            end
-            if not ok then
-                -- Rollback in case the handler started a transaction before the
-                -- exception.
-                box.rollback()
-                llog.info("Couldn't upgrade schema to %s: '%s'. Revert to %s",
-                          next_version, err1, prev_version)
-                ok, err2 = pcall(function()
-                    local exports = schema_find_exports_for_vshard_version(
-                        prev_version)
-                    exports = lvexports.compile(exports)
-                    handler.downgrade()
-                    if M.management_mode == 'auto' then
-                        lvexports.deploy_funcs(exports)
-                        lvexports.deploy_privs(exports, username)
-                    end
-                end)
-                if not ok then
-                    llog.info("Couldn't downgrade schema to %s - fatal error: "..
-                              "'%s'", prev_version, err2)
-                    os.exit(-1)
+                handler.upgrade()
+                if M.management_mode == 'auto' then
+                    lvexports.deploy_funcs(exports)
+                    lvexports.deploy_privs(exports, username)
                 end
-                error(err1)
-            end
-            ok, err1 = pcall(_schema.replace, _schema,
-                             {'vshard_version', unpack(next_version)})
-            if not ok then
-                llog.info("Upgraded schema to %s but couldn't update _schema "..
-                          "'vshard_version' - fatal error: '%s'", next_version,
-                          err1)
-                os.exit(-1)
-            end
+                _schema:replace({'vshard_version', unpack(next_version)})
+                if errinj == 'end' then
+                    error('Errinj in end')
+                end
+            end)
             llog.info("Successful vshard schema upgrade to %s", next_version)
         end
-        prev_version = next_version
     end
     schema_upgrade_core_features()
 end
