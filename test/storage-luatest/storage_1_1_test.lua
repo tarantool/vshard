@@ -587,6 +587,7 @@ test_group.test_gc_with_non_anon_replica_in_cluster = function(g)
         local ok, err = ivshard.storage.bucket_send(bid, dst, opts)
         ilt.assert_equals(err, nil, 'bucket_send no error')
         ilt.assert(ok, 'bucket_send ok')
+        _G.bucket_gc_wait()
     end, {bid, g.replica_1_a:replicaset_uuid()})
 
     g.replica_1_a:exec(function(id)
