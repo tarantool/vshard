@@ -226,6 +226,21 @@ for code, err in pairs(error_message_template) do
 end
 
 --
+-- The error is stringified while it is logged, so this must not throw.
+-- json.encode() does on the values it can't encode, e.g. on a function or on a
+-- table key, which is not a number or a string.
+--
+local function error_tostring(err)
+    local ok, res = pcall(json.encode, err)
+    if ok then
+        return res
+    end
+    return tostring(err.message)
+end
+
+local error_mt = {__tostring = error_tostring}
+
+--
 -- There are 2 error types:
 -- * box_error - it is created on tarantool errors: client error,
 --   oom error, socket error etc. It has type = one of tarantool
@@ -235,13 +250,12 @@ end
 --   'ShardingError', one of codes below and optional
 --   message.
 --
-local box_error_mt = {__tostring = json.encode}
 local function box_error(original_error)
-    local res = setmetatable(original_error:unpack(), box_error_mt)
+    local res = setmetatable(original_error:unpack(), error_mt)
     local pos = res
     local prev = pos.prev
     while prev ~= nil do
-        prev = setmetatable(prev:unpack(), box_error_mt)
+        prev = setmetatable(prev:unpack(), error_mt)
         pos.prev = prev
         pos = prev
         prev = pos.prev
@@ -265,7 +279,7 @@ local function vshard_error(code, ...)
     assert(#args == args_passed_cnt,
            string.format('Wrong number of arguments are passed to %s error',
                          format.name))
-    local ret = setmetatable({}, {__tostring = json.encode})
+    local ret = setmetatable({}, error_mt)
     -- Save error arguments.
     for i = 1, #args do
         ret[args[i]] = select(i, ...)
@@ -288,7 +302,7 @@ local function make_error(e)
     elseif type(e) == 'string' then
         return box_error(box.error.new(box.error.PROC_LUA, e))
     elseif type(e) == 'table' then
-        return setmetatable(e, {__tostring = json.encode})
+        return setmetatable(e, error_mt)
     else
         return e
     end
