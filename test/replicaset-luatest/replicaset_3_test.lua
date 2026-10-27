@@ -1186,3 +1186,16 @@ test_group.test_conn_recovery_service_during_replica_backoff = function(g)
     g.replica_1_b:exec(function() ivshard.storage.enable() end)
     wait_conn_recovery_service_activity(rs, uuid_1_b, 'idling')
 end
+
+test_group.test_request_timeout_mismatch = function()
+    local _, rs = next(vreplicaset.buildall(global_cfg))
+    local request_timeout_opts = {timeout = 0.01, request_timeout = 0.02}
+    local ret, err = rs:callro('get_uuid', {}, request_timeout_opts)
+    t.assert_equals(ret, nil)
+    t.assert_not_equals(err, nil)
+    t.assert_equals(err.name, 'REQUEST_TIMEOUT_MISMATCH')
+    t.assert_equals(err.timeout, 0.01)
+    t.assert_equals(err.request_timeout, 0.02)
+    t.assert_str_contains(err.message, 'request_timeout')
+    t.assert_str_contains(err.message, 'must be <=')
+end

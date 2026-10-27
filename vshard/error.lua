@@ -212,6 +212,11 @@ local error_message_template = {
         msg = "Master %s of replicaset %s has not synchronized yet",
         args = {'replica', 'replicaset'},
     },
+    [43] = {
+        name = 'REQUEST_TIMEOUT_MISMATCH',
+        msg = "request_timeout (%d) must be <= timeout (%d)",
+        args = {'request_timeout', 'timeout'},
+    },
 }
 
 --

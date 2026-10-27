@@ -914,7 +914,11 @@ local function replicaset_template_multicallro(prefer_replica, balance)
         opts = opts and table.copy(opts) or {}
         local timeout = opts.timeout or consts.CALL_TIMEOUT_MAX
         local request_timeout = opts.request_timeout or timeout
-        assert(request_timeout <= timeout)
+        if request_timeout > timeout then
+            return nil, lerror.vshard(lerror.code.REQUEST_TIMEOUT_MISMATCH,
+                request_timeout, timeout
+            )
+        end
         opts.request_timeout = nil
         local net_status, storage_status, retval, err, replica
         if timeout <= 0 or request_timeout <= 0 then
