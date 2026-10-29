@@ -21,3 +21,10 @@ build
 .rocks
 build.luarocks
 .DS_Store
+
+# Per-developer local setup notes (agent-generated, machine-specific)
+docs/agents/local_setup.md
+
+# Local findings files of the agent-driven reviews (see
+# docs/agents/review.md)
+/reviews/
