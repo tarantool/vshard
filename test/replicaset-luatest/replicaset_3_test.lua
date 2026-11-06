@@ -1,4 +1,5 @@
 local fiber = require('fiber')
+local json = require('json')
 local t = require('luatest')
 local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
@@ -1185,4 +1186,70 @@ test_group.test_conn_recovery_service_during_replica_backoff = function(g)
     wait_conn_recovery_service_activity(rs, uuid_1_b, 'backoff')
     g.replica_1_b:exec(function() ivshard.storage.enable() end)
     wait_conn_recovery_service_activity(rs, uuid_1_b, 'idling')
+end
+
+--
+-- gh-651: errors are logged as json no matter their kind.
+--
+test_group.test_replica_call_logs_errors_as_json = function()
+    local server = server:new({alias = 'node'})
+    server:start()
+    server:exec(function(cfg)
+        -- Disable the ratelimiter, so that every error is logged.
+        require('vshard.consts').LOG_RATELIMIT_INTERVAL = 0
+        local _, rs = next(require('vshard.replicaset').buildall(cfg))
+        rs:wait_connected_all({timeout = 10})
+        rawset(_G, 'replica', rs.master)
+        -- Make the call fail with the given error as if it was thrown by
+        -- the net.box.
+        rawset(_G, 'call_failing_with', function(func, err)
+            _G.replica.conn.call = function() error(err, 0) end
+            local ok, _, res = _G.replica:call(func, {}, {timeout = 10})
+            ilt.assert_not(ok)
+            return res
+        end)
+    end, {global_cfg})
+
+    -- Returns the error object printed into the log by the call of the func.
+    local function get_logged_error(func)
+        local line = server:grep_log(
+            string.format("Exception during calling '%s' on .*", func))
+        t.assert(line, string.format("Failed to find '%s' in logs", func))
+        local encoded = line:match('(%b{})%s*$')
+        t.assert(encoded, string.format("Error is not json: %s", line))
+        return json.decode(encoded)
+    end
+
+    -- String.
+    local res = server:exec(function()
+        return _G.call_failing_with('echo_string', 'string error')
+    end)
+    t.assert_equals(res.message, 'string error')
+    t.assert_covers(get_logged_error('echo_string'), {
+        message = 'string error',
+        code = box.error.PROC_LUA,
+    })
+
+    -- Box error.
+    server:exec(function()
+        local err = box.error.new(box.error.NO_CONNECTION)
+        _G.call_failing_with('echo_box', err)
+    end)
+    t.assert_covers(get_logged_error('echo_box'), {
+        code = box.error.NO_CONNECTION,
+    })
+
+    -- VShard error.
+    server:exec(function()
+        local err = require('vshard.error').vshard(
+            require('vshard.error').code.NO_SUCH_REPLICASET, 'rs1')
+        _G.call_failing_with('echo_vshard', err)
+    end)
+    t.assert_covers(get_logged_error('echo_vshard'), {
+        type = 'ShardingError',
+        code = verror.code.NO_SUCH_REPLICASET,
+        name = 'NO_SUCH_REPLICASET',
+    })
+
+    server:drop()
 end
