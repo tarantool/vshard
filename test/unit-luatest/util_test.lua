@@ -321,6 +321,28 @@ test_group.test_vclock_compare = function()
     t.assert_not(vclock_compare(nil, {[1] = 2}, 1))
 end
 
+test_group.test_vclock_compare_sparse = function()
+    local cases = {
+        {{}, {}, 0},
+        {{[3] = 8}, {[3] = 7}, 1},
+        {{[1] = 10, [3] = 8}, {[1] = 10, [3] = 7}, 1},
+        {{[1] = 10}, {[1] = 10, [2] = 1}, -1},
+        {{}, {[3] = 1}, -1},
+        {{[3] = 0}, {}, 0},
+        {{[0] = 99, [3] = 1}, {[0] = 1, [3] = 1}, 0},
+        {{[0] = 99}, {}, 0},
+    }
+    for _, case in ipairs(cases) do
+        local a, b, expected = unpack(case)
+        t.assert_equals(vutil.vclock_compare(a, b), expected)
+        t.assert_equals(vutil.vclock_compare(b, a), -expected)
+    end
+    -- Each clock has a component ahead of the other: neither dominates.
+    local a, b = {[3] = 2}, {[4] = 1}
+    t.assert_equals(vutil.vclock_compare(a, b), nil)
+    t.assert_equals(vutil.vclock_compare(b, a), nil)
+end
+
 --
 -- Only one fiber may hold the latch, even if the holder yields. Waiting
 -- fibers must resume after it is released.

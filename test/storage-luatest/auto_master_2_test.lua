@@ -46,6 +46,56 @@ test_group.test_bootstrap = function(g)
     end)
 end
 
+test_group.test_sync_replica_id_gap = function(g)
+    g.replica_1_a:exec(function(id)
+        local replication = box.info.replication
+        local replica = replication[id]
+        replication[id] = nil
+        replica.id = 3
+        replication[3] = replica
+        local saved = rawget(box.info, 'replication')
+        box.info.replication = replication
+        local ok, err = pcall(function()
+            replica.downstream = {status = 'follow', vclock = {}}
+            local res, err = ivshard.storage.sync(0)
+            ilt.assert_equals(res, nil)
+            ilt.assert_equals(err.code, box.error.TIMEOUT)
+
+            replica.downstream = {
+                status = 'stopped', vclock = box.info.vclock,
+            }
+            res, err = ivshard.storage.sync(0)
+            ilt.assert_equals(res, nil)
+            ilt.assert_equals(err.code, box.error.TIMEOUT)
+
+            replica.downstream.status = 'follow'
+            ilt.assert(ivshard.storage.sync(0))
+        end)
+        box.info.replication = saved
+        ilt.assert(ok, err)
+    end, {g.replica_1_b:instance_id()})
+end
+
+test_group.test_health_replica_id_gap = function(g)
+    g.replica_1_b:exec(function(id)
+        ilt.assert_not(ivshard.storage.internal.is_master)
+        local replication = box.info.replication
+        local master = replication[id]
+        replication[id] = nil
+        master.id = 3
+        replication[3] = master
+        ilt.assert_equals(master.upstream.status, 'follow')
+        local saved = rawget(box.info, 'replication')
+        box.info.replication = replication
+        local ok, info, err = pcall(ivshard.storage._call, 'info',
+                                    {with_health = true})
+        box.info.replication = saved
+        ilt.assert(ok, info)
+        ilt.assert_equals(err, nil)
+        ilt.assert_equals(info.health.master_upstream.status, 'follow')
+    end, {g.replica_1_a:instance_id()})
+end
+
 test_group.test_change = function(g)
     g.replica_1_a:exec(function()
         box.cfg{read_only = true}
