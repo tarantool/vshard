@@ -443,7 +443,7 @@ end
 ---
 --- Compare two vclocks using a component-by-component comparison (i.e. each
 --- component of vclock_1 is compared with the corresponding component
---- of vclock_2). Local components are skipped.
+--- of vclock_2). Missing components are zero. Local components are skipped.
 ---
 --- @return 1 if vclock_1 is strictly greater than vclock_2
 --- @return -1 if vclock_1 is strictly less than vclock_2
@@ -455,17 +455,21 @@ local function vclock_compare(vclock_1, vclock_2)
         return nil
     end
     local le, ge = true, true
-    for i, lsn in ipairs(vclock_1) do
-        if i == 0 then
-            -- Skip local component.
-            goto continue
+    for id, lsn in pairs(vclock_1) do
+        if id ~= 0 then
+            local other = vclock_2[id] or 0
+            le = le and lsn <= other
+            ge = ge and lsn >= other
         end
-        le = le and lsn <= (vclock_2[i] or 0)
-        ge = ge and lsn >= (vclock_2[i] or 0)
-        if not le and not ge then
-            return nil
+    end
+    -- Components absent from the first clock still participate in the order.
+    for id, lsn in pairs(vclock_2) do
+        if id ~= 0 and vclock_1[id] == nil then
+            ge = ge and lsn == 0
         end
-        ::continue::
+    end
+    if not le and not ge then
+        return nil
     end
     if ge and not le then
         return 1

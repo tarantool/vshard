@@ -1362,7 +1362,7 @@ local function wait_lsn(timeout, interval)
     local deadline = fiber_clock() + timeout
     repeat
         local done = true
-        for _, replica in ipairs(box.info.replication) do
+        for _, replica in pairs(box.info.replication) do
             -- We should not check the current instance as there's
             -- no downstream. Moreover, it's not guaranteed that the
             -- first replica is the same as the current one, so ids
@@ -3665,7 +3665,7 @@ local function storage_health_state(timeout)
         return nil, lerror.timeout()
     end
     -- Find master in box.info.replication.
-    for _, replica in ipairs(box.info.replication) do
+    for _, replica in pairs(box.info.replication) do
         if ((master.name ~= nil and replica.name == master.name) or
            (master.uuid ~= nil and replica.uuid == master.uuid)) then
             -- The instance was started without master in box.cfg.replication.
