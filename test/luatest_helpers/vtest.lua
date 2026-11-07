@@ -148,7 +148,8 @@ end
 --
 -- Build new cluster by a given config.
 --
-local function cluster_new(g, cfg)
+local function cluster_new(g, cfg, server_config)
+    server_config = server_config or {}
     if not g.cluster then
         g.cluster = cluster:new({})
     end
@@ -204,6 +205,7 @@ local function cluster_new(g, cfg)
             local server = g.cluster:build_server({
                 alias = replica_name,
                 box_cfg = box_cfg,
+                env = server_config.env,
             }, 'storage.lua')
             g[replica_name] = server
             -- VShard specific details to use in various helper functions.
