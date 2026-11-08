@@ -12,6 +12,7 @@ ignore = {
 }
 
 include_files = {
+    'perf/**/*.lua',
     'vshard/**/*.lua',
     'test/**/*_test.lua',
     'test/luatest_helpers/vtest.lua',
@@ -19,6 +20,7 @@ include_files = {
 }
 
 exclude_files = {
+    'perf/output/**',
     'test/var/*',
 }
 
