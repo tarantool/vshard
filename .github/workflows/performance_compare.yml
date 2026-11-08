@@ -1,0 +1,77 @@
+name: performance_compare
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: performance_compare (${{ matrix.scenario }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: router-pressure
+            args: --replicasets 4 --routers 1 --generators 4
+          - scenario: storage-pressure
+            args: --replicasets 1 --routers 4 --generators 16
+    env:
+      PERF_BRANCH: ${{ github.event.pull_request.head.ref }}
+      PERF_COMMIT: ${{ github.event.pull_request.head.sha }}
+      LC_ALL: C
+      TZ: UTC
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PERF_COMMIT }}
+          persist-credentials: false
+      - name: Setup Tarantool
+        uses: ./.github/actions/setup-tarantool
+        with:
+          tarantool_version: '3.9.0'
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - name: Use the same benchmarks for both versions
+        run: |
+          rm -rf base/perf
+          cp -R perf base/perf
+      - name: Benchmark base
+        working-directory: base
+        env:
+          PERF_BRANCH: ${{ github.event.pull_request.base.ref }}
+          PERF_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tarantool perf/run.lua ${{ matrix.args }} --repetitions 3 \
+            --output perf/output/${{ matrix.scenario }}.json
+      - name: Benchmark PR
+        run: |
+          tarantool perf/run.lua ${{ matrix.args }} --repetitions 3 \
+            --output perf/output/${{ matrix.scenario }}.json
+      - name: Compare results
+        run: |
+          tarantool perf/tools/compare.lua \
+            --base base/perf/output/${{ matrix.scenario }}.json \
+            --head perf/output/${{ matrix.scenario }}.json
+      - name: Save results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-compare-${{ matrix.scenario }}
+          retention-days: 21
+          path: |
+            perf/output/
+            base/perf/output/
+          if-no-files-found: ignore
