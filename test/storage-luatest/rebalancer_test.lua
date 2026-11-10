@@ -756,3 +756,28 @@ test_group.test_ref_change_noticed_during_bucket_send = function(g)
         end)
     end, {g.replica_2_a:replicaset_uuid()})
 end
+
+test_group.test_bucket_send_replica_error = function(g)
+    vtest.cluster_rebalancer_disable(g)
+    vtest.storage_wait_bucket_sync(g.replica_1_a)
+    vtest.storage_wait_bucket_sync(g.replica_2_a)
+    g.replica_1_b:exec(function()
+        rawset(_G, 'storage_call_saved', ivshard.storage._call)
+        ivshard.storage._call = function()
+            local err = box.error.new(box.error.UNSUPPORTED,
+                                      'test', 'remote call')
+            return nil, iverror.make(err)
+        end
+    end)
+
+    local res, err = g.replica_1_a:exec(function(dst)
+        return ivshard.storage.bucket_send(_G.get_first_bucket(), dst)
+    end, {g.replica_2_a:replicaset_uuid()})
+
+    g.replica_1_b:exec(function()
+        ivshard.storage._call = rawget(_G, 'storage_call_saved')
+        rawset(_G, 'storage_call_saved', nil)
+    end)
+    t.assert_equals(res, nil)
+    t.assert_equals(err.code, box.error.UNSUPPORTED)
+end
