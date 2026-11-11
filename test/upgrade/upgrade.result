@@ -182,6 +182,7 @@ vshard.storage._call('test_api', 1, 2, 3)
  |   - storage_bucket_checkpoint
  |   - storage_map
  |   - storage_ref
+ |   - storage_ref_check_existing
  |   - storage_ref_check_with_buckets
  |   - storage_ref_make_with_buckets
  |   - storage_unref
