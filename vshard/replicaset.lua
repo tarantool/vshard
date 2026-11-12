@@ -1923,11 +1923,12 @@ end
 -- Detect not optimal or disconnected replicas. For not optimal
 -- try to update them to optimal, and down priority of
 -- disconnected replicas.
--- @retval true A replica of an replicaset has been changed.
+-- @retval true, <bool> A replica of an replicaset has been changed,
+--                      and whether all replicas are healthy.
 --
 local function replicaset_failover_step(replicaset)
     if not replicaset.replicas or not next(replicaset.replicas) then
-        return false
+        return false, false
     end
     local curr_ts = fiber_clock()
     replicaset_failover_update_health(replicaset, curr_ts)
@@ -1938,11 +1939,19 @@ local function replicaset_failover_step(replicaset)
     if replicaset_failover_need_down_priority(replicaset) then
         replicaset:down_replica_priority()
     end
+    local replica_is_changed = false
     if old_replica ~= replicaset.replica then
         log.info('New replica %s for %s', replicaset.replica, replicaset)
-        return true
+        replica_is_changed = true
     end
-    return false
+    local all_replicas_ok = true
+    for _, r in pairs(replicaset.replicas) do
+        if r.health_status ~= SGREEN then
+            all_replicas_ok = false
+            break
+        end
+    end
+    return replica_is_changed, all_replicas_ok
 end
 
 --
@@ -1982,7 +1991,8 @@ local function replicaset_failover_service_step(replicaset, data)
     end
     data.info:next_iter()
     data.info:set_activity('updating replicas')
-    local ok, replica_is_changed = pcall(replicaset_failover_step, replicaset)
+    local ok, replica_is_changed, all_ok = pcall(replicaset_failover_step,
+                                                 replicaset)
     if not ok then
         data.limiter:log_error(replica_is_changed, data.info:set_status_error(
                    'Error during failovering: %s',
@@ -1990,13 +2000,13 @@ local function replicaset_failover_service_step(replicaset, data)
         replica_is_changed = true
     else
         data.info:set_status_ok()
-        if not data.prev_was_ok then
+        if not data.prev_was_ok and all_ok then
             log.info('All replicas are ok')
         end
     end
-    data.prev_was_ok = not replica_is_changed
+    data.prev_was_ok = all_ok
     local logf
-    if replica_is_changed then
+    if replica_is_changed or not all_ok then
         logf = log.info
     else
         -- In any case it is necessary to periodically log

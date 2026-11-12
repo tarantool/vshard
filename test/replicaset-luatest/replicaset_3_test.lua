@@ -1186,3 +1186,50 @@ test_group.test_conn_recovery_service_during_replica_backoff = function(g)
     g.replica_1_b:exec(function() ivshard.storage.enable() end)
     wait_conn_recovery_service_activity(rs, uuid_1_b, 'idling')
 end
+
+--
+-- gh-500: failover says 'All replicas are ok' only when all replicas
+-- are healthy.
+--
+test_group.test_failover_all_replicas_ok = function(g)
+    local rs = prepare_stateless_balancing_rs()
+    rs:wait_connected_all(timeout_opts)
+    local worker_service = vreplicaset._worker_service_to_func
+    local failover_f = worker_service.replicaset_failover
+    local replica_failover_f = worker_service.replica_failover
+    local data = {}
+
+    for _, r in pairs(rs.replicas) do
+        replica_failover_f(r, {})
+    end
+
+    -- Step 1: All replicas are connected and healthy.
+    failover_f(rs, data)
+    t.assert_equals(data.prev_was_ok, true)
+    t.assert_equals(data.info.status, 'ok')
+
+    -- Step 2: One replica is stopped, its connection fails.
+    local uuid_1_c = g.replica_1_c:instance_uuid()
+    local replica_c = rs.replicas[uuid_1_c]
+    vtest.storage_stop(g.replica_1_c)
+    replica_c.conn:close()
+    replica_c.conn = nil
+
+    t.helpers.retrying(timeout_opts, function()
+        failover_f(rs, data)
+        t.assert_equals(replica_c.health_status, vconst.STATUS.RED)
+        t.assert_equals(data.prev_was_ok, false)
+    end)
+
+    -- Step 3: Replica is restarted and becomes healthy again.
+    vtest.storage_start(g.replica_1_c, global_cfg)
+    rs:wait_connected_all(timeout_opts)
+
+    t.helpers.retrying(timeout_opts, function()
+        replica_failover_f(replica_c, {})
+        failover_f(rs, data)
+        t.assert_equals(replica_c.health_status, vconst.STATUS.GREEN)
+        t.assert_equals(data.prev_was_ok, true)
+        t.assert_equals(data.info.status, 'ok')
+    end)
+end
