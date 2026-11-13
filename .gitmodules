@@ -1,3 +1,6 @@
 [submodule "test/test-run"]
 	path = test-run
 	url = https://github.com/tarantool/test-run.git
+[submodule "luatest"]
+	path = luatest
+	url = https://github.com/tarantool/luatest.git
