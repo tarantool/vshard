@@ -29,6 +29,8 @@ local map_serializer = { __serialize = 'map' }
 local future_wait = util.future_wait
 
 local msgpack_is_object = lmsgpack.is_object
+local MAP_CALLRW_FULL = consts.MAP_CALLRW_MODE.FULL
+local MAP_CALLRW_PARTIAL = consts.MAP_CALLRW_MODE.PARTIAL
 
 if not util.feature.msgpack_object then
     local msg = 'Msgpack object feature is not supported by current '..
@@ -770,59 +772,176 @@ local function router_call(router, bucket_id, opts, ...)
 end
 
 --
+-- Prepares a cluster before sending refs to remote storages:
+--    1) Groups the buckets by replicasets according to the router's cache
+--       in case of partial map_callrw or full map_callrw with split args;
+--    2) Builds a table of replicasets on which refs should be sent;
+--    3) Waits necessary masters until all connections are established;
+--
+local function router_map_callrw_prepare(router, timeout, mode, bucket_ids)
+    local err, err_id
+    local replicasets_to_wait, grouped_buckets = {}, {}
+    local replicasets_all = router.replicasets
+    local deadline = fiber_clock() + timeout
+    if bucket_ids then
+        -- Group the buckets by replicasets according to the router cache.
+        grouped_buckets, err = buckets_group(router, bucket_ids, timeout)
+        if err ~= nil then
+            return nil, err
+        end
+    end
+    if mode == MAP_CALLRW_FULL then
+        replicasets_to_wait = replicasets_all
+    else
+        for rs_id, _ in pairs(grouped_buckets) do
+            table.insert(replicasets_to_wait, replicasets_all[rs_id])
+        end
+    end
+    -- Netbox async requests work only with active connections.
+    -- So, we need to wait for the master connection explicitly.
+    timeout = deadline - fiber_clock()
+    timeout, err, err_id = lreplicaset.wait_masters_connect(
+        replicasets_to_wait, timeout)
+    if not timeout then
+        return nil, err, err_id
+    end
+    return timeout, nil, nil, grouped_buckets
+end
+
+--
+-- Waits until all the future objects are ready. After it returns successfully
+-- the result of each future can be read without blocking.
+--
+local function router_map_callrw_ref_wait(futures, timeout)
+    local deadline = fiber_clock() + timeout
+    for id, future in pairs(futures) do
+        timeout = deadline - fiber_clock()
+        local res, err = future_wait(future, timeout)
+        -- Handle netbox error first.
+        if res == nil then
+            return nil, err, id
+        end
+        -- Ref returns nil,err or bucket count.
+        if res[1] == nil then
+            return nil, res[2], id
+        end
+    end
+    return timeout, nil, nil
+end
+
+--
+-- Handles all buckets which were moved from the remote storages, rewrites the
+-- router's cache and builds a new table of bucket_ids for the next iteration
+-- of partial map_callrw.
+--
+local function router_map_callrw_process_moved(router, results)
+    local bucket_ids = {}
+    for _, res in pairs(results) do
+        if type(res) ~= 'table' or not res.moved then
+            goto continue
+        end
+        local moved = res.moved
+        for _, bucket in pairs(moved) do
+            local bid = bucket.id
+            local dst = bucket.dst
+            -- 'Reset' regardless of 'set'. So as not to
+            -- bother with 'set' errors. If it fails, then
+            -- won't matter. It is a best-effort thing.
+            bucket_reset(router, bid)
+            if dst ~= nil then
+                bucket_set(router, bid, dst)
+            end
+            table.insert(bucket_ids, bid)
+        end
+        ::continue::
+    end
+    return bucket_ids
+end
+
+--
 -- Perform Ref stage of the Ref-Map-Reduce process on all the known replicasets.
 --
-local function router_ref_storage_all(router, timeout)
-    local replicasets = router.replicasets
-    local deadline = fiber_clock() + timeout
-    local err, err_id, res
-    local futures = {}
+local function router_ref_storage_all(router, bucket_ids, timeout, rid)
+    local mode = MAP_CALLRW_FULL
     local bucket_count = 0
+    local err, err_id, grouped_buckets, results, args_ref
+    local future_buckets, future_all, futures = {}, {}, {}
+    local replicasets_all = router.replicasets
     local opts_async = {is_async = true}
-    local rs_count = 0
-    local rid = M.ref_id
-    M.ref_id = rid + 1
-    -- Nil checks are done explicitly here (== nil instead of 'not'), because
-    -- netbox requests return box.NULL instead of nils.
 
-    --
-    -- Ref stage: send.
-    --
-    -- Netbox async requests work only with active connections. Need to wait
-    -- for the connection explicitly.
-    timeout, err, err_id = lreplicaset.wait_masters_connect(
-        replicasets, timeout)
+    timeout, err, err_id, grouped_buckets = router_map_callrw_prepare(
+        router, timeout, mode, bucket_ids)
     if not timeout then
         goto fail
     end
-    for id, rs in pairs(replicasets) do
-        res, err = rs:callrw('vshard.storage._call',
-                              {'storage_ref', rid, timeout}, opts_async)
+    args_ref = {nil, rid, timeout}
+    for rs_id in pairs(replicasets_all) do
+        local buckets = grouped_buckets[rs_id]
+        local target
+        if buckets then
+            args_ref[1] = 'storage_ref_make_with_buckets'
+            args_ref[4] = buckets
+            target = future_buckets
+        else
+            args_ref[1] = 'storage_ref'
+            args_ref[4] = nil
+            target = future_all
+        end
+        local res, ref_err = replicasets_all[rs_id]:callrw(
+            'vshard.storage._call', args_ref, opts_async)
         if res == nil then
-            err_id = id
+            err, err_id = ref_err, rs_id
             goto fail
         end
-        futures[id] = res
-        rs_count = rs_count + 1
+        target[rs_id] = res
+        futures[rs_id] = res
     end
-    --
-    -- Ref stage: collect.
-    --
-    for id, future in pairs(futures) do
-        res, err = future_wait(future, timeout)
-        -- Handle netbox error first.
-        if res == nil then
-            err_id = id
+    timeout, err, err_id = router_map_callrw_ref_wait(futures, timeout)
+    if not timeout then
+        goto fail
+    end
+    results = {}
+    for rs_id, future in pairs(future_buckets) do
+        results[rs_id] = future:result()[1]
+    end
+    for rs_id, future in pairs(future_all) do
+        results[rs_id] = {total = future:result()[1]}
+    end
+    for _, res in pairs(results) do
+        if not res.total then
+            -- This error throws only in case when the updated router tries
+            -- to calculate the total amount of buckets . On old storage
+            -- versions the function storage_ref_make_with_buckets doesn't
+            -- return total amount of buckets.
+            err = lerror.vshard(lerror.code.UNSUPPORTED,
+                                'full map_callrw with split args')
             goto fail
         end
-        -- Ref returns nil,err or bucket count.
-        res, err = res[1], res[2]
-        if res == nil then
-            err_id = id
+        bucket_count = bucket_count + res.total
+    end
+    bucket_ids = router_map_callrw_process_moved(router, results)
+    if next(bucket_ids) then
+        futures = {}
+        args_ref = {'storage_ref_check_existing', rid, bucket_ids}
+        for rs_id in pairs(replicasets_all) do
+            local res, ref_err = replicasets_all[rs_id]:callrw(
+                'vshard.storage._call', args_ref, opts_async)
+            if res == nil then
+                err, err_id = ref_err, rs_id
+                goto fail
+            end
+            futures[rs_id] = res
+        end
+        timeout, err, err_id = router_map_callrw_ref_wait(futures, timeout)
+        if not timeout then
             goto fail
         end
-        bucket_count = bucket_count + res
-        timeout = deadline - fiber_clock()
+        for rs_id, future in pairs(futures) do
+            for _, bucket_id in pairs(future:result()[1]) do
+                bucket_reset(router, bucket_id)
+                bucket_set(router, bucket_id, rs_id)
+            end
+        end
     end
     -- All refs are done but not all buckets are covered. This is odd and can
     -- mean many things. The most possible ones: 1) outdated configuration on
@@ -835,126 +954,81 @@ local function router_ref_storage_all(router, timeout)
                             router.total_bucket_count - bucket_count)
         goto fail
     end
-    do return timeout, nil, nil, rid, replicasets end
+    do return timeout, nil, nil, replicasets_all end
 
     ::fail::
     for _, f in pairs(futures) do
         f:discard()
     end
-    return nil, err, err_id, rid, replicasets
+    return nil, err, err_id, replicasets_all
 end
 
 --
 -- Perform Ref stage of the Ref-Map-Reduce process on a subset of all the
 -- replicasets, which contains all the listed bucket IDs.
 --
-local function router_ref_storage_by_buckets(router, bucket_ids, timeout)
-    local grouped_buckets
-    local group_count
-    local err, err_id, res
+local function router_ref_storage_by_buckets(router, bucket_ids, timeout, rid)
+    local mode = MAP_CALLRW_PARTIAL
+    local err, err_id, grouped_buckets, results, args_ref
+    local replicasets_to_map, futures = {}, {}
     local replicasets_all = router.replicasets
-    local replicasets_to_map = {}
-    local futures = {}
     local opts_async = {is_async = true}
-    local deadline = fiber_clock() + timeout
-    local rid = M.ref_id
-    M.ref_id = rid + 1
-
     -- Nil checks are done explicitly here (== nil instead of 'not'), because
     -- netbox requests return box.NULL instead of nils.
-
-    -- Ref stage.
     while next(bucket_ids) do
-        -- Group the buckets by replicasets according to the router cache.
-        grouped_buckets, err = buckets_group(router, bucket_ids, timeout)
-        if grouped_buckets == nil then
-            goto fail
-        end
-        timeout = deadline - fiber_clock()
-
-        -- Netbox async requests work only with active connections.
-        -- So, first need to wait for the master connection explicitly.
-        local replicasets_to_check = {}
-        group_count = 0
-        for uuid, _ in pairs(grouped_buckets) do
-            group_count = group_count + 1
-            table.insert(replicasets_to_check, replicasets_all[uuid])
-        end
-        timeout, err, err_id = lreplicaset.wait_masters_connect(
-            replicasets_to_check, timeout)
+        timeout, err, err_id, grouped_buckets = router_map_callrw_prepare(
+            router, timeout, mode, bucket_ids)
         if not timeout then
             goto fail
         end
-
-        -- Send ref requests with timeouts to the replicasets.
-        futures = table_new(0, group_count)
-        for id, buckets in pairs(grouped_buckets) do
-            if timeout == nil then
-                err_id = id
-                goto fail
-            end
-            local args_ref
-            if replicasets_to_map[id] then
+        futures = {}
+        args_ref = {nil, rid}
+        for rs_id in pairs(grouped_buckets) do
+            local buckets = grouped_buckets[rs_id] or {}
+            if replicasets_to_map[rs_id] then
                 -- Replicaset is already referenced on a previous iteration.
                 -- Simply get the moved buckets without double referencing.
-                args_ref = {
-                    'storage_ref_check_with_buckets', rid, buckets}
+                args_ref[1] = 'storage_ref_check_with_buckets'
+                args_ref[3] = buckets
+                args_ref[4] = nil
             else
-                args_ref = {
-                    'storage_ref_make_with_buckets', rid, timeout, buckets}
+                args_ref[1] = 'storage_ref_make_with_buckets'
+                args_ref[3] = timeout
+                args_ref[4] = buckets
             end
-            res, err = replicasets_all[id]:callrw('vshard.storage._call',
-                                                  args_ref, opts_async)
+            local res, ref_err = replicasets_all[rs_id]:callrw(
+                'vshard.storage._call', args_ref, opts_async)
             if res == nil then
-                err_id = id
+                err, err_id = ref_err, rs_id
                 goto fail
             end
-            futures[id] = res
+            futures[rs_id] = res
         end
-
-        -- Wait for the refs to be done and collect moved buckets.
-        bucket_ids = {}
-        for id, f in pairs(futures) do
-            res, err = future_wait(f, timeout)
-            -- Handle netbox error first.
-            if res == nil then
-                err_id = id
-                goto fail
-            end
-            -- Ref returns nil,err or {is_done, moved}.
-            res, err = res[1], res[2]
-            if res == nil then
-                err_id = id
-                goto fail
-            end
-            for _, bucket in pairs(res.moved) do
-                local bid = bucket.id
-                local dst = bucket.dst
-                -- 'Reset' regardless of 'set'. So as not to
-                -- bother with 'set' errors. If it fails, then
-                -- won't matter. It is a best-effort thing.
-                bucket_reset(router, bid)
-                if dst ~= nil then
-                    bucket_set(router, bid, dst)
-                end
-                table.insert(bucket_ids, bid)
-            end
+        timeout, err, err_id = router_map_callrw_ref_wait(futures, timeout)
+        if not timeout then
+            goto fail
+        end
+        results = {}
+        for rs_id, future in pairs(futures) do
+            results[rs_id] = future:result()[1]
+        end
+        bucket_ids = router_map_callrw_process_moved(router, results)
+        for rs_id, res in pairs(results) do
             if res.is_done then
-                assert(not replicasets_to_map[id])
-                -- If there are no buckets on the replicaset, it would not be
-                -- referenced.
-                replicasets_to_map[id] = replicasets_all[id]
+                assert(not replicasets_to_map[rs_id])
+                -- If there are no buckets on the replicaset, it would
+                -- not be referenced.
+                replicasets_to_map[rs_id] = router.replicasets[rs_id]
             end
-            timeout = deadline - fiber_clock()
         end
     end
-    do return timeout, nil, nil, rid, replicasets_to_map end
+    do return timeout, nil, nil, replicasets_to_map end
 
     ::fail::
     for _, f in pairs(futures) do
         f:discard()
     end
-    return nil, err, err_id, rid, replicasets_to_map
+    return nil, err, err_id, replicasets_to_map
 end
 
 --
@@ -977,13 +1051,14 @@ local function replicasets_map_reduce(replicasets, rid, func, args,
     --
     local func_args = {'storage_map', rid, func, args}
     for id, rs in pairs(replicasets) do
-        if grouped_args ~= nil then
+        local rs_args = grouped_args and grouped_args[id]
+        if rs_args then
             -- It's cheaper to push and then pop, rather then deepcopy
             -- arguments table for every call.
-            table.insert(args, grouped_args[id])
+            table.insert(args, rs_args)
         end
         local res, err = rs:callrw('vshard.storage._call', func_args, opts_map)
-        if grouped_args ~= nil then
+        if rs_args then
             table.remove(args)
         end
         if res == nil then
@@ -1082,13 +1157,49 @@ local function router_group_map_callrw_args(router, bucket_ids, bucket_args)
 end
 
 --
+-- Set the appropriate mode according to bucket_ids option for backward
+-- compatibility (in case of opts_mode is nil) and check the given opts_mode
+-- correctness in other cases.
+--
+local function router_check_map_callrw_mode(opts_mode, bucket_ids)
+    if opts_mode == nil then
+        return bucket_ids and MAP_CALLRW_PARTIAL or MAP_CALLRW_FULL
+    end
+    if opts_mode == MAP_CALLRW_PARTIAL and bucket_ids == nil then
+        return nil, lerror.make('Router can\'t execute map_callrw with ' ..
+                                '\'partial\' mode and nil bucket_ids')
+    end
+    if opts_mode == MAP_CALLRW_FULL and util.table_is_numeric(bucket_ids) then
+        return nil, lerror.make('Router can\'t execute map_callrw with ' ..
+                                '\'full\' mode and numeric bucket_ids')
+    end
+    return opts_mode
+end
+
+--
 -- Consistent Map-Reduce. The given function is called on masters in the cluster
 -- with a guarantee that in case of success it was executed with all buckets
 -- being accessible for reads and writes.
 --
--- The selection of masters depends on bucket_ids option. When specified, the
--- Map-Reduce is performed only on masters having at least one of these buckets.
--- Otherwise it is executed on all the masters in the cluster.
+-- The selection of masters depends on 'mode' and 'bucket_ids' options. There
+-- are 2 general modes how map_callrw can be executed:
+--    1) mode = 'partial'. In this mode user function will be executed on
+--       storages that have at least one bucket of 'bucket_ids'. The
+--       'bucket_ids' option can be presented in two ways: like a numeric array
+--       of buckets' ids or like a map of buckets' arguments. In first one user
+--       function will only receive args, in second one it will additionally
+--       receive buckets' arguments.
+--    2) mode = 'full'. In this mode user function will be executed with args on
+--       all storages in cluster. If we pass 'bucket_ids' like a map of bucket's
+--       arguments the user function will additionally receive buckets'
+--       arguments on those storages that have at least one bucket of
+--       'bucket_ids'.
+--
+-- If we didn't specify the 'mode' option, then it is set based on 'bucket_ids'
+-- option - if 'bucket_ids' is presented, the mode will be 'partial' otherwise
+-- 'full'. Also the next combination of map_callrw options can lead to error:
+-- <mode = 'partial', bucket_ids = nil> and <mode = 'full', bucket_ids =
+-- numeric_array>.
 --
 -- Consistency in scope of map-reduce means all the data was accessible, and
 -- didn't move during map requests execution. To preserve the consistency there
@@ -1111,6 +1222,8 @@ end
 -- @param func Name of the function to call.
 -- @param args Function arguments passed in netbox style (as an array).
 -- @param opts Options. See below:
+--     - mode - a string option ('full' / 'partial') that represents a way of
+--         execution of user function on destination storages.
 --     - timeout - a number of seconds. Note that the refs may end up being kept
 --         on the storages during this entire timeout if something goes wrong.
 --         For instance, network issues appear. This means better not use a
@@ -1134,8 +1247,13 @@ end
 --
 local function router_map_callrw(router, func, args, opts)
     local replicasets_to_map, err, err_id, map, rid
-    local timeout, do_return_raw, bucket_ids, plain_bucket_ids, grouped_args
+    local mode, timeout, do_return_raw, bucket_ids, plain_bucket_ids,
+        grouped_args
     if opts then
+        mode, err = router_check_map_callrw_mode(opts.mode, opts.bucket_ids)
+        if err then
+            return nil, err
+        end
         timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
         do_return_raw = opts.return_raw
         bucket_ids = opts.bucket_ids
@@ -1143,24 +1261,26 @@ local function router_map_callrw(router, func, args, opts)
             util.table_keys(bucket_ids)
     else
         timeout = consts.CALL_TIMEOUT_MIN
+        mode = MAP_CALLRW_FULL
     end
-    if plain_bucket_ids then
-        timeout, err, err_id, rid, replicasets_to_map =
-            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout)
-        -- Grouped arguments are only possible with partial Map-Reduce.
-        if timeout then
+    rid = M.ref_id
+    M.ref_id = rid + 1
+    if mode == MAP_CALLRW_FULL then
+        timeout, err, err_id, replicasets_to_map =
+            router_ref_storage_all(router, plain_bucket_ids, timeout, rid)
+    else
+        timeout, err, err_id, replicasets_to_map =
+            router_ref_storage_by_buckets(router, plain_bucket_ids, timeout,
+                                          rid)
+    end
+    if timeout then
+        if plain_bucket_ids then
             grouped_args = router_group_map_callrw_args(
                 router, plain_bucket_ids, bucket_ids)
         end
-    else
-        timeout, err, err_id, rid, replicasets_to_map =
-            router_ref_storage_all(router, timeout)
-    end
-    if timeout then
-        map, err, err_id = replicasets_map_reduce(replicasets_to_map, rid, func,
-            args, grouped_args, {
-                timeout = timeout, return_raw = do_return_raw
-            })
+        opts = {timeout = timeout, return_raw = do_return_raw, mode = mode}
+        map, err, err_id = replicasets_map_reduce(
+            replicasets_to_map, rid, func, args, grouped_args, opts)
         if map then
             return map
         end
