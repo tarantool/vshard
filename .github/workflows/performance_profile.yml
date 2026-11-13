@@ -1,0 +1,130 @@
+name: performance profile
+
+# Calibrate workloads on the performance runner.
+# Remove this workflow after calibration.
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: Override numeric options in all configurations
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-profile
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    name: profile (${{ matrix.scenario }})
+    if: github.repository == 'tarantool/vshard'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - scenario: baseline
+            args: ''
+          - scenario: router-pressure
+            args: --replicasets 4 --routers 1 --generators 4
+          - scenario: storage-pressure
+            args: >-
+              --replicasets 1 --routers 4 --generators 4
+              --payload-bytes 1024
+
+    runs-on: [self-hosted, Linux, x86_64, performance]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      PERF_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      PERF_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      LC_ALL: C
+      TZ: UTC
+      S_TIME_FORMAT: ISO
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PERF_COMMIT }}
+          persist-credentials: false
+      - name: Record runner environment
+        run: |
+          mkdir -p perf/output/profile
+          {
+            pidstat -V
+            mpstat -V
+            printf 'Runner: %s\n' "$RUNNER_NAME"
+            git rev-parse HEAD
+            uname -a
+            cat /etc/os-release
+            lscpu
+            taskset -pc $$
+            printf 'Isolated CPUs: '
+            cat /sys/devices/system/cpu/isolated
+            ps -eo pid,ppid,comm,psr,pcpu,policy
+          } | tee perf/output/profile/host.txt
+      - name: Setup Tarantool
+        uses: ./.github/actions/setup-tarantool
+        with:
+          tarantool_version: release-master
+      - name: Run benchmarks with monitoring
+        env:
+          PERF_ARGS: ${{ matrix.args }}
+          PERF_EXTRA_ARGS: ${{ inputs.args }}
+        run: |
+          tarantool --version | tee perf/output/profile/tarantool.txt
+          perf_cpus=$(cat /sys/devices/system/cpu/isolated)
+          if [ -z "$perf_cpus" ]; then
+            echo 'No isolated CPUs available for benchmarking' >&2
+            exit 1
+          fi
+          read -r -a args <<< "$PERF_ARGS"
+          read -r -a extra_args <<< "$PERF_EXTRA_ARGS"
+          monitors=()
+          benchmark_pid=
+          cleanup() {
+            if [ -n "$benchmark_pid" ]; then
+              kill "$benchmark_pid" 2>/dev/null || true
+              wait "$benchmark_pid" 2>/dev/null || true
+            fi
+            for pid in "${monitors[@]}"; do
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+            done
+          }
+          trap 'cleanup' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          pidstat -H -h -u -r -d -R -t -p ALL -G '^tarantool$' 1 \
+            > perf/output/profile/pidstat.txt &
+          monitors+=("$!")
+          mpstat -P ALL 1 > perf/output/profile/mpstat.txt &
+          monitors+=("$!")
+          taskset -c "$perf_cpus" chrt 50 \
+            tarantool perf/run.lua "${args[@]}" "${extra_args[@]}" \
+            --diagnostics \
+            --output-dir perf/output/profile/results &
+          benchmark_pid=$!
+          status=0
+          wait "$benchmark_pid" || status=$?
+          benchmark_pid=
+          for pid in "${monitors[@]}"; do
+            kill -0 "$pid"
+          done
+          cleanup
+          trap - EXIT
+          exit "$status"
+      - name: Save results and metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-profile-${{ matrix.scenario }}
+          retention-days: 21
+          path: perf/output/profile/
+          if-no-files-found: ignore

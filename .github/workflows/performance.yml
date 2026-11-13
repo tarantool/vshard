@@ -1,0 +1,68 @@
+name: performance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  performance:
+    name: performance (${{ matrix.scenario }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: baseline
+            args: ''
+          - scenario: router-pressure
+            args: --replicasets 4 --routers 1 --generators 4
+          - scenario: storage-pressure
+            args: >-
+              --replicasets 1 --routers 4 --generators 4
+              --payload-bytes 1024
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      PERF_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      PERF_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PERF_COMMIT }}
+          persist-credentials: false
+      - name: Setup Tarantool
+        id: setup
+        uses: ./.github/actions/setup-tarantool
+        with:
+          tarantool_version: release-master
+      - name: Run benchmarks
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          tarantool perf/run.lua ${{ matrix.args }} \
+            --output-dir perf/output/ci/${{ matrix.scenario }}
+      # TODO: Send summary.txt to InfluxDB
+      - name: Export results for InfluxDB
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          tarantool perf/export.lua \
+            --input-dir perf/output/ci \
+            --output perf/output/summary.txt
+      - name: Save results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ matrix.scenario }}
+          retention-days: 21
+          path: perf/output/
+          if-no-files-found: ignore

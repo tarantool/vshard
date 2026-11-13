@@ -32,7 +32,7 @@ runs:
       uses: actions/cache@v3
       with:
         path: /home/runner/tnt-release
-        key: cache-tnt-${{ inputs.tarantool_version }}${{ env.VERSION_POSTFIX }}
+        key: cache-tnt-${{ runner.environment }}-${{ inputs.tarantool_version }}${{ env.VERSION_POSTFIX }}
 
     - name: Clone tarantool ${{ inputs.tarantool_version }}
       if: |
