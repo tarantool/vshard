@@ -36,6 +36,10 @@ return {
     DEFAULT_BUCKET_COUNT = 3000;
     BUCKET_SENT_GARBAGE_DELAY = 60;
     BUCKET_CHUNK_SIZE = 1000;
+    -- Tuple count per GC transaction. Independent from BUCKET_CHUNK_SIZE,
+    -- which is also used by bucket sending and receiving.
+    DEFAULT_BUCKET_GC_BATCH_SIZE = 1000;
+    DEFAULT_BUCKET_GC_BATCH_DELAY = 0;
     LUA_CHUNK_SIZE = 100000,
     DEFAULT_REBALANCER_DISBALANCE_THRESHOLD = 1;
     REBALANCER_IDLE_INTERVAL = 60 * 60;
