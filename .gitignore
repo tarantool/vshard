@@ -5,6 +5,7 @@
 *.log
 *.vylog
 test/var/
+perf/output/
 VERSION
 
 CMakeCache.txt

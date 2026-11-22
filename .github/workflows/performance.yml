@@ -1,0 +1,172 @@
+name: performance
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 1 * * *'  # Every day at 01:00 UTC.
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded developer runs; preserve master, releases, and tags.
+  group: ${{ (
+    github.ref == 'refs/heads/master' ||
+    startsWith(github.ref, 'refs/heads/release/') ||
+    startsWith(github.ref, 'refs/tags/') ||
+    (github.event_name == 'pull_request' &&
+     github.event.action == 'labeled' &&
+     github.event.label.name != 'performance')) &&
+    format('{0}-{1}', github.run_id, github.run_attempt) ||
+    format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.repository == 'tarantool/vshard' &&
+        (github.event_name != 'pull_request' ||
+         (contains(github.event.pull_request.labels.*.name, 'performance') &&
+          (github.event.action != 'labeled' ||
+           github.event.label.name == 'performance')))
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check previous runs
+        id: check
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            if (context.eventName !== 'schedule') {
+              return true
+            }
+            // Run benchmarks if this commit hasn't been tested successfully.
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns, {
+                ...context.repo,
+                workflow_id: 'performance.yml',
+                branch: context.ref.replace('refs/heads/', ''),
+                head_sha: context.sha,
+                status: 'success',
+                per_page: 100,
+              })
+            return !runs.some(run =>
+              run.event === 'schedule' ||
+              run.event === 'workflow_dispatch')
+
+  performance:
+    name: performance (${{ matrix.scenario }})
+    needs: check
+    if: needs.check.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - scenario: router-pressure
+            args: --replicasets 4 --routers 1 --generators 4
+          - scenario: storage-pressure
+            args: --replicasets 1 --routers 4 --generators 16
+
+    runs-on: [self-hosted, Linux, x86_64, performance]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      PERF_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      PERF_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      LC_ALL: C
+      TZ: UTC
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PERF_COMMIT }}
+          persist-credentials: false
+      - name: Setup Tarantool
+        uses: ./.github/actions/setup-tarantool
+        with:
+          tarantool_version: '3.9.0'
+      - name: Checkout Tarantool
+        uses: actions/checkout@v4
+        with:
+          repository: tarantool/tarantool
+          ref: '3.9.0'
+          path: tarantool
+          persist-credentials: false
+      - name: Prepare environment
+        run: sudo sh tarantool/perf/tools/setup_env.sh
+      - name: Run benchmarks
+        run: |
+          /usr/bin/tarantool --version
+          taskset 0x01fffffe chrt 50 \
+            /usr/bin/tarantool perf/run.lua ${{ matrix.args }} \
+            --output perf/output/${{ matrix.scenario }}.json
+      - name: Aggregate benchmark results
+        run: |
+          /usr/bin/tarantool tarantool/perf/tools/aggregate.lua \
+            --input_dir perf/output \
+            --output perf/output/summary.txt \
+            --config_path perf/output/config_bench.json
+      - name: Send results to InfluxDB
+        if: github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          INFLUXDB_URL: ${{ secrets.INFLUXDB_URL }}
+          INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
+          INFLUXDB_BUCKET_ID: ${{ secrets.INFLUXDB_BUCKET_ID }}
+        run: |
+          test -s perf/output/summary.txt
+          url="${INFLUXDB_URL%/}/api/v2/write"
+          url="$url?org=tarantool&bucket=$INFLUXDB_BUCKET_ID&precision=s"
+          http_code=$(curl --request POST "$url" \
+            --fail --silent --show-error --output /dev/null \
+            --write-out '%{http_code}' \
+            --retry 3 --retry-delay 5 \
+            --connect-timeout 10 --max-time 30 \
+            --header "Authorization: Token $INFLUXDB_TOKEN" \
+            --header 'Content-Type: text/plain; charset=utf-8' \
+            --data-binary @perf/output/summary.txt)
+          printf 'InfluxDB: HTTP %s\n' "$http_code"
+          test "$http_code" = 204
+      - uses: actions/setup-python@v5
+        if: github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          python-version: '3.10'
+      - name: Analyze results with Otava
+        if: github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          INFLUXDB_URL: ${{ secrets.INFLUXDB_URL }}
+          INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
+        run: |
+          python -m venv "$RUNNER_TEMP/venv_otava"
+          source "$RUNNER_TEMP/venv_otava/bin/activate"
+          pip install influxdb-client==1.44.0 PyYAML==6.0.2 apache-otava==0.8.0
+          mkdir -p perf/output/otava
+          cd perf/output/otava
+          python "$GITHUB_WORKSPACE/tarantool/perf/tools/extract_perf_data.py" \
+            --influx_url "$INFLUXDB_URL" \
+            --influx_token "$INFLUXDB_TOKEN" \
+            --influx_bucket vshard-perf \
+            --branch_name "$PERF_BRANCH" \
+            --hours 8760 \
+            --config ../config_bench.json \
+            --base_path .
+          export OTAVA_CONFIG="$PWD/otava.yaml"
+          otava analyze --magnitude 0.2 tarantool 2>&1 | tee report.txt
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ matrix.scenario }}
+          retention-days: 21
+          path: perf/output/
+          if-no-files-found: ignore
