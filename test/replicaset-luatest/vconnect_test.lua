@@ -325,3 +325,15 @@ test_group.test_wait_connected_waits_for_vconnect = function()
     rs:wait_connected(vtest.wait_timeout)
     t.assert(rs.master.conn.vconnect.future:is_ready())
 end
+
+test_group.test_wait_connected_on_active_connection = function()
+    local _, rs = next(vreplicaset.buildall(global_cfg))
+    rs.master.conn = {
+        state = 'active',
+        is_connected = function() return true end,
+        vconnect = {future_cond = fiber.cond()},
+    }
+    local remaining, err = rs:wait_connected(0)
+    t.assert_equals(remaining, nil)
+    t.assert(verror.is_timeout(err))
+end

@@ -336,7 +336,7 @@ end
 local function netbox_wait_connected(conn, timeout)
     -- Fast path. Usually everything is connected.
     if conn:is_connected() then
-        return timeout
+        return conn_vconnect_wait(conn, timeout)
     end
     local deadline = fiber_clock() + timeout
     -- Loop against spurious wakeups.
