@@ -149,13 +149,14 @@ local function test_return_raw_template(g, mode)
     t.assert(not res.err, 'no error')
 
     --
-    -- Empty result set.
+    -- Empty result set. An empty object is returned, like netbox does.
     --
     res = router:exec(function(mode)
         return add_details(ivshard.router[mode](1, 'echo', {},
                            {timeout = iwait_timeout, return_raw = true}))
     end, {mode})
-    t.assert(not res.val, 'no value')
+    t.assert_equals(res.val_type, 'userdata', 'empty result is raw')
+    t.assert_equals(res.val[1], nil, 'no value')
     t.assert(not res.err, 'no error')
 
     --
@@ -220,6 +221,96 @@ g.test_return_raw = function(g)
 end
 
 --
+-- gh-592: the synchronous call cut the storage.call() status flag out of the
+-- raw response, but the asynchronous one did not, and returned decoded values.
+--
+g.test_return_raw_async = function(g)
+    t.run_only_if(vutil.feature.netbox_return_raw)
+
+    for _, name in ipairs({'callrw', 'callro'}) do
+        g.router:exec(function(call_name)
+            local msgpack = require('msgpack')
+            local call = ivshard.router[call_name]
+
+            local values = call(1, 'echo', {1, 2, 3},
+                {timeout = iwait_timeout, return_raw = true, is_async = true}):
+                wait_result()
+            ilt.assert(msgpack.is_object(values), 'values are raw')
+            ilt.assert_equals({values[1], values[2], values[3]}, {1, 2, 3},
+                              'raw values are intact')
+
+            local empty = call(1, 'echo', {},
+                {timeout = iwait_timeout, return_raw = true, is_async = true}):
+                wait_result()
+            ilt.assert(msgpack.is_object(empty), 'empty result is raw')
+            ilt.assert_equals(empty[1], nil, 'no values')
+
+            local _, err = call(1, 'box_error', {},
+                {timeout = iwait_timeout, return_raw = true, is_async = true}):
+                wait_result()
+            ilt.assert_equals(type(err), 'table', 'error is decoded')
+            ilt.assert_equals(err.code, box.error.PROC_LUA, 'error is intact')
+        end, {name})
+    end
+
+    --
+    -- The result stays packed however it is obtained, also on repeat.
+    --
+    g.router:exec(function()
+        local msgpack = require('msgpack')
+        local opts = {timeout = iwait_timeout, return_raw = true,
+                      is_async = true}
+        local future = ivshard.router.callro(1, 'echo', {1, 2, 3}, opts)
+        ilt.assert(msgpack.is_object(future:wait_result()), 'wait_result')
+        ilt.assert(msgpack.is_object(future:result()), 'result after wait')
+        ilt.assert(msgpack.is_object(future:result()), 'result again')
+
+        local through_pairs = ivshard.router.callro(1, 'echo', {1, 2, 3},
+                                                    opts)
+        local found = false
+        for _, value in through_pairs:pairs(iwait_timeout) do
+            ilt.assert(msgpack.is_object(value), 'pairs')
+            -- The status flag must be cut out: values start at [1].
+            ilt.assert_equals({value[1], value[2], value[3]}, {1, 2, 3},
+                              'pairs raw values')
+            ilt.assert_equals(value[4], nil, 'pairs has no status')
+            found = true
+        end
+        ilt.assert(found, 'pairs returned the result')
+    end)
+
+    --
+    -- An error through pairs() in the raw mode.
+    --
+    g.router:exec(function()
+        local f = ivshard.router.callro(1, 'box_error', {},
+            {timeout = iwait_timeout, return_raw = true, is_async = true})
+        local found = false
+        for _, value in f:pairs(iwait_timeout) do
+            ilt.assert_equals(value[1], nil, 'no status')
+            ilt.assert_equals(type(value[2]), 'table', 'error is decoded')
+            ilt.assert_equals(value[2].code, box.error.PROC_LUA,
+                              'error code')
+            found = true
+        end
+        ilt.assert(found, 'pairs returned the error')
+    end)
+
+    --
+    -- Without 'return_raw' the result is a plain table.
+    --
+    for _, name in ipairs({'callrw', 'callro'}) do
+        g.router:exec(function(call_name)
+            local msgpack = require('msgpack')
+            local res = ivshard.router[call_name](1, 'echo', {1, 2, 3},
+                {timeout = iwait_timeout, is_async = true}):wait_result()
+            ilt.assert(not msgpack.is_object(res), 'result is decoded')
+            ilt.assert_equals(res[1], 1, 'decoded value')
+        end, {name})
+    end
+end
+
+--
 -- A raw response can have a nil status: vshard.storage.call() returns one when
 -- bucket_ref() fails. In msgpack a nil in an array is packed as null and comes
 -- back as box.NULL, which is truthy. If it wasn't turned back into nil, the
@@ -258,6 +349,35 @@ g.test_return_raw_nil_status = function(g)
         ilt.assert_not_equals(err, nil, 'error is not nil')
         ilt.assert_equals(type(err), 'table', 'error is decoded')
         ilt.assert_equals(err.code, box.error.PROC_LUA, 'error code')
+
+        -- The async path defers the extraction to the future wrapper. Stub the
+        -- replicaset to return a future resolving to the same packed response,
+        -- so that the wrapper, not the send path, handles the nil status.
+        local base = {
+            wait_result = function() return msgpack.object({box.NULL,
+                box.error.new(box.error.PROC_LUA, 'raw nil status')}) end,
+            result = function() return nil end,
+            is_ready = function() return true end,
+            discard = function() end,
+        }
+        replicaset.callro = function()
+            return base
+        end
+        local future = ivshard.router.callro(1, 'echo', {1},
+                                             {timeout = iwait_timeout,
+                                              return_raw = true,
+                                              is_async = true})
+        if had_own then
+            replicaset.callro = old_callro
+        else
+            rawset(replicaset, 'callro', nil)
+        end
+
+        local val2, err2 = future:wait_result()
+        ilt.assert_equals(val2, nil, 'async no value')
+        ilt.assert_not_equals(err2, nil, 'async error is not nil')
+        ilt.assert_equals(type(err2), 'table', 'async error is decoded')
+        ilt.assert_equals(err2.code, box.error.PROC_LUA, 'async error code')
     end)
 end
 

@@ -369,7 +369,10 @@ vshard.router.info()
 * `mode` - `read` or `write`
 * `func` - function name
 * `args` - array of arguments to func
-* `opts` - call options. Can contain only one parameter - `timeout` in seconds.
+* `opts` - call options:
+  * `timeout` - timeout in seconds;
+  * `return_raw` - when true, values stay packed in a msgpack object;
+    an empty result is an empty object, not `nil`; an error is decoded.
 
 **Returns:** original return value from `func` or nil and error object.
 Error object has type attribute equal to 'ShardingError' or one of error types from tarantool ('ClientError', 'OutOfMemory', 'SocketError' ...).

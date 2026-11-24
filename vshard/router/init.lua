@@ -472,6 +472,7 @@ local function vshard_future_serialize(self)
     -- recursive serialization.
     local s = setmetatable(table.deepcopy(self), {})
     s._base = nil
+    s._do_return_raw = nil
     return s
 end
 
@@ -479,8 +480,35 @@ local function vshard_future_is_ready(self)
     return self._base:is_ready()
 end
 
-local function vshard_future_wrap_result(res)
+--
+-- Cut the storage.call() status flag out of a raw response. The rest is
+-- repacked into a new array and stays packed, except the error: lerror.make()
+-- does not understand msgpack, and the router retry needs err.code.
+--
+local function storage_call_raw_extract(res)
+    local it = res:iterator()
+    local count = it:decode_array_header()
+    -- A nil status is packed as null and decoded as box.NULL, which is truthy.
+    -- So only true means success.
+    local status = it:decode()
+    -- An empty result stays an empty object, same as in raw netbox.
+    res = it:take_array(count - 1)
+    if status ~= true then
+        -- The error is the only value in a failed response.
+        return false, res[1]
+    end
+    return true, res
+end
+
+local function vshard_future_wrap_result(res, do_return_raw)
     local storage_ok, err
+    if do_return_raw and msgpack_is_object(res) then
+        storage_ok, res = storage_call_raw_extract(res)
+        if not storage_ok then
+            return nil, lerror.make(res)
+        end
+        return res
+    end
     storage_ok, res, err = res[1], res[2], res[3]
     if storage_ok then
         if res == nil and err ~= nil then
@@ -496,7 +524,7 @@ local function vshard_future_result(self)
     if res == nil then
         return nil, lerror.make(err)
     end
-    return vshard_future_wrap_result(res)
+    return vshard_future_wrap_result(res, self._do_return_raw)
 end
 
 local function vshard_future_wait_result(self, timeout)
@@ -504,7 +532,7 @@ local function vshard_future_wait_result(self, timeout)
     if res == nil then
         return nil, lerror.make(err)
     end
-    return vshard_future_wrap_result(res)
+    return vshard_future_wrap_result(res, self._do_return_raw)
 end
 
 local function vshard_future_discard(self)
@@ -545,7 +573,7 @@ local function vshard_future_iter_next(iter, i)
     end
     -- Will not block because the request is already finished.
     if base_next(base, i) == nil then
-        res, err = vshard_future_wrap_result(res)
+        res, err = vshard_future_wrap_result(res, base_req._do_return_raw)
         if res ~= nil then
             return i, res
         end
@@ -584,9 +612,10 @@ local vshard_future_mt = {
 -- So vshard.router.call should wrap a future object with its own
 -- unpacker of result.
 --
-local function vshard_future_new(future)
+local function vshard_future_new(future, do_return_raw)
     -- Use '_' as a prefix so as users could use all normal names.
-    return setmetatable({_base = future}, vshard_future_mt)
+    return setmetatable({_base = future, _do_return_raw = do_return_raw},
+                        vshard_future_mt)
 end
 
 -- Perform shard operation
@@ -645,25 +674,8 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 replicaset[call](replicaset, 'vshard.storage.call',
                                  {bucket_id, mode, func, args}, opts)
             if do_return_raw and msgpack_is_object(storage_call_status) then
-                -- Storage.call returns in the first value a flag whether user's
-                -- function threw an exception or not. Need to extract it.
-                -- Unfortunately, it forces to repack the rest of values into a
-                -- new array. But the values themselves are not decoded.
-                local it = storage_call_status:iterator()
-                local count = it:decode_array_header()
-                -- A nil status is packed as null.
-                -- It decodes as a truthy box.NULL, so only true means success.
-                storage_call_status = it:decode() == true
-                -- When no values, nil is not packed into msgpack object. Same
-                -- as in raw netbox.
-                if count > 1 then
-                    call_status = it:take_array(count - 1)
-                end
-                if not storage_call_status and call_status ~= nil then
-                    -- The error is packed as well. Unpack it for
-                    -- lerror.make(): the retry below needs err.code.
-                    call_status = call_status[1]
-                end
+                storage_call_status, call_status =
+                    storage_call_raw_extract(storage_call_status)
                 call_error = nil
             end
             if storage_call_status then
@@ -676,7 +688,8 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                     -- values: true/false and func result. But
                     -- async returns future object. No true/false
                     -- nor func result. So return the first value.
-                    return vshard_future_new(storage_call_status)
+                    return vshard_future_new(storage_call_status,
+                                             do_return_raw)
                 end
             end
             err = lerror.make(call_status)
