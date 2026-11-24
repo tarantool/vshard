@@ -376,7 +376,7 @@ local function bucket_space_op(name, ...)
     if not M.is_master then
         local rs = M.this_replicaset
         return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
-                                  rs.id, rs.master.id)
+                                  rs.id, rs.master and rs.master.id)
     end
     if not M.is_bucket_in_sync then
         return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
