@@ -1358,8 +1358,8 @@ local function cluster_bootstrap(router, opts)
         if count == nil then
             -- If the client considers a bootstrapped cluster ok,
             -- then even one count > 0 is enough. So don't stop
-            -- attempts after a first error. Return an error only
-            -- if all replicasets responded with an error.
+            -- attempts after a first error. Return the error if no
+            -- replicaset reports any buckets.
             if if_not_bootstrapped then
                 last_err = err
             else
@@ -1373,7 +1373,7 @@ local function cluster_bootstrap(router, opts)
         end
     end
     if last_err then
-        return nil, err
+        return nil, last_err
     end
     lreplicaset.calculate_etalon_balance(router.replicasets,
                                          router.total_bucket_count)
