@@ -578,3 +578,18 @@ test_group.test_bucket_generation_checks = function(g)
         drop_bucket(bid)
     end)
 end
+
+test_group.test_bucket_force_create_preserves_caller_txn = function(g)
+    g.replica_1_a:exec(function(bid)
+        local meta = box.space.ilocal_meta
+        box.begin()
+        meta:insert{'caller'}
+        local ok, err = ivshard.storage.bucket_force_create(bid)
+        ilt.assert_equals(ok, nil)
+        ilt.assert_equals(err.code, box.error.ACTIVE_TRANSACTION)
+        ilt.assert(box.is_in_txn())
+        box.commit()
+        ilt.assert(meta:get{'caller'})
+        meta:delete{'caller'}
+    end, {cfg_template.bucket_count + 1})
+end

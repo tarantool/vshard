@@ -1626,7 +1626,6 @@ end
 --
 local function bucket_force_create_impl(first_bucket_id, count)
     local _bucket = box.space._bucket
-    box.begin()
     local limit = consts.BUCKET_CHUNK_SIZE
     for i = first_bucket_id, first_bucket_id + count - 1 do
         -- Buckets are protected with on_replace trigger, which
@@ -1654,7 +1653,11 @@ local function bucket_force_create(first_bucket_id, count)
         error('Usage: bucket_force_create(first_bucket_id, count)')
     end
     count = count or 1
-    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
+    local ok, err = pcall(box.begin)
+    if not ok then
+        return nil, err
+    end
+    ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
     if not ok then
         box.rollback()
         return nil, err
