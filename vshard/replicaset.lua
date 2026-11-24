@@ -653,6 +653,18 @@ local function replica_on_success_request(replica)
 end
 
 --
+-- net.box wraps exceptions from vshard functions in LuajitError (ClientError
+-- on older Tarantool versions). A truncated message may not be decodable.
+--
+local function decode_call_error(func, err)
+    if err and func:startswith('vshard.') and
+       (err.type == 'LuajitError' or err.type == 'ClientError') then
+        return lerror.from_string(err.message) or err
+    end
+    return err
+end
+
+--
 -- Call a function on a replica using its connection. The typical
 -- usage is calls under storage.call, because of which there
 -- are no more than 3 return values. It is because storage.call
@@ -696,18 +708,7 @@ local function replica_request(replica, func, args, opts)
         if opts.timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
-        local err = storage_status
-        -- VShard functions can throw exceptions using error() function. When
-        -- it reaches the network layer, it is wrapped into LuajitError. Try to
-        -- extract the original error if this is the case. Not always is
-        -- possible - the string representation could be truncated.
-        --
-        -- In old Tarantool versions LuajitError turned into ClientError on the
-        -- client. Check both types.
-        if func:startswith('vshard.') and (err.type == 'LuajitError' or
-           err.type == 'ClientError') then
-            err = lerror.from_string(err.message) or err
-        end
+        local err = decode_call_error(func, storage_status)
         replica.limiter:log_error(err,
             "Exception during calling '%s' on '%s': %s", func, replica, err)
         return false, nil, lerror.make(err)
@@ -1055,6 +1056,7 @@ local function replicas_map_call(replicas, func, args, opts)
         res, err = future_wait(future, timeout)
         local replica = replicas[id]
         if res == nil then
+            err = decode_call_error(func, err)
             err_id = id
             -- Charge a local timeout, not an error returned by the storage.
             if err and lerror.is_timeout(err) and
@@ -1916,6 +1918,9 @@ local function masters_map_call(replicasets, func, args, opts)
         local master = rs.master
         if not master then
             return nil, lerror.vshard(lerror.code.MISSING_MASTER, rs.id), rs_id
+        end
+        if not master.conn then
+            return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED), rs_id
         end
         replicas[rs_id] = master
     end

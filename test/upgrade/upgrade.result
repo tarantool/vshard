@@ -186,6 +186,7 @@ vshard.storage._call('test_api', 1, 2, 3)
  |   - storage_ref_check_with_buckets
  |   - storage_ref_make_with_buckets
  |   - storage_unref
+ |   - storage_wait_bucket_sync
  |   - test_api
  | - 1
  | - 2
