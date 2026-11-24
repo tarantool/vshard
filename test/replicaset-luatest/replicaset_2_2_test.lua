@@ -3,6 +3,7 @@ local vreplicaset = require('vshard.replicaset')
 local vtest = require('test.luatest_helpers.vtest')
 local test_group = t.group('replicaset-2-2')
 local vcfg = require('vshard.cfg')
+local verror = require('vshard.error')
 
 local timeout_opts = {timeout = vtest.wait_timeout}
 
@@ -75,4 +76,25 @@ test_group.test_masters_map_call = function()
         count = count + 1
     end
     t.assert_equals(count, 2)
+end
+
+test_group.test_masters_map_call_reply_timeout = function()
+    local id, rs = next(vreplicaset.buildall(global_cfg))
+    local future = {
+        wait_result = function() return nil, verror.timeout() end,
+        is_ready = function() return false end,
+        discard = function() end,
+    }
+    rs.master.conn = {
+        state = 'active',
+        is_connected = function() return true end,
+        call = function() return future end,
+    }
+    local timeout = rs.master.net_timeout
+    for _ = 1, 2 do
+        local _, err = vreplicaset.masters_map_call(
+            {[id] = rs}, 'get_uuid', nil, {timeout = timeout})
+        t.assert(err and verror.is_timeout(err))
+    end
+    t.assert_equals(rs.master.net_timeout, timeout * 2)
 end

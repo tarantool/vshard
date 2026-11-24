@@ -666,7 +666,7 @@ end
 -- @retval false, ... Response is not received. It can be timeout
 --         or unexpectedly closed connection.
 --
-local function replica_call(replica, func, args, opts)
+local function replica_request(replica, func, args, opts)
     assert(opts and opts.timeout)
     replica.activity_ts = fiber_clock()
     local conn = replica.conn
@@ -711,14 +711,21 @@ local function replica_call(replica, func, args, opts)
         replica.limiter:log_error(err,
             "Exception during calling '%s' on '%s': %s", func, replica, err)
         return false, nil, lerror.make(err)
-    else
-        replica_on_success_request(replica)
     end
     if storage_status == nil then
         -- Workaround for `not msgpack.NULL` magic.
         storage_status = nil
     end
     return true, storage_status, retval, error_object
+end
+
+local function replica_call(replica, func, args, opts)
+    local ok, res, retval, err = replica_request(replica, func, args, opts)
+    if ok then
+        replica_on_success_request(replica)
+        return true, res, retval, err
+    end
+    return false, nil, retval
 end
 
 --
@@ -1017,6 +1024,7 @@ end
 --
 local function replicas_map_call(replicas, func, args, opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    local rpc_budget = timeout
     local except = opts.except
     local deadline = fiber_clock() + timeout
     local _, res, err, err_id, map
@@ -1030,7 +1038,7 @@ local function replicas_map_call(replicas, func, args, opts)
         if id == except then
             goto next_call
         end
-        _, res, err = replica_call(replica, func, args, opts_call)
+        _, res, err = replica_request(replica, func, args, opts_call)
         if res == nil then
             err_id = id
             goto fail
@@ -1045,10 +1053,17 @@ local function replicas_map_call(replicas, func, args, opts)
     map = table.new(0, replica_count)
     for id, future in pairs(futures) do
         res, err = future_wait(future, timeout)
+        local replica = replicas[id]
         if res == nil then
             err_id = id
+            -- Charge a local timeout, not an error returned by the storage.
+            if err and lerror.is_timeout(err) and
+               rpc_budget >= replica.net_timeout and not future:is_ready() then
+                replica_on_failed_request(replica)
+            end
             goto fail
         end
+        replica_on_success_request(replica)
         map[id] = res
         timeout = deadline - fiber_clock()
     end
