@@ -98,3 +98,16 @@ test_group.test_masters_map_call_reply_timeout = function()
     end
     t.assert_equals(rs.master.net_timeout, timeout * 2)
 end
+
+test_group.test_masters_map_call_missing_master = function()
+    local id, rs = next(vreplicaset.buildall(global_cfg))
+    rs.wait_connected = function(self, timeout)
+        self.master = nil
+        return timeout
+    end
+    local res, err, err_id = vreplicaset.masters_map_call(
+        {[id] = rs}, 'get_uuid', nil, timeout_opts)
+    t.assert_equals(res, nil)
+    t.assert_equals(err.code, verror.code.MISSING_MASTER)
+    t.assert_equals(err_id, id)
+end

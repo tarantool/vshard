@@ -1774,7 +1774,11 @@ local function masters_map_call(replicasets, func, args, opts)
     end
     local replicas = {}
     for rs_id, rs in pairs(replicasets) do
-        replicas[rs_id] = rs.master
+        local master = rs.master
+        if not master then
+            return nil, lerror.vshard(lerror.code.MISSING_MASTER, rs.id), rs_id
+        end
+        replicas[rs_id] = master
     end
     return replicas_map_call(replicas, func, args, {timeout = timeout})
 end
