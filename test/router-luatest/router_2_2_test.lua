@@ -171,6 +171,18 @@ local function test_return_raw_template(g, mode)
                     'error value')
 
     --
+    -- Raw values stay packed, but the error is decoded for lerror.make().
+    --
+    res = router:exec(function(mode)
+        return add_details(ivshard.router[mode](1, 'box_error', {1, 2, 3},
+                           {timeout = iwait_timeout, return_raw = true}))
+    end, {mode})
+    t.assert(not res.val, 'no value')
+    t.assert_equals(res.err_type, 'table', 'raw error type')
+    t.assert_covers(res.err, {type = 'ClientError', code = box.error.PROC_LUA},
+                    'raw error value')
+
+    --
     -- Route error.
     --
     res = router:exec(function(mode)
@@ -204,6 +216,48 @@ g.test_return_raw = function(g)
     test_return_raw_template(g, 'callro')
     g.router:exec(function()
         _G.add_details = nil
+    end)
+end
+
+--
+-- A raw response can have a nil status: vshard.storage.call() returns one when
+-- bucket_ref() fails. In msgpack a nil in an array is packed as null and comes
+-- back as box.NULL, which is truthy. If it wasn't turned back into nil, the
+-- error would be taken for a success and returned as a value.
+--
+g.test_return_raw_nil_status = function(g)
+    t.run_only_if(vutil.feature.netbox_return_raw)
+
+    g.router:exec(function()
+        local msgpack = require('msgpack')
+        local replicaset = ivshard.router.internal.static_router.replicasets[
+            ivshard.router.route(1).id]
+        ilt.assert_not_equals(replicaset, nil, 'replicaset is found')
+        -- 'callro' comes from the metatable, so the stub is removed via rawset.
+        local had_own = rawget(replicaset, 'callro') ~= nil
+        local old_callro = replicaset.callro
+        replicaset.callro = function()
+            return msgpack.object({box.NULL, box.error.new(
+                box.error.PROC_LUA, 'raw nil status')})
+        end
+
+        local ok, val, err = pcall(function()
+            return ivshard.router.callro(1, 'echo', {1},
+                                         {timeout = iwait_timeout,
+                                          return_raw = true})
+        end)
+
+        if had_own then
+            replicaset.callro = old_callro
+        else
+            rawset(replicaset, 'callro', nil)
+        end
+
+        ilt.assert(ok, 'call did not throw')
+        ilt.assert_equals(val, nil, 'no value')
+        ilt.assert_not_equals(err, nil, 'error is not nil')
+        ilt.assert_equals(type(err), 'table', 'error is decoded')
+        ilt.assert_equals(err.code, box.error.PROC_LUA, 'error code')
     end)
 end
 
@@ -1082,6 +1136,67 @@ g.test_retryable_transfer_in_progress = function(g)
     end)
 
     -- Return the bucket back.
+    g.replica_1_a:exec(function(bid, uuid)
+        local _, err = ivshard.storage.bucket_send(
+            bid, uuid, {timeout = iwait_timeout})
+        ilt.assert_equals(err, nil)
+        _G.bucket_gc_wait()
+    end, {bid, g.replica_2_a:replicaset_uuid()})
+end
+
+--
+-- gh-682: the retry must work with 'return_raw' too. The error needs to
+-- be decoded, otherwise the router can't see its code to reroute.
+--
+g.test_retryable_transfer_in_progress_raw = function(g)
+    t.run_only_if(vutil.feature.netbox_return_raw)
+
+    local bid = g.replica_2_a:exec(function()
+       return _G.get_first_bucket()
+    end)
+
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = true
+    end)
+
+    g.replica_2_a:exec(function(bid, uuid)
+        rawset(_G, 'bucket_send_fiber', ifiber.create(function()
+            return ivshard.storage.bucket_send(
+                bid, uuid, {timeout = iwait_timeout})
+        end))
+        _G.bucket_send_fiber:set_joinable(true)
+        ivshard.storage.internal.bucket_refs[bid] = nil
+    end, {bid, g.replica_1_a:replicaset_uuid()})
+
+    g.router:exec(function(bid)
+        rawset(_G, 'callrw_fiber', ifiber.create(function()
+            return ivshard.router.callrw(
+                bid, 'echo', {123}, {timeout = iwait_timeout,
+                                     return_raw = true})
+        end))
+        _G.callrw_fiber:set_joinable(true)
+    end, {bid})
+
+    g.replica_1_a:exec(function()
+        ivshard.storage.internal.errinj.ERRINJ_LAST_RECEIVE_DELAY = false
+    end)
+    g.replica_2_a:exec(function()
+        local ok, res = _G.bucket_send_fiber:join()
+        ilt.assert(ok and res)
+        _G.bucket_send_fiber = nil
+        _G.bucket_gc_wait()
+    end)
+
+    g.router:exec(function()
+        local msgpack = require('msgpack')
+        local ok, res, err = _G.callrw_fiber:join()
+        ilt.assert(ok)
+        ilt.assert_equals(err, nil, 'no error')
+        ilt.assert(msgpack.is_object(res), 'result is raw')
+        ilt.assert_equals(res[1], 123, 'retried and got the value')
+        _G.callrw_fiber = nil
+    end)
+
     g.replica_1_a:exec(function(bid, uuid)
         local _, err = ivshard.storage.bucket_send(
             bid, uuid, {timeout = iwait_timeout})

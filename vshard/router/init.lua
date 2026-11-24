@@ -651,11 +651,18 @@ local function router_call_impl(router, bucket_id, mode, prefer_replica,
                 -- new array. But the values themselves are not decoded.
                 local it = storage_call_status:iterator()
                 local count = it:decode_array_header()
-                storage_call_status = it:decode()
+                -- A nil status is packed as null.
+                -- It decodes as a truthy box.NULL, so only true means success.
+                storage_call_status = it:decode() == true
                 -- When no values, nil is not packed into msgpack object. Same
                 -- as in raw netbox.
                 if count > 1 then
                     call_status = it:take_array(count - 1)
+                end
+                if not storage_call_status and call_status ~= nil then
+                    -- The error is packed as well. Unpack it for
+                    -- lerror.make(): the retry below needs err.code.
+                    call_status = call_status[1]
                 end
                 call_error = nil
             end
