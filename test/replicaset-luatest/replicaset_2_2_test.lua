@@ -67,15 +67,52 @@ test_group.test_masters_map_call = function()
     local replicasets = vreplicaset.buildall(global_cfg)
     local res = vreplicaset.masters_map_call(
         replicasets, 'get_uuid', nil, timeout_opts)
-    for _, rs in pairs(replicasets) do
+    local expected = {}
+    for id, rs in pairs(replicasets) do
         t.assert(rs.master:is_connected())
+        expected[id] = {rs.master.id}
     end
-    local count = 0
-    for rs_id, uuid in pairs(res) do
-        t.assert(replicasets[rs_id].master.id, uuid)
-        count = count + 1
+    t.assert_equals(res, expected)
+end
+
+test_group.test_masters_map_call_no_replies = function()
+    local replicasets = vreplicaset.buildall(global_cfg)
+    for _, rs in pairs(replicasets) do
+        rs.master.uri = rs.master.uri .. '.offline'
     end
-    t.assert_equals(count, 2)
+    local res, err, err_id = vreplicaset.masters_map_call(
+        replicasets, 'get_uuid', nil, {coverage = 'accidental', timeout = 0.1})
+    for _, rs in pairs(replicasets) do
+        rs.master.conn:close()
+    end
+    t.assert_equals(res, {})
+    t.assert(err and verror.is_timeout(err))
+    t.assert(replicasets[err_id])
+end
+
+test_group.test_masters_map_call_default_timeout = function()
+    -- Have wait_result return its timeout without yielding.
+    local replicasets = vreplicaset.buildall(global_cfg)
+    local future = {wait_result = function(_, timeout) return {timeout} end}
+    for _, rs in pairs(replicasets) do
+        rs.master.conn = {
+            state = 'active',
+            is_connected = function() return true end,
+            call = function() return future end,
+        }
+    end
+    local a = next(replicasets)
+    local b = next(replicasets, a)
+    replicasets[a].master.net_timeout = 0.5
+    replicasets[b].master.net_timeout = 2
+    local res = vreplicaset.masters_map_call(
+        replicasets, 'echo_timeout', nil, {})
+    t.assert_almost_equals(res[a][1], 2, 1e-3)
+    t.assert_almost_equals(res[b][1], 2, 1e-3)
+    res = vreplicaset.masters_map_call(replicasets, 'echo_timeout', nil,
+                                       {coverage = 'accidental'})
+    t.assert_almost_equals(res[a][1], 0.5, 1e-3)
+    t.assert_almost_equals(res[b][1], 2, 1e-3)
 end
 
 test_group.test_masters_map_call_reply_timeout = function()

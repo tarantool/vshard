@@ -1761,13 +1761,152 @@ local function wait_masters_connect(replicasets, timeout)
 end
 
 --
+-- Keep partial replies. Without a shared deadline each worker bounds its
+-- own waits; caller cancellation must still stop and join all workers.
+--
+local function map_replicasets(replicasets, deadline, call_one)
+    deadline = deadline or fiber_clock() + consts.TIMEOUT_INFINITY
+    local workers, results = {}, {}
+    local pending = 0
+    local err, err_id, wait_err
+    local cond = fiber.cond()
+    local function run(id, rs)
+        local ok, res, call_err = pcall(call_one, rs)
+        if not ok then
+            res, call_err = nil, res
+        end
+        if res ~= nil then
+            results[id] = res
+        else
+            err, err_id = wait_err or call_err, id
+        end
+        pending = pending - 1
+        if pending == 0 then
+            cond:signal()
+        end
+    end
+    for id, rs in pairs(replicasets) do
+        pending = pending + 1
+        local f = fiber.new(run, id, rs)
+        f:set_joinable(true)
+        workers[id] = f
+    end
+    while pending > 0 do
+        local ok
+        ok, wait_err = fiber_cond_wait(cond, deadline - fiber_clock())
+        if not ok then
+            -- Let workers account for their own RPC timeouts.
+            if lerror.is_timeout(wait_err) then
+                break
+            end
+            -- Only local waits can be cancelled, not RPCs already sent.
+            for _, f in pairs(workers) do
+                pcall(f.cancel, f)
+            end
+            break
+        end
+    end
+    for id, f in pairs(workers) do
+        local ok, join_err = f:join()
+        if not ok then
+            err, err_id = join_err, id
+        end
+    end
+    fiber.testcancel()
+    return results, lerror.make(err), err_id
+end
+
+-- Wait for and call each master independently so that an unavailable master
+-- does not prevent calls to the others.
+local function masters_map_call_accidental(replicasets, func, args, timeout)
+    local now = fiber_clock()
+    local deadline = timeout and now + timeout
+    local search_deadline = deadline or now + consts.MASTER_SEARCH_TIMEOUT
+    local function call_master(rs)
+        local master, err = rs:wait_master(search_deadline - fiber_clock())
+        if not master then
+            return nil, err
+        end
+        local rpc_deadline = deadline or fiber_clock() + master.net_timeout
+        local conn = replica_connect(master)
+        local remaining = rpc_deadline - fiber_clock()
+        remaining, err = netbox_wait_connected(conn, remaining)
+        if not remaining then
+            return nil, err
+        end
+        -- A reconnect during the wait may have started another handshake.
+        remaining, err = conn_vconnect_wait_or_close(conn, remaining)
+        if not remaining then
+            return nil, err
+        end
+        -- Reconfiguration may have moved the connection to another replica.
+        if master.conn ~= conn then
+            return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED)
+        end
+        if rs.master ~= master then
+            return nil, lerror.vshard(lerror.code.NON_MASTER, master.id, rs.id,
+                                     rs.master and rs.master.id)
+        end
+        if remaining <= 0 then
+            return nil, lerror.timeout()
+        end
+        local results, call_err = replicas_map_call({master}, func, args, {
+            timeout = remaining,
+        })
+        return results and results[1], call_err
+    end
+    return map_replicasets(replicasets, deadline, call_master)
+end
+
+-- The RPC timeout cannot be chosen yet if an auto master is still unknown.
+local function masters_known_timeout(replicasets)
+    local timeout
+    for id, rs in pairs(replicasets) do
+        if rs.master then
+            timeout = math.max(timeout or 0, rs.master.net_timeout)
+        elseif rs.is_master_auto then
+            return nil, id
+        end
+    end
+    return timeout or consts.CALL_TIMEOUT_MIN
+end
+
+--
 -- Parallel call on all masters in the cluster. Fails if couldn't be done
--- on at least one master.
+-- on at least one master with the default coverage = 'full'. With coverage =
+-- 'accidental', returns all received replies, even on error. The second and
+-- third results are one of the errors and its replicaset ID, if any. A returned
+-- nil, err pair from a remote function is a reply, not a failed RPC.
+-- No replies means an empty table in accidental mode. Calls are not retried.
+-- An explicit timeout covers both master discovery and RPCs. Otherwise allow
+-- MASTER_SEARCH_TIMEOUT for discovery. Full coverage uses the largest master
+-- network timeout for RPCs; accidental coverage uses each master's own timeout.
 --
 local function masters_map_call(replicasets, func, args, opts)
-    assert(opts and opts.timeout)
-    local err, err_id
+    assert(opts)
+    local coverage = opts.coverage
+    assert(coverage == nil or coverage == 'full' or coverage == 'accidental')
     local timeout = opts.timeout
+    if coverage == 'accidental' then
+        return masters_map_call_accidental(replicasets, func, args, timeout)
+    end
+    local _, err, err_id
+    timeout = timeout or masters_known_timeout(replicasets)
+    if not timeout then
+        local search_deadline = fiber_clock() + consts.MASTER_SEARCH_TIMEOUT
+        _, err, err_id = map_replicasets(replicasets, nil, function(rs)
+            return rs:wait_master(search_deadline - fiber_clock())
+        end)
+        if err then
+            return nil, err, err_id
+        end
+        -- A master may have changed while we were waiting for another one.
+        timeout, err_id = masters_known_timeout(replicasets)
+        if not timeout then
+            err = lerror.vshard(lerror.code.MISSING_MASTER, err_id)
+            return nil, err, err_id
+        end
+    end
     timeout, err, err_id = wait_masters_connect(replicasets, timeout)
     if not timeout then
         return nil, err, err_id
