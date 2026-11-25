@@ -1,15 +1,12 @@
 local log = require('log')
-local luri = require('uri')
 local lfiber = require('fiber')
 local lmsgpack = require('msgpack')
-local netbox = require('net.box') -- for net.box:self()
 local trigger = require('internal.trigger')
 local ffi = require('ffi')
 local json_encode = require('json').encode
-local yaml_encode = require('yaml').encode
 local fiber_clock = lfiber.clock
 local fiber_yield = lfiber.yield
-local netbox_self = netbox.self
+local netbox_self = require('net.box').self
 local netbox_self_call = netbox_self.call
 
 local MODULE_INTERNALS = '__module_vshard_storage'
@@ -33,7 +30,6 @@ local lerror = require('vshard.error')
 local lcfg = require('vshard.cfg')
 local lreplicaset = require('vshard.replicaset')
 local util = require('vshard.util')
-local lregistry = require('vshard.registry')
 local lservice_info = require('vshard.service_info')
 local lratelimit = require('vshard.log_ratelimit')
 local lref = require('vshard.storage.ref')
@@ -125,6 +121,9 @@ if not M then
         -- replicas in replicaset. It is needed to prevent the doubled buckets
         -- in the cluster during rebalancing and recovery process.
         is_bucket_in_sync = false,
+        -- Condition variable fired when bucket synchronization finishes or
+        -- the master role is lost.
+        bucket_sync_cond = lfiber.cond(),
         -- Vclock after a last transaction over the _bucket space.
         bucket_latest_vclock = nil,
         --
@@ -285,6 +284,9 @@ else
     if M.is_master_cond == nil then
         M.is_master_cond = lfiber.cond()
     end
+    if M.bucket_sync_cond == nil then
+        M.bucket_sync_cond = lfiber.cond()
+    end
 end
 
 --
@@ -372,15 +374,46 @@ end
 --
 local bucket_count
 
-local function bucket_space_op(name, ...)
+local function bucket_check_is_synced()
     if not M.is_master then
         local rs = M.this_replicaset
         return nil, lerror.vshard(lerror.code.NON_MASTER, M.this_replica.id,
-                                  rs.id, rs.master.id)
+                                  rs.id, rs.master and rs.master.id)
     end
     if not M.is_bucket_in_sync then
         return nil, lerror.vshard(lerror.code.MASTER_NOT_SYNCED,
             M.this_replica.id, M.this_replicaset.id)
+    end
+    return true
+end
+
+--
+-- Wait for the current master to synchronize _bucket and return its bucket
+-- count. A replica returns NON_MASTER without waiting.
+--
+local function storage_wait_bucket_sync(timeout)
+    local deadline = fiber_clock() + timeout
+    while true do
+        local ok, err = bucket_check_is_synced()
+        if ok then
+            return bucket_count()
+        end
+        if err.code ~= lerror.code.MASTER_NOT_SYNCED then
+            return nil, err
+        end
+
+        timeout = deadline - fiber_clock()
+        if timeout <= 0 then
+            return nil, err
+        end
+        M.bucket_sync_cond:wait(timeout)
+    end
+end
+
+local function bucket_space_op(name, ...)
+    local ok, err = bucket_check_is_synced()
+    if not ok then
+        return nil, err
     end
     local space = box.space._bucket
     local is_success, res = pcall(space[name], space, ...)
@@ -388,6 +421,13 @@ local function bucket_space_op(name, ...)
         return res
     end
     return nil, lerror.make(res)
+end
+
+local function bucket_space_op_xc(name, tuple)
+    local bucket, err = bucket_space_op(name, tuple)
+    if not bucket then
+        error(err)
+    end
 end
 
 local function bucket_space_insert(tuple)
@@ -886,7 +926,7 @@ local function schema_install_triggers_delayed()
 end
 
 local function schema_upgrade_master()
-    local uri = luri.parse(M.this_replica.uri)
+    local uri = require('uri').parse(M.this_replica.uri)
     lschema.upgrade(lschema.latest_version, uri.login, uri.password)
     schema_install_triggers()
 end
@@ -1623,10 +1663,11 @@ end
 -- are inserted.
 -- @param first_bucket_id Identifier of a first bucket in a range.
 -- @param count Bucket range length to insert. By default is 1.
+-- @param is_safe Whether to refuse each write unless the instance is a
+-- synchronized master.
 --
-local function bucket_force_create_impl(first_bucket_id, count)
+local function bucket_create_impl(first_bucket_id, count, is_safe)
     local _bucket = box.space._bucket
-    box.begin()
     local limit = consts.BUCKET_CHUNK_SIZE
     for i = first_bucket_id, first_bucket_id + count - 1 do
         -- Buckets are protected with on_replace trigger, which
@@ -1635,8 +1676,13 @@ local function bucket_force_create_impl(first_bucket_id, count)
         -- work of vshard. So, as we don't want to disable the protection
         -- of the buckets for the whole replicaset for bootstrap, a bucket's
         -- status must go the following way: none -> RECEIVING -> ACTIVE.
-        _bucket:insert({i, BRECEIVING})
-        _bucket:replace({i, BACTIVE})
+        if is_safe then
+            bucket_space_op_xc('insert', {i, BRECEIVING})
+            bucket_space_op_xc('replace', {i, BACTIVE})
+        else
+            _bucket:insert({i, BRECEIVING})
+            _bucket:replace({i, BACTIVE})
+        end
         limit = limit - 1
         if limit == 0 then
             box.commit()
@@ -1647,19 +1693,37 @@ local function bucket_force_create_impl(first_bucket_id, count)
     box.commit()
 end
 
-local function bucket_force_create(first_bucket_id, count)
+local function bucket_create_internal(first_bucket_id, count, is_safe)
+    local name
+    if is_safe then
+        name = 'bucket_create'
+    else
+        name = 'bucket_force_create'
+    end
     if type(first_bucket_id) ~= 'number' or
        (count ~= nil and (type(count) ~= 'number' or
                           math.floor(count) ~= count)) then
-        error('Usage: bucket_force_create(first_bucket_id, count)')
+        error(string.format('Usage: %s(first_bucket_id, count)', name))
     end
     count = count or 1
-    local ok, err = pcall(bucket_force_create_impl, first_bucket_id, count)
+    local ok, err = pcall(box.begin)
+    if not ok then
+        return nil, err
+    end
+    ok, err = pcall(bucket_create_impl, first_bucket_id, count, is_safe)
     if not ok then
         box.rollback()
         return nil, err
     end
     return true
+end
+
+local function bucket_force_create(first_bucket_id, count)
+    return bucket_create_internal(first_bucket_id, count, false)
+end
+
+local function bucket_create(first_bucket_id, count)
+    return bucket_create_internal(first_bucket_id, count, true)
 end
 
 --
@@ -3049,7 +3113,7 @@ local function rebalancer_service_apply_routes_f(service, routes)
     local worker_count = M.rebalancer_worker_count
     setmetatable(routes, {__serialize = 'mapping'})
     log.info('Apply rebalancer routes with %d workers:\n%s', worker_count,
-             yaml_encode(routes))
+             require('yaml').encode(routes))
     local dispenser = route_dispenser.new(routes)
     local _status = box.space._bucket.index.status
     assert(_status:count({BSENDING}) == 0)
@@ -3723,6 +3787,7 @@ local function service_call_test_api(...)
 end
 
 service_call_api = setmetatable({
+    bucket_create = bucket_create,
     bucket_recv = bucket_recv,
     bucket_test_gc = bucket_test_gc,
     bucket_test_send = bucket_test_send,
@@ -3733,6 +3798,7 @@ service_call_api = setmetatable({
     storage_ref_make_with_buckets = storage_ref_make_with_buckets,
     storage_ref_check_with_buckets = storage_ref_check_with_buckets,
     storage_unref = storage_unref,
+    storage_wait_bucket_sync = storage_wait_bucket_sync,
     storage_map = storage_map,
     storage_bucket_checkpoint = storage_bucket_checkpoint,
     create_replicaset_recovery_point = create_replicaset_recovery_point,
@@ -3796,6 +3862,7 @@ local function master_sync_service_f(service, limiter)
         service:set_activity('synced')
         assert(M.master_sync_fiber == lfiber.self())
         M.is_bucket_in_sync = true
+        M.bucket_sync_cond:broadcast()
         log.info('New master has synchronized with other replicas')
         -- Simple return will lead to service restart, so cancel the fiber.
         M.master_sync_fiber = nil
@@ -3867,6 +3934,7 @@ local function master_on_disable()
     end
     log.info("Stepping down from the master role")
     M.is_master = false
+    M.bucket_sync_cond:broadcast()
     M.is_master_cond:broadcast()
     local rs = M.this_replicaset
     if rs.master ~= nil then
@@ -4668,7 +4736,7 @@ M.bucket_state_edges = bucket_state_edges
 M.bucket_are_all_rw = bucket_are_all_rw_public
 M.bucket_generation_wait = bucket_generation_wait
 M.bucket_get_moved = bucket_get_moved
-lregistry.storage = M
+require('vshard.registry').storage = M
 
 --
 -- Not all methods are public here. Private methods should not be exposed if
@@ -4678,6 +4746,7 @@ return {
     --
     -- Bucket methods.
     --
+    bucket_create = storage_make_api(bucket_create),
     bucket_force_create = storage_make_api(bucket_force_create),
     bucket_force_drop = storage_make_api(bucket_force_drop),
     bucket_collect = storage_make_api(bucket_collect),

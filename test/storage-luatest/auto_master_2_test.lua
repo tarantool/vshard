@@ -323,3 +323,18 @@ test_group.test_master_trigger_errors = function(g)
         end)
     end)
 end
+
+test_group.test_bucket_space_op_without_known_master = function(g)
+    g.replica_1_b:exec(function(bid)
+        local rs = ivshard.storage.internal.this_replicaset
+        local master = rs.master
+        rs.master = nil
+        local ok, bucket, err = pcall(ivshard.storage._bucket_space_op,
+                                     'insert', {bid, ivconst.BUCKET.RECEIVING})
+        rs.master = master
+        ilt.assert(ok, bucket)
+        ilt.assert_equals(bucket, nil)
+        ilt.assert_equals(err.code, iverror.code.NON_MASTER)
+        ilt.assert_equals(err.master, nil)
+    end, {cfg_template.bucket_count + 1})
+end

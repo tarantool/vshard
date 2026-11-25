@@ -336,7 +336,7 @@ end
 local function netbox_wait_connected(conn, timeout)
     -- Fast path. Usually everything is connected.
     if conn:is_connected() then
-        return timeout
+        return conn_vconnect_wait(conn, timeout)
     end
     local deadline = fiber_clock() + timeout
     -- Loop against spurious wakeups.
@@ -653,6 +653,18 @@ local function replica_on_success_request(replica)
 end
 
 --
+-- net.box wraps exceptions from vshard functions in LuajitError (ClientError
+-- on older Tarantool versions). A truncated message may not be decodable.
+--
+local function decode_call_error(func, err)
+    if err and func:startswith('vshard.') and
+       (err.type == 'LuajitError' or err.type == 'ClientError') then
+        return lerror.from_string(err.message) or err
+    end
+    return err
+end
+
+--
 -- Call a function on a replica using its connection. The typical
 -- usage is calls under storage.call, because of which there
 -- are no more than 3 return values. It is because storage.call
@@ -666,7 +678,7 @@ end
 -- @retval false, ... Response is not received. It can be timeout
 --         or unexpectedly closed connection.
 --
-local function replica_call(replica, func, args, opts)
+local function replica_request(replica, func, args, opts)
     assert(opts and opts.timeout)
     replica.activity_ts = fiber_clock()
     local conn = replica.conn
@@ -696,29 +708,25 @@ local function replica_call(replica, func, args, opts)
         if opts.timeout >= replica.net_timeout then
             replica_on_failed_request(replica)
         end
-        local err = storage_status
-        -- VShard functions can throw exceptions using error() function. When
-        -- it reaches the network layer, it is wrapped into LuajitError. Try to
-        -- extract the original error if this is the case. Not always is
-        -- possible - the string representation could be truncated.
-        --
-        -- In old Tarantool versions LuajitError turned into ClientError on the
-        -- client. Check both types.
-        if func:startswith('vshard.') and (err.type == 'LuajitError' or
-           err.type == 'ClientError') then
-            err = lerror.from_string(err.message) or err
-        end
+        local err = decode_call_error(func, storage_status)
         replica.limiter:log_error(err,
             "Exception during calling '%s' on '%s': %s", func, replica, err)
         return false, nil, lerror.make(err)
-    else
-        replica_on_success_request(replica)
     end
     if storage_status == nil then
         -- Workaround for `not msgpack.NULL` magic.
         storage_status = nil
     end
     return true, storage_status, retval, error_object
+end
+
+local function replica_call(replica, func, args, opts)
+    local ok, res, retval, err = replica_request(replica, func, args, opts)
+    if ok then
+        replica_on_success_request(replica)
+        return true, res, retval, err
+    end
+    return false, nil, retval
 end
 
 --
@@ -1017,6 +1025,7 @@ end
 --
 local function replicas_map_call(replicas, func, args, opts)
     local timeout = opts.timeout or consts.CALL_TIMEOUT_MIN
+    local rpc_budget = timeout
     local except = opts.except
     local deadline = fiber_clock() + timeout
     local _, res, err, err_id, map
@@ -1030,7 +1039,7 @@ local function replicas_map_call(replicas, func, args, opts)
         if id == except then
             goto next_call
         end
-        _, res, err = replica_call(replica, func, args, opts_call)
+        _, res, err = replica_request(replica, func, args, opts_call)
         if res == nil then
             err_id = id
             goto fail
@@ -1045,10 +1054,18 @@ local function replicas_map_call(replicas, func, args, opts)
     map = table.new(0, replica_count)
     for id, future in pairs(futures) do
         res, err = future_wait(future, timeout)
+        local replica = replicas[id]
         if res == nil then
+            err = decode_call_error(func, err)
             err_id = id
+            -- Charge a local timeout, not an error returned by the storage.
+            if err and lerror.is_timeout(err) and
+               rpc_budget >= replica.net_timeout and not future:is_ready() then
+                replica_on_failed_request(replica)
+            end
             goto fail
         end
+        replica_on_success_request(replica)
         map[id] = res
         timeout = deadline - fiber_clock()
     end
@@ -1746,20 +1763,166 @@ local function wait_masters_connect(replicasets, timeout)
 end
 
 --
+-- Keep partial replies. Without a shared deadline each worker bounds its
+-- own waits; caller cancellation must still stop and join all workers.
+--
+local function map_replicasets(replicasets, deadline, call_one)
+    deadline = deadline or fiber_clock() + consts.TIMEOUT_INFINITY
+    local workers, results = {}, {}
+    local pending = 0
+    local err, err_id, wait_err
+    local cond = fiber.cond()
+    local function run(id, rs)
+        local ok, res, call_err = pcall(call_one, rs)
+        if not ok then
+            res, call_err = nil, res
+        end
+        if res ~= nil then
+            results[id] = res
+        else
+            err, err_id = wait_err or call_err, id
+        end
+        pending = pending - 1
+        if pending == 0 then
+            cond:signal()
+        end
+    end
+    for id, rs in pairs(replicasets) do
+        pending = pending + 1
+        local f = fiber.new(run, id, rs)
+        f:set_joinable(true)
+        workers[id] = f
+    end
+    while pending > 0 do
+        local ok
+        ok, wait_err = fiber_cond_wait(cond, deadline - fiber_clock())
+        if not ok then
+            -- Let workers account for their own RPC timeouts.
+            if lerror.is_timeout(wait_err) then
+                break
+            end
+            -- Only local waits can be cancelled, not RPCs already sent.
+            for _, f in pairs(workers) do
+                pcall(f.cancel, f)
+            end
+            break
+        end
+    end
+    for id, f in pairs(workers) do
+        local ok, join_err = f:join()
+        if not ok then
+            err, err_id = join_err, id
+        end
+    end
+    fiber.testcancel()
+    return results, lerror.make(err), err_id
+end
+
+-- Wait for and call each master independently so that an unavailable master
+-- does not prevent calls to the others.
+local function masters_map_call_accidental(replicasets, func, args, timeout)
+    local now = fiber_clock()
+    local deadline = timeout and now + timeout
+    local search_deadline = deadline or now + consts.MASTER_SEARCH_TIMEOUT
+    local function call_master(rs)
+        local master, err = rs:wait_master(search_deadline - fiber_clock())
+        if not master then
+            return nil, err
+        end
+        local rpc_deadline = deadline or fiber_clock() + master.net_timeout
+        local conn = replica_connect(master)
+        local remaining = rpc_deadline - fiber_clock()
+        remaining, err = netbox_wait_connected(conn, remaining)
+        if not remaining then
+            return nil, err
+        end
+        -- A reconnect during the wait may have started another handshake.
+        remaining, err = conn_vconnect_wait_or_close(conn, remaining)
+        if not remaining then
+            return nil, err
+        end
+        -- Reconfiguration may have moved the connection to another replica.
+        if master.conn ~= conn then
+            return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED)
+        end
+        if rs.master ~= master then
+            return nil, lerror.vshard(lerror.code.NON_MASTER, master.id, rs.id,
+                                     rs.master and rs.master.id)
+        end
+        if remaining <= 0 then
+            return nil, lerror.timeout()
+        end
+        local results, call_err = replicas_map_call({master}, func, args, {
+            timeout = remaining,
+        })
+        return results and results[1], call_err
+    end
+    return map_replicasets(replicasets, deadline, call_master)
+end
+
+-- The RPC timeout cannot be chosen yet if an auto master is still unknown.
+local function masters_known_timeout(replicasets)
+    local timeout
+    for id, rs in pairs(replicasets) do
+        if rs.master then
+            timeout = math.max(timeout or 0, rs.master.net_timeout)
+        elseif rs.is_master_auto then
+            return nil, id
+        end
+    end
+    return timeout or consts.CALL_TIMEOUT_MIN
+end
+
+--
 -- Parallel call on all masters in the cluster. Fails if couldn't be done
--- on at least one master.
+-- on at least one master with the default coverage = 'full'. With coverage =
+-- 'accidental', returns all received replies, even on error. The second and
+-- third results are one of the errors and its replicaset ID, if any. A returned
+-- nil, err pair from a remote function is a reply, not a failed RPC.
+-- No replies means an empty table in accidental mode. Calls are not retried.
+-- An explicit timeout covers both master discovery and RPCs. Otherwise allow
+-- MASTER_SEARCH_TIMEOUT for discovery. Full coverage uses the largest master
+-- network timeout for RPCs; accidental coverage uses each master's own timeout.
 --
 local function masters_map_call(replicasets, func, args, opts)
-    assert(opts and opts.timeout)
-    local err, err_id
+    assert(opts)
+    local coverage = opts.coverage
+    assert(coverage == nil or coverage == 'full' or coverage == 'accidental')
     local timeout = opts.timeout
+    if coverage == 'accidental' then
+        return masters_map_call_accidental(replicasets, func, args, timeout)
+    end
+    local _, err, err_id
+    timeout = timeout or masters_known_timeout(replicasets)
+    if not timeout then
+        local search_deadline = fiber_clock() + consts.MASTER_SEARCH_TIMEOUT
+        _, err, err_id = map_replicasets(replicasets, nil, function(rs)
+            return rs:wait_master(search_deadline - fiber_clock())
+        end)
+        if err then
+            return nil, err, err_id
+        end
+        -- A master may have changed while we were waiting for another one.
+        timeout, err_id = masters_known_timeout(replicasets)
+        if not timeout then
+            err = lerror.vshard(lerror.code.MISSING_MASTER, err_id)
+            return nil, err, err_id
+        end
+    end
     timeout, err, err_id = wait_masters_connect(replicasets, timeout)
     if not timeout then
         return nil, err, err_id
     end
     local replicas = {}
     for rs_id, rs in pairs(replicasets) do
-        replicas[rs_id] = rs.master
+        local master = rs.master
+        if not master then
+            return nil, lerror.vshard(lerror.code.MISSING_MASTER, rs.id), rs_id
+        end
+        if not master.conn then
+            return nil, lerror.vshard(lerror.code.OBJECT_IS_OUTDATED), rs_id
+        end
+        replicas[rs_id] = master
     end
     return replicas_map_call(replicas, func, args, {timeout = timeout})
 end
